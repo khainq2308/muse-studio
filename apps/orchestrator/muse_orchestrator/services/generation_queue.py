@@ -10,14 +10,17 @@ from muse_orchestrator.core.config import settings, SecretRedactor
 from muse_orchestrator.core.security import vault
 from muse_orchestrator.models.domain import (
     ShotRecord, ShotGenerationState, ProviderConnection, ConnectionHealthState,
-    GenerationTaskRecord, QueueTaskState, Asset, ShotTakeRecord
+    GenerationTaskRecord, QueueTaskState, Asset, ShotTakeRecord, ConnectionAccount
 )
 from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
     ProviderFailure, ErrorCategory
 )
-from muse_orchestrator.providers.mock_provider import MockVideoProvider
-from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
+from muse_orchestrator.services.account_pool import (
+    build_provider_for_account,
+    mark_account_used,
+    select_account,
+)
 
 
 def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float = 60.0) -> float:
@@ -26,11 +29,17 @@ def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float
     return round(min(max_delay, exp + jitter), 2)
 
 
-def build_provider(conn: ProviderConnection) -> VideoProvider:
-    if conn.provider_type == "mock":
-        return MockVideoProvider()
-    raw_key = vault.decrypt(conn.encrypted_api_key)
-    return Muse2ApiAdapter(base_url=conn.base_url, api_key=raw_key, timeout=conn.timeout_seconds)
+def build_provider(
+    conn: ProviderConnection,
+    account: ConnectionAccount | None = None,
+) -> VideoProvider:
+    """Build a provider for a connection, optionally bound to one account.
+
+    M7: when the caller selects an account (see account_pool.select_account),
+    the provider uses that account's API key and proxy. With account=None the
+    connection-level credentials are used (pre-M7 behaviour).
+    """
+    return build_provider_for_account(conn, account)
 
 
 def _create_boundary_frame_png(dest_dir: str, shot_id: str, take_num: int, position: str, seed_hash: str) -> tuple[str, int, str]:
@@ -162,7 +171,16 @@ class GenerationQueueService:
         if not conn or not shot:
             raise ValueError("Connection hoặc Shot liên kết không tồn tại.")
 
-        provider = build_provider(conn)
+        accounts = (
+            await db.execute(
+                select(ConnectionAccount).where(ConnectionAccount.connection_id == conn.id)
+            )
+        ).scalars().all()
+        account = select_account(list(accounts))
+        provider = build_provider(conn, account)
+        if account is not None:
+            mark_account_used(account)
+            task.account_used = account.label
         raw_secret = vault.decrypt(conn.encrypted_api_key) if conn.encrypted_api_key else ""
 
         if not task.external_task_id:
@@ -395,3 +413,4 @@ class GenerationQueueService:
             await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
         await db.refresh(task)
         return task
+

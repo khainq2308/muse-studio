@@ -13,10 +13,17 @@ from muse_orchestrator.providers.base import (
 
 
 class Muse2ApiAdapter(VideoProvider):
-    def __init__(self, base_url: str, api_key: str | None = None, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        timeout: float = 30.0,
+        proxy: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.proxy = proxy
 
     def _headers(self, idempotency_key: str = "") -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -28,7 +35,7 @@ class Muse2ApiAdapter(VideoProvider):
 
     async def health(self) -> ProviderHealth:
         start = time.perf_counter()
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, proxy=self.proxy) as client:
             try:
                 h_resp = await client.get(f"{self.base_url}/healthz")
                 r_resp = await client.get(f"{self.base_url}/readyz")
@@ -43,7 +50,7 @@ class Muse2ApiAdapter(VideoProvider):
                 return ProviderHealth(healthy=False, ready=False, status_state="unavailable", latency_ms=round(latency, 2), details={"error": safe_msg})
 
     async def list_models(self) -> list[ModelCapability]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
             except httpx.RequestError as exc:
@@ -75,7 +82,7 @@ class Muse2ApiAdapter(VideoProvider):
         }
         if request.reference_image_urls:
             body["reference_images"] = request.reference_image_urls
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.post(f"{self.base_url}/v1/images/generations", headers=self._headers(request.idempotency_key), json=body)
             except httpx.RequestError as exc:
@@ -101,7 +108,7 @@ class Muse2ApiAdapter(VideoProvider):
         if request.reference_image_urls:
             body["reference_images"] = request.reference_image_urls
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.post(f"{self.base_url}/v1/videos", headers=self._headers(request.idempotency_key), json=body)
             except httpx.RequestError as exc:
@@ -114,7 +121,7 @@ class Muse2ApiAdapter(VideoProvider):
             return ProviderTask(external_task_id=task_id, status=str(data.get("status", "queued")), raw_response=data)
 
     async def get_task(self, task_id: str) -> ProviderTaskStatus:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.get(f"{self.base_url}/v1/videos/{task_id}", headers=self._headers())
             except httpx.RequestError as exc:
@@ -141,7 +148,7 @@ class Muse2ApiAdapter(VideoProvider):
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
         os.makedirs(dest_dir, exist_ok=True)
         url = result_ref if result_ref.startswith("http") else f"{self.base_url}/v1/media/{result_ref.lstrip('/')}"
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, proxy=self.proxy) as client:
             resp = await client.get(url, headers=self._headers())
             if resp.status_code >= 400:
                 raise classify_http_error(resp.status_code, SecretRedactor.redact_text(resp.text, [self.api_key or ""]))
@@ -152,3 +159,4 @@ class Muse2ApiAdapter(VideoProvider):
             with open(file_path, "wb") as f:
                 f.write(content)
             return StoredMedia(local_path=file_path, mime_type=resp.headers.get("content-type", "video/mp4"), size_bytes=len(content), sha256=digest)
+
