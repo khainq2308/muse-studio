@@ -46,7 +46,9 @@ POST /api/v1/projects/{id}/timeline/exports renders the sequence's real video cl
 
 An export that cannot produce a verified MP4 is never reported as successful: a missing FFmpeg/FFprobe (503), an FFmpeg failure or a failed verification (422) is stored as a FAILED export job, returned as an error, and creates no asset. The finished file is served by GET /api/v1/assets/{asset_id}/download.
 
-Not rendered yet, and listed in every response as unsupported_features: clip audio (the output carries a silent AAC track), title card, subtitles and extra audio tracks.
+Not rendered yet, and listed as unsupported_features in every response of an export that reaches rendering (success, or a stored FAILED job): clip audio (the output carries a silent AAC track), title card, subtitles and extra audio tracks. Requests rejected before rendering (unknown sequence, clips without a project video) carry no such list.
+
+Timeline placement is rendered faithfully or refused: a gap is filled with black, and a clip that overlaps the previous one is accepted only as a cross dissolve whose length equals the overlap. Any other overlap (for example a hard cut over the previous clip) fails the export with 422 rather than producing a video longer than the timeline.
 
 ## Provider media downloads
 

@@ -401,7 +401,12 @@ async def launch_ffmpeg_export(
         await db.commit()
         raise HTTPException(
             status_code=exc.status_code,
-            detail={"export_id": export_id, "state": ExportJobState.FAILED.value, "message": message},
+            detail={
+                "export_id": export_id,
+                "state": ExportJobState.FAILED.value,
+                "message": message,
+                "unsupported_features": unsupported,
+            },
         ) from exc
 
     probe_meta["unsupported_features"] = unsupported

@@ -179,4 +179,7 @@ async def test_export_error_status_code_is_passed_through(
     response = await client.post(f"/api/v1/projects/{project_id}/timeline/exports", json={})
 
     assert response.status_code == 503
-    assert response.json()["detail"]["message"] == "FFmpeg chưa được cài."
+    detail = response.json()["detail"]
+    assert detail["message"] == "FFmpeg chưa được cài."
+    # The "not rendered yet" contract also holds when the render fails.
+    assert "clip_audio" in detail["unsupported_features"]

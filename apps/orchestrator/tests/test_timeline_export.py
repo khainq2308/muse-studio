@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,10 +15,24 @@ from muse_orchestrator.services.timeline_service import (
     TimelineValidationService,
 )
 
-needs_ffmpeg = pytest.mark.skipif(
-    not (shutil.which("ffmpeg") and shutil.which("ffprobe")),
-    reason="ffmpeg and ffprobe are not installed",
-)
+_HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+
+@pytest.fixture
+def real_ffmpeg() -> None:
+    """Real-render tests skip on a dev machine without FFmpeg, but must never skip in CI.
+
+    CI installs FFmpeg and sets REQUIRE_FFMPEG=1; if the binaries are missing there, a silently
+    skipped render test would hide a broken exporter, so the test fails instead.
+    """
+    if _HAVE_FFMPEG:
+        return
+    if os.environ.get("REQUIRE_FFMPEG") == "1":
+        pytest.fail("REQUIRE_FFMPEG=1 but ffmpeg/ffprobe are not installed; CI must install them.")
+    pytest.skip("ffmpeg and ffprobe are not installed")
+
+
+needs_ffmpeg = pytest.mark.usefixtures("real_ffmpeg")
 
 
 def _clip(
@@ -77,6 +92,77 @@ def test_plan_fills_timeline_gaps_with_black() -> None:
     assert plan.expected_duration == 9.0  # 3.0 + 2.0 gap + 4.0
     assert "color=c=black:s=1080x1920:r=30" in plan.args
     assert plan.args.count("-i") == 4  # two clips + gap + silent audio
+
+
+def test_plan_rejects_a_hard_cut_that_overlaps_the_previous_clip() -> None:
+    # Timeline ends at 6s; concatenating both whole clips would silently produce 8s.
+    with pytest.raises(ExportError) as excinfo:
+        _plan([_clip("/m/a.mp4", 4.0, start=0.0), _clip("/m/b.mp4", 4.0, start=2.0)])
+
+    assert excinfo.value.status_code == 422
+    assert "Clip #2" in excinfo.value.message
+    assert "2.000s" in excinfo.value.message
+
+
+def test_plan_rejects_a_dissolve_whose_length_differs_from_the_overlap() -> None:
+    with pytest.raises(ExportError) as excinfo:
+        _plan([
+            _clip("/m/a.mp4", 4.0, start=0.0),
+            _clip("/m/b.mp4", 4.0, kind="cross_dissolve", transition=0.5, start=2.0),
+        ])
+
+    assert "0.500s" in excinfo.value.message
+
+
+def test_plan_rejects_a_negative_start_on_the_first_clip() -> None:
+    with pytest.raises(ExportError) as excinfo:
+        _plan([_clip("/m/a.mp4", 3.0, start=-1.0)])
+
+    assert "Clip #1" in excinfo.value.message
+
+
+def test_plan_gap_before_a_cross_dissolve_is_exactly_the_timeline_gap() -> None:
+    # A ends at 3s, B starts at 5s: the gap is 2.0s, not 2.5s, and there is nothing to dissolve across.
+    plan = _plan([
+        _clip("/m/a.mp4", 3.0, start=0.0),
+        _clip("/m/b.mp4", 3.0, kind="cross_dissolve", transition=0.5, start=5.0),
+    ])
+
+    assert plan.expected_duration == 8.0  # B ends at 5.0 + 3.0
+    assert "xfade" not in _graph(plan)
+    assert "cross_dissolve_dropped_across_gap" in plan.notes
+    assert "2.000" in plan.args  # the black filler is 2.0s long
+    assert "2.500" not in plan.args
+
+
+def test_plan_cross_dissolve_that_only_touches_the_previous_clip_becomes_a_hard_cut() -> None:
+    # B starts exactly where A ends, so no gap may be inserted and nothing overlaps to dissolve.
+    plan = _plan([
+        _clip("/m/a.mp4", 3.0, start=0.0),
+        _clip("/m/b.mp4", 3.0, kind="cross_dissolve", transition=0.5, start=3.0),
+    ])
+
+    assert plan.expected_duration == 6.0
+    assert "xfade" not in _graph(plan)
+    assert "color=c=black" not in " ".join(plan.args)
+    assert "cross_dissolve_ignored_without_overlap" in plan.notes
+
+
+def test_plan_expected_duration_matches_the_timeline_end_for_every_supported_layout() -> None:
+    layouts = [
+        ([_clip("/m/a.mp4", 3.0, start=0.0), _clip("/m/b.mp4", 3.0, start=3.0)], 6.0),
+        ([_clip("/m/a.mp4", 3.0, start=1.0)], 4.0),  # leading gap
+        ([_clip("/m/a.mp4", 3.0, start=0.0), _clip("/m/b.mp4", 3.0, start=5.0)], 8.0),
+        (
+            [
+                _clip("/m/a.mp4", 3.0, start=0.0),
+                _clip("/m/b.mp4", 3.0, kind="cross_dissolve", transition=0.5, start=2.5),
+            ],
+            5.5,
+        ),
+    ]
+    for clips, timeline_end in layouts:
+        assert _plan(clips).expected_duration == timeline_end
 
 
 def test_plan_clamps_a_dissolve_longer_than_its_clips() -> None:
@@ -158,6 +244,48 @@ def test_render_assembles_real_clips_and_verifies_the_output(tmp_path: Path) -> 
     data = Path(out_path).read_bytes()
     assert size == len(data)
     assert sha256_hex == hashlib.sha256(data).hexdigest()
+
+
+@needs_ffmpeg
+def test_render_gap_before_a_cross_dissolve_matches_the_timeline_duration(tmp_path: Path) -> None:
+    first, second = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    _make_video(first, "320x240", 24, 4)
+    _make_video(second, "320x240", 24, 4)
+
+    _out, _size, _sha, _args, meta = TimelineValidationService.render_and_probe_mp4(
+        output_dir=str(tmp_path / "out"),
+        export_id="exp_gap_dissolve",
+        fps=24,
+        resolution="320x240",
+        clips=[
+            _clip(str(first), 3.0, start=0.0),
+            _clip(str(second), 3.0, kind="cross_dissolve", transition=0.5, start=5.0),
+        ],
+    )
+
+    assert meta["valid"] is True
+    # Compared with the timeline itself (B ends at 5.0 + 3.0), not with the exporter's own plan.
+    assert abs(meta["duration_seconds"] - 8.0) < 0.2
+
+
+@needs_ffmpeg
+def test_render_refuses_an_overlap_before_running_ffmpeg(tmp_path: Path) -> None:
+    first, second = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    _make_video(first, "320x240", 24, 4)
+    _make_video(second, "320x240", 24, 4)
+    out_dir = tmp_path / "out"
+
+    with pytest.raises(ExportError) as excinfo:
+        TimelineValidationService.render_and_probe_mp4(
+            output_dir=str(out_dir),
+            export_id="exp_overlap",
+            fps=24,
+            resolution="320x240",
+            clips=[_clip(str(first), 4.0, start=0.0), _clip(str(second), 4.0, start=2.0)],
+        )
+
+    assert excinfo.value.status_code == 422
+    assert not (out_dir / "exp_overlap.mp4").exists()
 
 
 @needs_ffmpeg

@@ -146,6 +146,9 @@ class TimelineValidationService:
         Build an FFmpeg argv (list[str], never a shell string) that assembles the real clips:
         each clip is trimmed, scaled/padded to the output frame, then joined with a hard cut
         (concat) or cross dissolve (xfade). Gaps on the timeline are filled with black.
+        A clip that starts before the previous one ends is only accepted as a cross dissolve
+        whose length equals that overlap; any other overlap raises ExportError, so the rendered
+        duration always matches the timeline instead of silently growing.
 
         Clip audio is not mixed: the output carries a silent AAC track. Callers must tell the
         user about every timeline feature that is not rendered.
@@ -208,22 +211,54 @@ class TimelineValidationService:
             state["acc"], state["last"] = out, duration
 
         notes: list[str] = []
-        for clip in clips:
+        for position, clip in enumerate(clips, start=1):
             duration = max(0.1, round(float(clip.effective_duration), 3))
-            dissolve = 0.0
-            if clip.transition_type == "cross_dissolve" and state["acc"] is not None:
-                dissolve = max(0.0, float(clip.transition_duration))
+            wants_dissolve = clip.transition_type == "cross_dissolve" and state["acc"] is not None
+            requested = max(0.0, float(clip.transition_duration)) if wants_dissolve else 0.0
+            dissolve = requested
+
+            if clip.start_time is not None:
+                # Where the clip must start relative to what has been laid out so far:
+                # > 0 is a real gap on the timeline, < 0 is an overlap with the previous clip.
+                # The transition is not part of the gap; it only exists where clips overlap.
+                lead = round(float(clip.start_time) - state["end"], 3)
+                if lead > _GAP_TOLERANCE_SECONDS:
+                    append_segment(add_black(lead), lead, 0.0)
+                    dissolve = 0.0
+                    if requested > 0:
+                        notes.append("cross_dissolve_dropped_across_gap")
+                elif lead < -_GAP_TOLERANCE_SECONDS:
+                    if state["acc"] is None:
+                        raise ExportError(
+                            f"Clip #{position} có start_time âm ({float(clip.start_time):.3f}s); "
+                            "timeline phải bắt đầu từ 0s trở đi."
+                        )
+                    overlap = -lead
+                    # The only overlap that FFmpeg can render faithfully here is a cross dissolve
+                    # whose length equals the overlap. Anything else would silently change the
+                    # timeline's duration, so it is refused instead of being exported wrongly.
+                    if not wants_dissolve or abs(overlap - requested) > _GAP_TOLERANCE_SECONDS:
+                        raise ExportError(
+                            f"Clip #{position} chồng lấp {overlap:.3f}s lên clip trước nhưng "
+                            + (
+                                f"transition cross_dissolve chỉ dài {requested:.3f}s."
+                                if wants_dissolve
+                                else "không dùng cross_dissolve; export không hỗ trợ chồng lấp kiểu này."
+                            )
+                            + " Hãy chỉnh start_time hoặc transition cho khớp.",
+                        )
+                else:
+                    # Clips touch without overlapping, so there is nothing to dissolve across.
+                    dissolve = 0.0
+                    if requested > 0:
+                        notes.append("cross_dissolve_ignored_without_overlap")
+
+            if dissolve > 0:
                 # A dissolve cannot be longer than either neighbouring segment.
                 limit = min(state["last"], duration) - _MIN_TRANSITION_MARGIN_SECONDS
                 if dissolve > limit:
                     dissolve = max(0.0, round(limit, 3))
                     notes.append("cross_dissolve_clamped_to_clip_length")
-
-            if clip.start_time is not None:
-                gap = round(float(clip.start_time) - (state["end"] - dissolve), 3)
-                if gap > _GAP_TOLERANCE_SECONDS:
-                    append_segment(add_black(gap), gap, 0.0)
-                    dissolve = 0.0
 
             append_segment(add_clip(ExportClip(
                 path=clip.path,
