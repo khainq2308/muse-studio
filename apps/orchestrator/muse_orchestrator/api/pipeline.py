@@ -109,6 +109,7 @@ async def _recompile_project_shots(project_id: str, db: AsyncSession) -> list[Sh
         )
     ).scalars().all()
 
+    previous_spec: ShotSpec | None = None
     for s in shots:
         spec = ShotSpec(
             shot_id=s.id,
@@ -135,7 +136,9 @@ async def _recompile_project_shots(project_id: str, db: AsyncSession) -> list[Sh
             characters=characters,
             locations=locations,
             available_assets=available_assets,
+            previous_shot=previous_spec,
         )
+        previous_spec = spec
         s.prompt_final = compiled.prompt_final
         s.negative_prompt = compiled.negative_prompt
         s.prompt_hash = compiled.prompt_hash

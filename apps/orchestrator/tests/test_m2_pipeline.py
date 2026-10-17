@@ -73,7 +73,7 @@ async def test_m2_script_import_bible_extraction_and_continuity(client: AsyncCli
     code_names = {b["code_name"] for b in bible}
     assert "char_conan_edogawa" in code_names
     assert "char_ran_mouri" in code_names
-    assert "loc_qu_n_c_ph_poirot" in code_names
+    assert "loc_quan_ca_phe_poirot" in code_names
 
     # 4. Kiểm tra Shot 2 tự động kế thừa Location của Scene 1 và có Prompt Hash hợp lệ
     shots = (await client.get(f"/api/v1/projects/{proj_id}/shots")).json()
