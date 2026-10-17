@@ -218,6 +218,7 @@ async def execute_workflow(
             "run_id": run_id,
             "run_mode": "dry_run",
             "status": "succeeded",
+            "execution_mode": "planning_only",
             "execution_plan_order": plan_order,
             "cache_keys": {nid: cache_keys[nid] for nid in plan_order},
         }
@@ -250,7 +251,20 @@ async def execute_workflow(
 
         # Kiểm tra Cache Entry nếu không ép chạy lại (force_rerun)
         cached = None if payload.force_rerun else await db.get(WorkflowCacheEntry, ckey)
+        # The original M3 prototype stored placeholder node refs as "verified". Do not
+        # trust legacy cache rows without an explicit execution provenance marker.
+        if cached is not None and cached.output_refs.get("execution_kind") not in {
+            "simulation", "approval", "deterministic", "provider_artifact"
+        }:
+            cached = None
         if cached is not None:
+            cached_kind = cached.output_refs.get("execution_kind")
+            cache_label = {
+                "simulation": "simulated",
+                "approval": "approval",
+                "deterministic": "deterministic",
+                "provider_artifact": "provider artifact",
+            }.get(cached_kind, "cached")
             n_exec = NodeExecution(
                 id=f"nexec_{uuid.uuid4().hex[:10]}",
                 run_id=run_id,
@@ -261,7 +275,7 @@ async def execute_workflow(
                 cache_hit=True,
                 input_snapshot=nd.config,
                 output_refs=cached.output_refs,
-                logs=[f"Cache hit ({ckey[:10]}): reused verified output."],
+                logs=[f"Cache hit ({ckey[:10]}): reused {cache_label} output."],
                 started_at=now,
                 ended_at=now,
             )
@@ -290,8 +304,17 @@ async def execute_workflow(
             node_records.append(n_exec)
             continue
 
-        # Thực thi Node bình thường và lưu vào bảng WorkflowCacheEntry
-        out_ref = {"node_id": nid, "node_type": nd.node_type, "cache_key": ckey[:12], "status": "verified"}
+        # M3 does not yet register production executors for arbitrary node types.
+        # Keep the planning/cache state machine testable, but never label placeholders as real outputs.
+        out_ref = {
+            "node_id": nid,
+            "node_type": nd.node_type,
+            "cache_key": ckey[:12],
+            "status": "simulated",
+            "execution_kind": "simulation",
+            "placeholder": True,
+            "reason": "No production node executor is registered for this node type.",
+        }
         n_exec = NodeExecution(
             id=f"nexec_{uuid.uuid4().hex[:10]}",
             run_id=run_id,
@@ -302,7 +325,7 @@ async def execute_workflow(
             cache_hit=False,
             input_snapshot=nd.config,
             output_refs=out_ref,
-            logs=[f"Executed {nd.node_type} successfully."],
+            logs=[f"Simulated {nd.node_type}; no production executor or media artifact was created."],
             started_at=now,
             ended_at=now,
         )
@@ -327,6 +350,7 @@ async def execute_workflow(
     return {
         "run_id": wf_run.id,
         "status": wf_run.status,
+        "execution_mode": "simulation",
         "execution_plan_order": plan_order,
         "node_executions": [
             {
@@ -336,6 +360,7 @@ async def execute_workflow(
                 "cache_key": nr.cache_key,
                 "cache_hit": nr.cache_hit,
                 "logs": nr.logs,
+                "output_refs": nr.output_refs,
             }
             for nr in node_records
         ],
@@ -368,7 +393,12 @@ async def approve_manual_gate_and_resume(
     now = datetime.now(timezone.utc)
     target.state = NodeExecutionState.SUCCEEDED
     target.ended_at = now
-    target.output_refs = {"approved_by": actor, "approved_at": now.isoformat()}
+    target.output_refs = {
+        "approved_by": actor,
+        "approved_at": now.isoformat(),
+        "status": "approved",
+        "execution_kind": "approval",
+    }
     target.logs = list(target.logs or []) + [f"Approved by {actor}."]
 
     if not await db.get(WorkflowCacheEntry, target.cache_key):
@@ -386,8 +416,16 @@ async def approve_manual_gate_and_resume(
             ne.state = NodeExecutionState.SUCCEEDED
             ne.started_at = now
             ne.ended_at = now
-            ne.output_refs = {"node_id": nid, "status": "resumed_and_succeeded"}
-            ne.logs = list(ne.logs or []) + ["Resumed after ManualApproval and succeeded."]
+            ne.output_refs = {
+                "node_id": nid,
+                "status": "simulated",
+                "execution_kind": "simulation",
+                "placeholder": True,
+                "reason": "No production node executor is registered for this node type.",
+            }
+            ne.logs = list(ne.logs or []) + [
+                "Resumed state-machine simulation after ManualApproval; no media was generated."
+            ]
             if not await db.get(WorkflowCacheEntry, ne.cache_key):
                 db.add(WorkflowCacheEntry(
                     cache_key=ne.cache_key,
@@ -403,11 +441,13 @@ async def approve_manual_gate_and_resume(
     return {
         "run_id": wf_run.id,
         "status": wf_run.status,
+        "execution_mode": "simulation",
         "node_executions": [
             {
                 "node_id": exec_by_nid[nid].node_id,
                 "state": exec_by_nid[nid].state.value,
                 "cache_hit": exec_by_nid[nid].cache_hit,
+                "output_refs": exec_by_nid[nid].output_refs,
             }
             for nid in wf_run.execution_plan_order
         ],

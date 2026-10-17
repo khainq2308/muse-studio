@@ -42,7 +42,7 @@ muse_media.probe.probe_video invokes FFprobe using a fixed argv list, requires a
 
 ## Queue and workflow execution status
 
-The M3 workflow API currently validates typed DAGs, builds deterministic execution plans, stores run/node records, and supports manual approval/cache paths. It does not yet execute arbitrary node implementations as production work. Redis and ARQ dependencies exist in the deployment configuration, but a separate production ARQ dispatch/poll worker and its restart-recovery contract are not considered delivered until implemented with tests.
+The M3 workflow API validates typed DAGs, builds deterministic execution plans, stores run/node records, and supports manual approval/cache paths. Until a production executor is registered for a node type, run responses explicitly label its output as simulated/placeholder; legacy cache rows without execution provenance are ignored. It still does not execute arbitrary node implementations as production work. Redis and ARQ dependencies exist in the deployment configuration, but a separate production ARQ dispatch/poll worker and its restart-recovery contract are not considered delivered until implemented with tests.
 
 ## Continuous integration
 

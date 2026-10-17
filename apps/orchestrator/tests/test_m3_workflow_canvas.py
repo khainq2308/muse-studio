@@ -57,6 +57,10 @@ async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation
     states_by_id = {n["node_id"]: n["state"] for n in run1["node_executions"]}
     assert states_by_id["n_prompt"] == "succeeded"
     assert states_by_id["n_approval"] == "waiting_approval"
+    assert run1["execution_mode"] == "simulation"
+    prompt_execution = next(n for n in run1["node_executions"] if n["node_id"] == "n_prompt")
+    assert prompt_execution["output_refs"]["status"] == "simulated"
+    assert prompt_execution["output_refs"]["placeholder"] is True
 
     # 3. Đạo diễn bấm Approve tại cổng n_approval -> Run chuyển sang succeeded
     app_res = await client.post(
