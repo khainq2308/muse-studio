@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import re
 from typing import Any
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_DEVELOPMENT_ENCRYPTION_KEY = "dev-only-32-byte-secret-key-change-me!!"
 
 
 class Settings(BaseSettings):
@@ -13,8 +18,22 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./musestudio_dev.db"
     redis_url: str = "redis://localhost:6379/0"
     media_root: str = "./storage/media"
-    secret_encryption_key: str = "dev-only-32-byte-secret-key-change-me!!"
+    secret_encryption_key: str = _DEVELOPMENT_ENCRYPTION_KEY
     studio_admin_token: str | None = None
+
+    @model_validator(mode="after")
+    def require_production_secrets(self) -> "Settings":
+        if self.environment.strip().lower() in {"prod", "production"}:
+            if not self.studio_admin_token or not self.studio_admin_token.strip():
+                raise ValueError("STUDIO_ADMIN_TOKEN is required outside development.")
+            if (
+                self.secret_encryption_key == _DEVELOPMENT_ENCRYPTION_KEY
+                or len(self.secret_encryption_key.strip()) < 32
+            ):
+                raise ValueError(
+                    "SECRET_ENCRYPTION_KEY must be a stable, non-default secret of at least 32 characters."
+                )
+        return self
 
 
 settings = Settings()
@@ -54,13 +73,13 @@ class SecretRedactor:
             "secret",
         }
         result: dict[str, Any] = {}
-        for k, v in data.items():
-            if k.lower() in sensitive_keys and isinstance(v, str):
-                result[k] = cls.redact_text(v, explicit_secrets) if "://" in v else "[REDACTED]"
-            elif isinstance(v, dict):
-                result[k] = cls.redact_dict(v, explicit_secrets)
-            elif isinstance(v, str):
-                result[k] = cls.redact_text(v, explicit_secrets)
+        for key, value in data.items():
+            if key.lower() in sensitive_keys and isinstance(value, str):
+                result[key] = cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
+            elif isinstance(value, dict):
+                result[key] = cls.redact_dict(value, explicit_secrets)
+            elif isinstance(value, str):
+                result[key] = cls.redact_text(value, explicit_secrets)
             else:
-                result[k] = v
+                result[key] = value
         return result

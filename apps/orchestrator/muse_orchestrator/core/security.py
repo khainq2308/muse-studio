@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
+
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Header, HTTPException, status
+
 from muse_orchestrator.core.config import settings
 
 
@@ -39,9 +42,17 @@ vault = SecretVault(settings.secret_encryption_key)
 
 
 async def verify_single_admin(x_studio_admin_token: str | None = Header(default=None)) -> str:
-    if settings.studio_admin_token and x_studio_admin_token != settings.studio_admin_token:
+    expected = settings.studio_admin_token
+    if expected:
+        if not x_studio_admin_token or not hmac.compare_digest(x_studio_admin_token, expected):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid X-Studio-Admin-Token.",
+            )
+    elif settings.environment.strip().lower() in {"prod", "production"}:
+        # Defensive runtime guard in addition to Settings validation.
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid X-Studio-Admin-Token.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin authentication is not configured.",
         )
     return "admin_operator"

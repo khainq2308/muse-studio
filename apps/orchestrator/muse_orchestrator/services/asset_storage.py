@@ -3,18 +3,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 MAX_UPLOAD_SIZE_BYTES = 150 * 1024 * 1024
-
-_MAGIC_SIGNATURES: dict[str, list[bytes]] = {
-    "image/png": [b"\x89PNG\r\n\x1a\n"],
-    "image/jpeg": [b"\xff\xd8\xff"],
-    "image/webp": [b"RIFF"],
-    "video/mp4": [b"ftyp"],
-}
-
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]")
 
 
@@ -45,31 +37,69 @@ class LocalAssetStorage:
 
     @staticmethod
     def verify_mime_signature(content: bytes, declared_mime: str) -> str:
-        if len(content) < 12 or declared_mime not in _MAGIC_SIGNATURES:
-            raise AssetStorageError(f"Chữ ký binary hoặc MIME '{declared_mime}' không hợp lệ.")
-        header = content[:32]
-        if not any(sig in header for sig in _MAGIC_SIGNATURES[declared_mime]):
+        if len(content) < 12:
+            raise AssetStorageError("Chữ ký binary hoặc MIME không hợp lệ.")
+
+        valid = False
+        if declared_mime == "image/png":
+            valid = content.startswith(b"\x89PNG\r\n\x1a\n")
+        elif declared_mime == "image/jpeg":
+            valid = content.startswith(b"\xff\xd8\xff")
+        elif declared_mime == "image/webp":
+            valid = content.startswith(b"RIFF") and content[8:12] == b"WEBP"
+        elif declared_mime == "video/mp4":
+            valid = content[4:8] == b"ftyp"
+        else:
+            raise AssetStorageError(f"MIME '{declared_mime}' không nằm trong danh sách cho phép.")
+
+        if not valid:
             raise AssetStorageError(f"Chữ ký binary của file không khớp với '{declared_mime}'.")
         return declared_mime
 
-    def save_bytes(self, project_id: str, filename: str, content: bytes, declared_mime: str) -> SavedAssetFile:
+    def save_bytes(
+        self,
+        project_id: str,
+        filename: str,
+        content: bytes,
+        declared_mime: str,
+    ) -> SavedAssetFile:
         if len(content) > MAX_UPLOAD_SIZE_BYTES:
             raise AssetStorageError("File vượt quá dung lượng cho phép.")
         verified_mime = self.verify_mime_signature(content, declared_mime)
         safe_name = self.sanitize_filename(filename)
         digest = hashlib.sha256(content).hexdigest()
-        safe_proj = _SAFE_FILENAME_RE.sub("_", project_id)
-        rel_dir = Path(safe_proj) / digest[:2]
-        target_dir = (self.root_path / rel_dir).resolve()
-        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_project = _SAFE_FILENAME_RE.sub("_", project_id)
+        relative_directory = Path(safe_project) / digest[:2]
+        target_directory = (self.root_path / relative_directory).resolve()
+        try:
+            target_directory.relative_to(self.root_path)
+        except ValueError as exc:
+            raise AssetStorageError("Project path escaped the media root.") from exc
+        target_directory.mkdir(parents=True, exist_ok=True)
+
         final_filename = f"{digest[:12]}_{safe_name}"
-        full_path = (target_dir / final_filename).resolve()
-        with open(full_path, "wb") as f:
-            f.write(content)
-        return SavedAssetFile(safe_name, str(rel_dir / final_filename), str(full_path), len(content), digest, verified_mime)
+        full_path = (target_directory / final_filename).resolve()
+        try:
+            full_path.relative_to(self.root_path)
+        except ValueError as exc:
+            raise AssetStorageError("Asset path escaped the media root.") from exc
+        with open(full_path, "wb") as output:
+            output.write(content)
+        return SavedAssetFile(
+            safe_filename=safe_name,
+            storage_rel_path=str(relative_directory / final_filename),
+            full_disk_path=str(full_path),
+            size_bytes=len(content),
+            sha256=digest,
+            detected_mime=verified_mime,
+        )
 
     def resolve_safe_path(self, storage_rel_path: str) -> Path:
         candidate = (self.root_path / storage_rel_path).resolve()
-        if not str(candidate).startswith(str(self.root_path)) or not candidate.is_file():
+        try:
+            candidate.relative_to(self.root_path)
+        except ValueError as exc:
+            raise AssetStorageError("Asset path escaped the media root.") from exc
+        if not candidate.is_file():
             raise AssetStorageError("Không tìm thấy file asset hợp lệ.")
         return candidate
