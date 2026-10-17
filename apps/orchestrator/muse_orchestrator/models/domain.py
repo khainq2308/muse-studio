@@ -229,6 +229,7 @@ class ShotRecord(Base):
     generation_state: Mapped[ShotGenerationState] = mapped_column(
         Enum(ShotGenerationState), default=ShotGenerationState.NOT_STARTED
     )
+    selected_take_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -297,4 +298,79 @@ class WorkflowCacheEntry(Base):
     project_id: Mapped[str] = mapped_column(String(64), index=True)
     node_type: Mapped[str] = mapped_column(String(64), nullable=False)
     output_refs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- M4: ASYNC GENERATION QUEUE, POLLING & SHOT TAKES MODELS ---
+
+class QueueTaskState(str, enum.Enum):
+    QUEUED = "queued"
+    PAUSED = "paused"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    POLL_TIMEOUT = "poll_timeout"
+    CANCELED = "canceled"
+
+
+class GenerationTaskRecord(Base):
+    """
+    Quản lý vòng đời bất đồng bộ của từng tác vụ sinh Ảnh/Video trên muse2api (Mục 3.7 & M4 PRD).
+    Đảm bảo Idempotency qua idempotency_key và phân biệt rõ POLL_TIMEOUT với FAILED.
+    """
+    __tablename__ = "generation_tasks"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    scene_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    shot_id: Mapped[str] = mapped_column(ForeignKey("shots.id", ondelete="CASCADE"), index=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("provider_connections.id"), index=True)
+
+    task_type: Mapped[str] = mapped_column(String(32), default="video")  # "image" | "video"
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=10, index=True)  # Số càng lớn càng ưu tiên
+
+    state: Mapped[QueueTaskState] = mapped_column(
+        Enum(QueueTaskState), default=QueueTaskState.QUEUED, index=True
+    )
+    external_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    account_used: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    poll_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_polls: Mapped[int] = mapped_column(Integer, default=60)
+    next_poll_delay_seconds: Mapped[float] = mapped_column(Float, default=5.0)
+
+    prompt_snapshot: Mapped[str] = mapped_column(Text, default="")
+    negative_prompt_snapshot: Mapped[str] = mapped_column(Text, default="")
+    prompt_hash: Mapped[str] = mapped_column(String(64), default="")
+
+    error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False)
+    error_message_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    history_log: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    result_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    take_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ShotTakeRecord(Base):
+    """Một Shot có thể có nhiều Takes; chỉ một Take được chọn làm selected_take_id (Mục 3.8 PRD)."""
+    __tablename__ = "shot_takes"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    shot_id: Mapped[str] = mapped_column(ForeignKey("shots.id", ondelete="CASCADE"), index=True)
+    take_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    task_id: Mapped[str] = mapped_column(ForeignKey("generation_tasks.id", ondelete="CASCADE"))
+    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"))
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    account_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    director_notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

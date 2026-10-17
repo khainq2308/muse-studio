@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import enum
 from dataclasses import dataclass, field
 from typing import Protocol, Any
@@ -44,6 +43,17 @@ class ModelCapability:
 
 
 @dataclass
+class ImageGenerationRequest:
+    shot_id: str
+    prompt: str
+    negative_prompt: str = ""
+    model_id: str = "muse-image-v1"
+    aspect_ratio: str = "16:9"
+    reference_image_urls: list[str] = field(default_factory=list)
+    idempotency_key: str = ""
+
+
+@dataclass
 class VideoGenerationRequest:
     shot_id: str
     prompt: str
@@ -83,6 +93,7 @@ class StoredMedia:
 class VideoProvider(Protocol):
     async def health(self) -> ProviderHealth: ...
     async def list_models(self) -> list[ModelCapability]: ...
+    async def generate_image(self, request: ImageGenerationRequest) -> ProviderTask: ...
     async def generate_video(self, request: VideoGenerationRequest) -> ProviderTask: ...
     async def get_task(self, task_id: str) -> ProviderTaskStatus: ...
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia: ...
@@ -91,11 +102,11 @@ class VideoProvider(Protocol):
 def classify_http_error(status_code: int, body_text: str = "") -> ProviderFailure:
     lower_body = body_text.lower()
     if status_code in (401, 403):
-        return ProviderFailure(ErrorCategory.AUTH_FAILED, "Xác thực thất bại.", status_code, False)
-    if status_code == 402 or (status_code == 429 and ("quota" in lower_body or "credit" in lower_body)):
-        return ProviderFailure(ErrorCategory.QUOTA_EXHAUSTED, "Hết quota/credit.", status_code, False)
+        return ProviderFailure(ErrorCategory.AUTH_FAILED, "Xác thực thất bại hoặc cookie/key hết hạn.", status_code, False)
+    if status_code == 402 or (status_code == 429 and ("quota" in lower_body or "credit" in lower_body or "exhausted" in lower_body)):
+        return ProviderFailure(ErrorCategory.QUOTA_EXHAUSTED, "Tài khoản trên pool đã hết quota/credit.", status_code, False)
     if status_code == 429:
         return ProviderFailure(ErrorCategory.RATE_LIMITED, "Rate limited tạm thời.", status_code, True)
     if 400 <= status_code < 500:
         return ProviderFailure(ErrorCategory.INVALID_REQUEST, f"Request không hợp lệ ({status_code}).", status_code, False)
-    return ProviderFailure(ErrorCategory.UPSTREAM_5XX, f"Lỗi upstream ({status_code}).", status_code, True)
+    return ProviderFailure(ErrorCategory.UPSTREAM_5XX, f"Lỗi máy chủ upstream ({status_code}).", status_code, True)
