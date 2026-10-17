@@ -1,9 +1,16 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.core.database import init_db
+from muse_orchestrator.providers.base import ProviderFailure
+from muse_orchestrator.services.asset_storage import AssetStorageError
+from muse_orchestrator.services.workflow_engine import WorkflowValidationError
+
 from muse_orchestrator.api.projects import router as projects_router
 from muse_orchestrator.api.connections import router as connections_router
 from muse_orchestrator.api.assets import router as assets_router
@@ -11,6 +18,7 @@ from muse_orchestrator.api.pipeline import router as pipeline_router
 from muse_orchestrator.api.workflows import router as workflows_router
 from muse_orchestrator.api.queue import router as queue_router
 from muse_orchestrator.api.batch import router as batch_router
+from muse_orchestrator.api.timeline import router as timeline_router
 
 
 @asynccontextmanager
@@ -19,7 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
-app = FastAPI(title="MuseStudio Orchestrator API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="MuseStudio Orchestrator API", version="0.6.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,6 +37,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(AssetStorageError)
+async def asset_storage_exception_handler(request: Request, exc: AssetStorageError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": SecretRedactor.redact_text(str(exc))},
+    )
+
+
+@app.exception_handler(WorkflowValidationError)
+async def workflow_validation_exception_handler(request: Request, exc: WorkflowValidationError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": SecretRedactor.redact_text(str(exc))},
+    )
+
+
+@app.exception_handler(ProviderFailure)
+async def provider_failure_exception_handler(request: Request, exc: ProviderFailure) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content={
+            "detail": SecretRedactor.redact_text(str(exc)),
+            "category": exc.category.value,
+            "retryable": exc.retryable,
+        },
+    )
+
+
 app.include_router(projects_router)
 app.include_router(connections_router)
 app.include_router(assets_router)
@@ -36,8 +73,9 @@ app.include_router(pipeline_router)
 app.include_router(workflows_router)
 app.include_router(queue_router)
 app.include_router(batch_router)
+app.include_router(timeline_router)
 
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    return {"status": "ok", "service": "muse-orchestrator", "milestone": "M5"}
+    return {"status": "ok", "service": "muse-orchestrator", "milestone": "M6"}

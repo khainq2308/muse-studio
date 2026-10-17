@@ -136,7 +136,7 @@ async def step_generation_task(
 
 
 @router.post("/tasks/{task_id}/pause")
-async def pause_task(task_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def pause_task(task_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
     task = await db.get(GenerationTaskRecord, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -148,7 +148,7 @@ async def pause_task(task_id: str, db: AsyncSession = Depends(get_db)) -> dict[s
 
 
 @router.post("/tasks/{task_id}/resume")
-async def resume_task(task_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def resume_task(task_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
     task = await db.get(GenerationTaskRecord, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -160,7 +160,7 @@ async def resume_task(task_id: str, db: AsyncSession = Depends(get_db)) -> dict[
 
 
 @router.post("/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def cancel_task(task_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
     task = await db.get(GenerationTaskRecord, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -204,7 +204,7 @@ async def list_shot_takes(shot_id: str, db: AsyncSession = Depends(get_db)) -> l
 
 
 @router.post("/shots/{shot_id}/takes/{take_id}/select")
-async def select_shot_take(shot_id: str, take_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def select_shot_take(shot_id: str, take_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
     shot = await db.get(ShotRecord, shot_id)
     if not shot:
         raise HTTPException(status_code=404, detail="Shot không tồn tại.")

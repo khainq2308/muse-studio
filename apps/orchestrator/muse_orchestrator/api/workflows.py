@@ -146,6 +146,7 @@ async def autosave_canvas_layout(
     workflow_id: str,
     payload: WorkflowLayoutOnlyIn,
     db: AsyncSession = Depends(get_db),
+    actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """Lưu vị trí toạ độ node trên Canvas mà không làm thay đổi Merkle Cache Key của logic."""
     wf = await db.get(WorkflowDefinition, workflow_id)

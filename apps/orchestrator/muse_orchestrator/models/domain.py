@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import enum
 from datetime import datetime, timezone
 from typing import Any
@@ -14,6 +13,8 @@ def utcnow() -> datetime:
 class Base(DeclarativeBase):
     pass
 
+
+# --- 4 NHÓM TRẠNG THÁI ĐỘC LẬP (MỤC 7 PRD) ---
 
 class ShotApprovalState(str, enum.Enum):
     DRAFT = "draft"
@@ -54,9 +55,28 @@ class ConnectionHealthState(str, enum.Enum):
     UNAVAILABLE = "unavailable"
 
 
+class QueueTaskState(str, enum.Enum):
+    QUEUED = "queued"
+    PAUSED = "paused"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    POLL_TIMEOUT = "poll_timeout"
+    CANCELED = "canceled"
+
+
+class ExportJobState(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELED = "canceled"
+
+
+# --- M1: FOUNDATION MODELS ---
+
 class Project(Base):
     __tablename__ = "projects"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -72,7 +92,6 @@ class Project(Base):
 
 class ProjectRevision(Base):
     __tablename__ = "project_revisions"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -83,7 +102,6 @@ class ProjectRevision(Base):
 
 class ProviderConnection(Base):
     __tablename__ = "provider_connections"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     provider_type: Mapped[str] = mapped_column(String(64), default="muse2api")
@@ -106,7 +124,6 @@ class ProviderConnection(Base):
 
 class Asset(Base):
     __tablename__ = "assets"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     scene_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
@@ -125,7 +142,6 @@ class Asset(Base):
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     actor: Mapped[str] = mapped_column(String(128), default="admin_operator")
     action: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -138,13 +154,11 @@ class AuditEvent(Base):
 # --- M2: SCRIPT STUDIO, STORY BIBLE & SHOT PIPELINE MODELS ---
 
 class ScriptRevision(Base):
-    """Lưu lịch sử kịch bản gốc; phân tích AI không bao giờ tự động ghi đè bản gốc (Mục 3.2 PRD)."""
     __tablename__ = "script_revisions"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_format: Mapped[str] = mapped_column(String(32), default="markdown")  # markdown | museflow | txt | json
+    source_format: Mapped[str] = mapped_column(String(32), default="markdown")
     raw_content: Mapped[str] = mapped_column(Text, nullable=False)
     structured_proposal_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     diff_summary: Mapped[str] = mapped_column(Text, default="")
@@ -153,24 +167,15 @@ class ScriptRevision(Base):
 
 
 class StoryBibleEntry(Base):
-    """
-    Quản lý thống nhất 4 danh mục Story Bible (Mục 3.3 PRD):
-    entry_type: 'character' | 'location' | 'style' | 'prop'
-    """
     __tablename__ = "story_bible_entries"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     entry_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    code_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)  # VD: char_conan, loc_cafe
+    code_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     immutable_traits: Mapped[str] = mapped_column(Text, default="")
     mutable_attributes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     reference_asset_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
-    first_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    last_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    previous_shot_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    next_shot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     requires_reference_lock: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -178,7 +183,6 @@ class StoryBibleEntry(Base):
 
 class SceneRecord(Base):
     __tablename__ = "scenes"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     scene_index: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -192,7 +196,6 @@ class SceneRecord(Base):
 
 class ShotRecord(Base):
     __tablename__ = "shots"
-
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     scene_id: Mapped[str] = mapped_column(ForeignKey("scenes.id", ondelete="CASCADE"), index=True)
@@ -214,13 +217,17 @@ class ShotRecord(Base):
     action_end: Mapped[str] = mapped_column(Text, default="")
     dialogue: Mapped[str] = mapped_column(Text, default="")
     continuity_notes: Mapped[str] = mapped_column(Text, default="")
-    continuity_mode: Mapped[str] = mapped_column(String(32), default="standard")  # standard | frame_chain
+    continuity_mode: Mapped[str] = mapped_column(String(32), default="standard")
 
     duration_seconds: Mapped[float] = mapped_column(Float, default=5.0)
     aspect_ratio: Mapped[str] = mapped_column(String(16), default="16:9")
 
     requires_reference_lock: Mapped[bool] = mapped_column(Boolean, default=False)
     reference_asset_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    first_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    previous_shot_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    next_shot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     prompt_final: Mapped[str] = mapped_column(Text, default="")
     negative_prompt: Mapped[str] = mapped_column(Text, default="")
@@ -252,7 +259,6 @@ class WorkflowDefinition(Base):
 
 
 class WorkflowVersion(Base):
-    """Lưu trữ tách biệt logic đồ thị (nodes/edges) và vị trí giao diện (ui_layout_json) theo Mục 3.6 PRD."""
     __tablename__ = "workflow_versions"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), index=True)
@@ -270,8 +276,8 @@ class WorkflowRun(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), index=True)
     workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    run_mode: Mapped[str] = mapped_column(String(32), default="full")  # full | dry_run | from_here | downstream
-    status: Mapped[str] = mapped_column(String(32), default="running")  # running | waiting_approval | succeeded | failed | canceled
+    run_mode: Mapped[str] = mapped_column(String(32), default="full")
+    status: Mapped[str] = mapped_column(String(32), default="running")
     execution_plan_order: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -305,23 +311,9 @@ class WorkflowCacheEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-# --- M4: ASYNC GENERATION QUEUE, POLLING & SHOT TAKES MODELS ---
-
-class QueueTaskState(str, enum.Enum):
-    QUEUED = "queued"
-    PAUSED = "paused"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    POLL_TIMEOUT = "poll_timeout"
-    CANCELED = "canceled"
-
+# --- M4 & M5: ASYNC GENERATION QUEUE, TAKES & BATCH RENDER MODELS ---
 
 class GenerationTaskRecord(Base):
-    """
-    Quản lý vòng đời bất đồng bộ của từng tác vụ sinh Ảnh/Video trên muse2api (Mục 3.7 & M4 PRD).
-    Đảm bảo Idempotency qua idempotency_key và phân biệt rõ POLL_TIMEOUT với FAILED.
-    """
     __tablename__ = "generation_tasks"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
@@ -329,10 +321,10 @@ class GenerationTaskRecord(Base):
     shot_id: Mapped[str] = mapped_column(ForeignKey("shots.id", ondelete="CASCADE"), index=True)
     connection_id: Mapped[str] = mapped_column(ForeignKey("provider_connections.id"), index=True)
 
-    task_type: Mapped[str] = mapped_column(String(32), default="video")  # "image" | "video"
+    task_type: Mapped[str] = mapped_column(String(32), default="video")
     model_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
-    priority: Mapped[int] = mapped_column(Integer, default=10, index=True)  # Số càng lớn càng ưu tiên
+    priority: Mapped[int] = mapped_column(Integer, default=10, index=True)
 
     state: Mapped[QueueTaskState] = mapped_column(
         Enum(QueueTaskState), default=QueueTaskState.QUEUED, index=True
@@ -364,7 +356,6 @@ class GenerationTaskRecord(Base):
 
 
 class ShotTakeRecord(Base):
-    """Một Shot có thể có nhiều Takes; chỉ một Take được chọn làm selected_take_id (Mục 3.8 PRD)."""
     __tablename__ = "shot_takes"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
@@ -372,28 +363,25 @@ class ShotTakeRecord(Base):
     take_number: Mapped[int] = mapped_column(Integer, nullable=False)
     task_id: Mapped[str] = mapped_column(ForeignKey("generation_tasks.id", ondelete="CASCADE"))
     asset_id: Mapped[str] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"))
+    first_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_id: Mapped[str] = mapped_column(String(128), nullable=False)
     prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     account_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    is_selected: Mapped[bool] = mapped_column(Boolean, default=False)
-    first_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    last_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     continuity_flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     director_notes: Mapped[str] = mapped_column(Text, default="")
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-# --- M5: BATCH RENDER & CONTINUITY QA MODELS ---
-
 class BatchRenderJobRecord(Base):
-    """Lưu vết một lần chạy Batch Render Fan-Out trên toàn Project hoặc Scene (Mục 3.7 & M5 PRD)."""
     __tablename__ = "batch_render_jobs"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     scene_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     connection_id: Mapped[str] = mapped_column(ForeignKey("provider_connections.id"), index=True)
     model_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), default="running")  # running | completed | partial_failure
+    status: Mapped[str] = mapped_column(String(32), default="running")
     total_shots: Mapped[int] = mapped_column(Integer, default=0)
     enqueued_count: Mapped[int] = mapped_column(Integer, default=0)
     skipped_unchanged_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -401,5 +389,80 @@ class BatchRenderJobRecord(Base):
     task_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     skipped_shot_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     blocked_shot_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# --- M6: TIMELINE EDITOR & FFMPEG EXPORT MODELS ---
+
+class TimelineSequenceRecord(Base):
+    __tablename__ = "timeline_sequences"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255), default="Main Edit Sequence")
+    aspect_ratio: Mapped[str] = mapped_column(String(16), default="16:9")
+    fps: Mapped[int] = mapped_column(Integer, default=24)
+    resolution_profile: Mapped[str] = mapped_column(String(32), default="1920x1080")
+    total_duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    title_card_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    subtitle_format: Mapped[str] = mapped_column(String(16), default="srt")
+    subtitle_content: Mapped[str] = mapped_column(Text, default="")
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TimelineTrackRecord(Base):
+    __tablename__ = "timeline_tracks"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sequence_id: Mapped[str] = mapped_column(ForeignKey("timeline_sequences.id", ondelete="CASCADE"), index=True)
+    track_index: Mapped[int] = mapped_column(Integer, default=0)
+    track_type: Mapped[str] = mapped_column(String(32), default="video")  # video | audio | voice_over | music | subtitle
+    name: Mapped[str] = mapped_column(String(128), default="V1 - Main Video")
+    muted: Mapped[bool] = mapped_column(Boolean, default=False)
+    volume: Mapped[float] = mapped_column(Float, default=1.0)
+    clips_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
+class TimelineClipRecord(Base):
+    __tablename__ = "timeline_clips"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sequence_id: Mapped[str] = mapped_column(ForeignKey("timeline_sequences.id", ondelete="CASCADE"), index=True)
+    track_id: Mapped[str] = mapped_column(ForeignKey("timeline_tracks.id", ondelete="CASCADE"), index=True)
+    shot_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    take_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    source_duration_seconds: Mapped[float] = mapped_column(Float, default=5.0)
+    trim_start_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    trim_end_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    effective_duration_seconds: Mapped[float] = mapped_column(Float, default=5.0)
+    transition_type: Mapped[str] = mapped_column(String(32), default="hard_cut")  # hard_cut | cross_dissolve
+    transition_duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    volume: Mapped[float] = mapped_column(Float, default=1.0)
+    fade_in_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    fade_out_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class ExportJobRecord(Base):
+    __tablename__ = "export_jobs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    sequence_id: Mapped[str] = mapped_column(ForeignKey("timeline_sequences.id", ondelete="CASCADE"), index=True)
+    state: Mapped[ExportJobState] = mapped_column(
+        Enum(ExportJobState), default=ExportJobState.QUEUED, index=True
+    )
+    aspect_ratio: Mapped[str] = mapped_column(String(16), default="16:9")
+    fps: Mapped[int] = mapped_column(Integer, default=24)
+    resolution: Mapped[str] = mapped_column(String(32), default="1920x1080")
+    video_codec: Mapped[str] = mapped_column(String(32), default="h264")
+    audio_codec: Mapped[str] = mapped_column(String(32), default="aac")
+    ffmpeg_args_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    manifest_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    output_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ffprobe_verification_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_message_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
