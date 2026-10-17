@@ -64,7 +64,7 @@ def test_request_metrics_histogram_buckets_are_cumulative() -> None:
     )
 
     rendered = metrics.render_prometheus()
-    assert 'method="GET",route="/test/{item_id}",le="0.025"' in rendered
-    assert 'method="GET",route="/test/{item_id}",le="0.05"} 1' in rendered
-    assert 'method="GET",route="/test/{item_id}",le="+Inf"} 1' in rendered
+    assert 'le="0.025",method="GET",route="/test/{item_id}"} 0' in rendered
+    assert 'le="0.05",method="GET",route="/test/{item_id}"} 1' in rendered
+    assert 'le="+Inf",method="GET",route="/test/{item_id}"} 1' in rendered
     assert 'method="GET",route="/test/{item_id}"} 1' in rendered
