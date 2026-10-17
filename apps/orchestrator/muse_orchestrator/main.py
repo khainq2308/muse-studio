@@ -1,12 +1,14 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.core.database import init_db
+from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.providers.base import ProviderFailure
 from muse_orchestrator.services.asset_storage import AssetStorageError
 from muse_orchestrator.services.workflow_engine import WorkflowValidationError
@@ -38,6 +40,11 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(ApplicationError)
+async def application_error_handler(_request: Request, exc: ApplicationError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
 @app.exception_handler(AssetStorageError)
 async def asset_storage_exception_handler(request: Request, exc: AssetStorageError) -> JSONResponse:
     return JSONResponse(
@@ -66,14 +73,15 @@ async def provider_failure_exception_handler(request: Request, exc: ProviderFail
     )
 
 
-app.include_router(projects_router)
-app.include_router(connections_router)
-app.include_router(assets_router)
-app.include_router(pipeline_router)
-app.include_router(workflows_router)
-app.include_router(queue_router)
-app.include_router(batch_router)
-app.include_router(timeline_router)
+_protected_dependencies = [Depends(verify_single_admin)]
+app.include_router(projects_router, dependencies=_protected_dependencies)
+app.include_router(connections_router, dependencies=_protected_dependencies)
+app.include_router(assets_router, dependencies=_protected_dependencies)
+app.include_router(pipeline_router, dependencies=_protected_dependencies)
+app.include_router(workflows_router, dependencies=_protected_dependencies)
+app.include_router(queue_router, dependencies=_protected_dependencies)
+app.include_router(batch_router, dependencies=_protected_dependencies)
+app.include_router(timeline_router, dependencies=_protected_dependencies)
 
 
 @app.get("/healthz")

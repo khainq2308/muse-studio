@@ -291,7 +291,7 @@ async def launch_ffmpeg_export(
 
     aspect = payload.aspect_ratio or seq.aspect_ratio
     fps = payload.fps or seq.fps
-    res = TimelineValidationService.resolve_resolution(aspect, payload.resolution or seq.resolution_profile)
+    res = TimelineValidationService.resolve_resolution(aspect, payload.resolution)
 
     export_id = f"exp_{uuid.uuid4().hex[:10]}"
     out_dir = os.path.join(settings.media_root, project_id, "exports")
