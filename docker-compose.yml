@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: muse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-muse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-muse_secret_db_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-musestudio}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-muse} -d ${POSTGRES_DB:-musestudio}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: muse-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  orchestrator-api:
+    build:
+      context: ./apps/orchestrator
+      dockerfile: Dockerfile
+    container_name: muse-orchestrator-api
+    restart: unless-stopped
+    command: uvicorn muse_orchestrator.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-muse_secret_db_pass}@postgres:5432/${POSTGRES_DB:-musestudio}
+      REDIS_URL: redis://redis:6379/0
+      MEDIA_ROOT: /data/media
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-dev-only-32-byte-secret-key-change-me!!}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/orchestrator:/workspace/apps/orchestrator
+      - media_storage:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  studio-web:
+    build:
+      context: ./apps/studio-web
+      dockerfile: Dockerfile
+    container_name: muse-studio-web
+    restart: unless-stopped
+    environment:
+      VITE_ORCHESTRATOR_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/studio-web:/workspace/apps/studio-web
+      - /workspace/apps/studio-web/node_modules
+    depends_on:
+      - orchestrator-api
+
+volumes:
+  pg_data:
+  redis_data:
+  media_storage:
