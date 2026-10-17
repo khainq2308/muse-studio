@@ -2,7 +2,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timezone
 from typing import Any
-from sqlalchemy import String, Integer, Float, Boolean, ForeignKey, DateTime, Enum, JSON, Text
+from sqlalchemy import String, Integer, Float, Boolean, ForeignKey, DateTime, Enum, JSON, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -466,3 +466,53 @@ class ExportJobRecord(Base):
     error_message_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# --- M7: MULTI-CONNECTION ACCOUNTS / PROXIES, BACKUP ---
+
+
+class ConnectionAccount(Base):
+    """M7: one provider account under a ProviderConnection.
+
+    A connection may hold several accounts (e.g. multiple muse2api API keys),
+    each with its own optional proxy. Secrets are stored encrypted; API
+    responses only ever expose masked values and the proxy display host.
+    """
+
+    __tablename__ = "connection_accounts"
+    __table_args__ = (UniqueConstraint("connection_id", "label", name="uq_account_connection_label"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("provider_connections.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key_masked: Mapped[str] = mapped_column(String(64), default="[NOT_SET]")
+    encrypted_proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proxy_display_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    health_state: Mapped[ConnectionHealthState] = mapped_column(
+        Enum(ConnectionHealthState), default=ConnectionHealthState.UNKNOWN
+    )
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_error_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BackupRecord(Base):
+    """M7: a project backup archive (ZIP stored under media_root/backups)."""
+
+    __tablename__ = "project_backups"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_rel_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

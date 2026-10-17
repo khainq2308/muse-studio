@@ -189,10 +189,13 @@ class ConnectionService:
                 connection.last_error_redacted = SecretRedactor.redact_text(
                     str(exc), [raw_api_key or ""]
                 )
+        account_count = len(await self.repository.list_accounts(connection.id))
         connection.capabilities_snapshot = {
             "probed_at": connection.last_checked_at.isoformat(),
             "models": models,
-            "per_account_proxy": "unsupported",
+            # M7: per-account proxy becomes available once accounts are attached.
+            "per_account_proxy": "supported" if account_count > 0 else "unsupported",
+            "account_count": account_count,
             "quota_lookup": "unsupported",
         }
         return await self.repository.save_connection(connection)
@@ -257,3 +260,4 @@ class AssetService:
             raise ApplicationError(500, "Stored asset path is invalid or missing.") from exc
         await self.repository.delete_asset(asset)
         file_path.unlink(missing_ok=True)
+
