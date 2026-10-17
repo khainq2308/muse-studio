@@ -153,9 +153,11 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(client: AsyncC
     assert isinstance(exp["ffmpeg_args"], list) and exp["ffmpeg_args"][0] == "ffmpeg"
 
 
-
 @pytest.mark.asyncio
-async def test_application_errors_preserve_http_status_and_detail(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
+async def test_application_errors_preserve_http_status_and_detail(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
     from muse_orchestrator.core import security
 
     monkeypatch.setattr(security.settings, "studio_admin_token", "expected-admin-token")
@@ -174,7 +176,7 @@ async def test_application_errors_preserve_http_status_and_detail(client: AsyncC
         headers=headers,
     )
     assert missing_project.status_code == 404
-    assert missing_project.json() == {"detail": "Không tìm thấy dự án gốc."}
+    assert missing_project.json() == {"detail": "Original project not found."}
 
 
 @pytest.mark.asyncio
