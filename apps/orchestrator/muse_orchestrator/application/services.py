@@ -189,13 +189,12 @@ class ConnectionService:
                 connection.last_error_redacted = SecretRedactor.redact_text(
                     str(exc), [raw_api_key or ""]
                 )
-        account_count = len(await self.repository.list_accounts(connection.id))
+        accounts = await self.repository.list_connection_accounts(connection_id)
         connection.capabilities_snapshot = {
             "probed_at": connection.last_checked_at.isoformat(),
             "models": models,
-            # M7: per-account proxy becomes available once accounts are attached.
-            "per_account_proxy": "supported" if account_count > 0 else "unsupported",
-            "account_count": account_count,
+            "per_account_proxy": "supported" if accounts else "unsupported",
+            "account_count": len(accounts),
             "quota_lookup": "unsupported",
         }
         return await self.repository.save_connection(connection)
@@ -248,6 +247,16 @@ class AssetService:
                 pass
             raise
 
+    async def get_asset_file(self, asset_id: str) -> tuple[Asset, Path]:
+        """Return the asset row and its file, which is guaranteed to sit inside the media root."""
+        asset = await self.repository.get_asset(asset_id)
+        if asset is None:
+            raise ApplicationError(404, "Asset không tồn tại.")
+        try:
+            return asset, self.storage.resolve_safe_path(asset.storage_rel_path)
+        except AssetStorageError as exc:
+            raise ApplicationError(404, "File của asset không còn trên máy chủ.") from exc
+
     async def delete_asset(self, asset_id: str, force: bool = False) -> None:
         asset = await self.repository.get_asset(asset_id)
         if asset is None:
@@ -260,4 +269,3 @@ class AssetService:
             raise ApplicationError(500, "Stored asset path is invalid or missing.") from exc
         await self.repository.delete_asset(asset)
         file_path.unlink(missing_ok=True)
-
