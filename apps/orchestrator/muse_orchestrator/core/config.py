@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./musestudio_dev.db"
     redis_url: str = "redis://localhost:6379/0"
     media_root: str = "./storage/media"
+    # M7: orphan media cleanup (ARQ cron) and project backups.
+    orphan_cleanup_enabled: bool = True
+    orphan_cleanup_retention_hours: float = 24.0
+    backup_retention_count: int = 10
     secret_encryption_key: str = _DEVELOPMENT_ENCRYPTION_KEY
     studio_admin_token: str | None = None
 
@@ -83,3 +87,4 @@ class SecretRedactor:
             else:
                 result[key] = value
         return result
+

@@ -21,6 +21,10 @@ from muse_orchestrator.api.workflows import router as workflows_router
 from muse_orchestrator.api.queue import router as queue_router
 from muse_orchestrator.api.batch import router as batch_router
 from muse_orchestrator.api.timeline import router as timeline_router
+from muse_orchestrator.api.connection_accounts import router as connection_accounts_router
+from muse_orchestrator.api.metrics import router as metrics_router
+from muse_orchestrator.api.maintenance import router as maintenance_router
+from muse_orchestrator.api.backups import router as backups_router
 
 
 @asynccontextmanager
@@ -29,7 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
-app = FastAPI(title="MuseStudio Orchestrator API", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="MuseStudio Orchestrator API", version="0.7.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,8 +86,13 @@ app.include_router(workflows_router, dependencies=_protected_dependencies)
 app.include_router(queue_router, dependencies=_protected_dependencies)
 app.include_router(batch_router, dependencies=_protected_dependencies)
 app.include_router(timeline_router, dependencies=_protected_dependencies)
+app.include_router(connection_accounts_router, dependencies=_protected_dependencies)
+app.include_router(metrics_router, dependencies=_protected_dependencies)
+app.include_router(maintenance_router, dependencies=_protected_dependencies)
+app.include_router(backups_router, dependencies=_protected_dependencies)
 
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    return {"status": "ok", "service": "muse-orchestrator", "milestone": "M6"}
+    return {"status": "ok", "service": "muse-orchestrator", "milestone": "M7"}
+
