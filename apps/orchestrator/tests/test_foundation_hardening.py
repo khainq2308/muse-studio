@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 import pytest
-from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
@@ -22,27 +21,28 @@ async def test_all_product_api_routes_require_admin_token_when_configured(
     monkeypatch.setattr(security.settings, "studio_admin_token", "expected-admin-token")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         product_routes = [
-            route
-            for route in app.routes
-            if isinstance(route, APIRoute) and route.path.startswith("/api/v1/")
+            (method.upper(), path)
+            for path, operations in app.openapi()["paths"].items()
+            if path.startswith("/api/v1/")
+            for method in operations
+            if method.lower() in {"get", "post", "put", "patch", "delete"}
         ]
         assert product_routes, "Expected registered product API routes"
 
-        # Derive test requests from every registered API route so new GET/POST/
-        # PUT/PATCH/DELETE handlers are covered automatically.
-        for route in product_routes:
-            path = re.sub(r"\{[^}]+\}", "auth-test-id", route.path)
-            for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
-                response = await client.request(
-                    method,
-                    path,
-                    params={"take_a_id": "auth-test-a", "take_b_id": "auth-test-b"},
-                )
-                assert response.status_code == 401, (
-                    f"{method} {route.path} should require admin auth, "
-                    f"got {response.status_code}: {response.text}"
-                )
-                assert response.json()["detail"] == "Invalid X-Studio-Admin-Token."
+        # Derive test requests from the OpenAPI route table so every documented
+        # GET/POST/PUT/PATCH/DELETE handler is covered automatically.
+        for method, route_template in product_routes:
+            path = re.sub(r"\{[^}]+\}", "auth-test-id", route_template)
+            response = await client.request(
+                method,
+                path,
+                params={"take_a_id": "auth-test-a", "take_b_id": "auth-test-b"},
+            )
+            assert response.status_code == 401, (
+                f"{method} {route_template} should require admin auth, "
+                f"got {response.status_code}: {response.text}"
+            )
+            assert response.json()["detail"] == "Invalid X-Studio-Admin-Token."
 
         # The operational health check intentionally remains public.
         health = await client.get("/healthz")
