@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 import csv
 import io
-import json
 import uuid
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -371,45 +369,11 @@ async def list_project_shots(project_id: str, db: AsyncSession = Depends(get_db)
             "negative_prompt": s.negative_prompt,
             "prompt_hash": s.prompt_hash,
             "lint_report": s.lint_report_json,
-            "approval_state": s.approval_state.value if hasattr(s.approval_state, "value") else s.approval_state,
-            "generation_state": s.generation_state.value if hasattr(s.generation_state, "value") else s.generation_state,
+            "approval_state": s.approval_state,
+            "generation_state": s.generation_state,
         }
         for s in shots
     ]
-
-
-@router.get("/shots/export")
-async def export_shot_list(
-    project_id: str,
-    format: str = "json",
-    db: AsyncSession = Depends(get_db),
-) -> Response:
-    shots = await list_project_shots(project_id, db)
-    if format.lower() == "csv":
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow([
-            "sequence_index", "shot_id", "title", "location_code", "subject_codes",
-            "shot_size", "camera_motion", "duration_seconds", "approval_state",
-            "generation_state", "prompt_hash", "prompt_final"
-        ])
-        for s in shots:
-            writer.writerow([
-                s["sequence_index"], s["id"], s["title"], s["location_code"],
-                "|".join(s["subject_codes"]), s["shot_size"], s["camera_motion"],
-                s["duration_seconds"], s["approval_state"],
-                s["generation_state"],
-                s["prompt_hash"], s["prompt_final"]
-            ])
-        return Response(
-            content=buf.getvalue(),
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{project_id}_shots.csv"'},
-        )
-    return Response(
-        content=json.dumps({"project_id": project_id, "shots": shots}, ensure_ascii=False, indent=2, default=str),
-        media_type="application/json",
-    )
 
 
 @router.patch("/shots/{shot_id}")
@@ -447,6 +411,41 @@ async def update_and_review_shot(
         "prompt_final": shot.prompt_final,
         "prompt_hash": shot.prompt_hash,
         "lint_report": shot.lint_report_json,
-        "approval_state": shot.approval_state.value if hasattr(shot.approval_state, "value") else shot.approval_state,
-        "generation_state": shot.generation_state.value if hasattr(shot.generation_state, "value") else shot.generation_state,
+        "approval_state": shot.approval_state,
+        "generation_state": shot.generation_state,
     }
+
+
+@router.get("/shots/export")
+async def export_shot_list(
+    project_id: str,
+    format: str = "json",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    shots = await list_project_shots(project_id, db)
+    if format.lower() == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "sequence_index", "shot_id", "title", "location_code", "subject_codes",
+            "shot_size", "camera_motion", "duration_seconds", "approval_state",
+            "generation_state", "prompt_hash", "prompt_final"
+        ])
+        for s in shots:
+            writer.writerow([
+                s["sequence_index"], s["id"], s["title"], s["location_code"],
+                "|".join(s["subject_codes"]), s["shot_size"], s["camera_motion"],
+                s["duration_seconds"], s["approval_state"].value if hasattr(s["approval_state"], "value") else s["approval_state"],
+                s["generation_state"].value if hasattr(s["generation_state"], "value") else s["generation_state"],
+                s["prompt_hash"], s["prompt_final"]
+            ])
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{project_id}_shots.csv"'},
+        )
+    import json
+    return Response(
+        content=json.dumps({"project_id": project_id, "shots": shots}, ensure_ascii=False, indent=2),
+        media_type="application/json",
+    )

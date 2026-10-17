@@ -1,11 +1,9 @@
 from __future__ import annotations
-
 import os
 import tempfile
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import StaticPool
 
 _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m2_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
@@ -18,12 +16,7 @@ from muse_orchestrator.models.domain import Base
 
 @pytest.fixture()
 async def client():
-    test_engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
+    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     TestSessionLocal = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -36,7 +29,6 @@ async def client():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
         yield ac
     app.dependency_overrides.clear()
-    await test_engine.dispose()
 
 
 SAMPLE_MUSEFLOW_SCRIPT = """
