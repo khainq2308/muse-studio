@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,7 +23,10 @@ _KV_LINE_RE = re.compile(r"^\s*[-*]?\s*\**([A-Za-zÀ-ỹ_ ]+)\**\s*:\s*(.+)$")
 
 
 def _slugify(prefix: str, text: str) -> str:
-    clean = re.sub(r"[^a-zA-Z0-9]+", "_", text.strip().lower()).strip("_")
+    # Vietnamese "đ" does not decompose under NFKD, so transliterate it first.
+    normalized = text.strip().lower().replace("đ", "d")
+    ascii_text = unicodedata.normalize("NFKD", normalized).encode("ascii", "ignore").decode("ascii")
+    clean = re.sub(r"[^a-z0-9]+", "_", ascii_text).strip("_")
     return f"{prefix}_{clean[:24]}" if clean else f"{prefix}_default"
 
 

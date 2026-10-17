@@ -84,6 +84,133 @@ _DYNAMIC_CAMERA_KEYWORDS = re.compile(
 )
 
 
+# Conservative inter-shot checks: warnings only unless a future policy explicitly
+# upgrades them. These checks never infer that a location change is impossible.
+_CONTINUITY_TRANSITION_HINTS = re.compile(
+    r"\b(cutaway|establishing shot|transition|location change|new location|cut to|match cut|montage)\b"
+    r"|chuyển cảnh|cắt sang|đổi bối cảnh|toàn cảnh mở đầu",
+    re.IGNORECASE,
+)
+_GENERIC_HANDOFF_VALUES = {
+    "",
+    "in position",
+    "neutral pose",
+    "pose completed",
+    "completes motion",
+    "completes the motion",
+    "motion completed",
+    "same position",
+    "same as prior",
+    "no specific state",
+}
+_CONTINUITY_STOP_WORDS = {
+    "a", "an", "and", "at", "by", "from", "in", "into", "is", "it", "of", "on",
+    "or", "the", "to", "was", "were", "with", "đang", "được", "là", "một",
+    "vẫn", "bên", "trong", "ngoài", "của",
+}
+_STATE_PATTERNS = {
+    "open": re.compile(r"\b(?:open|opened|opens|mở)\b", re.IGNORECASE),
+    "closed": re.compile(r"\b(?:closed|shut|shuts|đóng|khép)\b", re.IGNORECASE),
+    "inside": re.compile(r"\b(?:inside|indoors|bên\s+trong|trong\s+phòng)\b", re.IGNORECASE),
+    "outside": re.compile(r"\b(?:outside|outdoors|bên\s+ngoài|ngoài\s+phòng)\b", re.IGNORECASE),
+    "standing": re.compile(r"\b(?:standing|stands|stand|đứng)\b", re.IGNORECASE),
+    "sitting": re.compile(r"\b(?:sitting|sits|sit|ngồi)\b", re.IGNORECASE),
+    "lying": re.compile(r"\b(?:lying|lies|lay|nằm)\b", re.IGNORECASE),
+}
+_INCOMPATIBLE_STATES = (
+    ("open", "closed"),
+    ("inside", "outside"),
+    ("standing", "sitting"),
+    ("standing", "lying"),
+    ("sitting", "lying"),
+)
+
+
+def _meaningful_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[^\W_]+", value.casefold(), flags=re.UNICODE)
+        if len(token) > 1 and token not in _CONTINUITY_STOP_WORDS
+    }
+
+
+def _has_incompatible_handoff_state(previous_end: str, current_start: str) -> bool:
+    previous_states = {name for name, pattern in _STATE_PATTERNS.items() if pattern.search(previous_end)}
+    current_states = {name for name, pattern in _STATE_PATTERNS.items() if pattern.search(current_start)}
+    incompatible = any(
+        left in previous_states and right in current_states
+        for left, right in _INCOMPATIBLE_STATES
+    )
+    if not incompatible:
+        return False
+
+    # Require a shared meaningful noun/entity token to avoid flagging unrelated
+    # states that happen to appear in the two descriptions.
+    return bool(_meaningful_tokens(previous_end) & _meaningful_tokens(current_start))
+
+
+def _lint_inter_shot_continuity(
+    shot: ShotSpec,
+    previous_shot: ShotSpec | None,
+    issues: list[LintIssue],
+) -> None:
+    if previous_shot is None:
+        return
+    if shot.scene_id != previous_shot.scene_id:
+        # A scene boundary may intentionally reset location and physical state.
+        return
+    if shot.sequence_index != previous_shot.sequence_index + 1:
+        # Do not compare across gaps in the shot sequence.
+        return
+
+    if shot.location_id != previous_shot.location_id:
+        if not _CONTINUITY_TRANSITION_HINTS.search(shot.continuity_notes):
+            issues.append(
+                LintIssue(
+                    "LOCATION_CONTINUITY_BREAK",
+                    "warning",
+                    (
+                        f"Location changes from '{previous_shot.location_id}' to "
+                        f"'{shot.location_id}' inside the same scene; confirm this is intentional "
+                        "or split the scene."
+                    ),
+                    "location_id",
+                )
+            )
+        # Handoff checks are meaningful only when adjacent shots share a location.
+        return
+
+    previous_end = previous_shot.action_end.strip()
+    current_start = shot.action_start.strip()
+    if _has_incompatible_handoff_state(previous_end, current_start):
+        issues.append(
+            LintIssue(
+                "ACTION_HANDOFF_CONFLICT",
+                "warning",
+                (
+                    "The previous shot's ending state conflicts with this shot's starting state; "
+                    "review the transition or describe the intervening action."
+                ),
+                "action_start",
+            )
+        )
+    elif (
+        re.sub(r"[\W_]+", " ", previous_end.casefold()).strip() in _GENERIC_HANDOFF_VALUES
+        or re.sub(r"[\W_]+", " ", current_start.casefold()).strip() in _GENERIC_HANDOFF_VALUES
+    ):
+        issues.append(
+            LintIssue(
+                "ACTION_HANDOFF_UNSPECIFIED",
+                "warning",
+                (
+                    "The adjacent shots use a generic or empty action handoff; specify the exact "
+                    "visual state at the end of the previous shot and start of this shot."
+                ),
+                "action_start",
+            )
+        )
+
+
 class PromptCompiler:
     @staticmethod
     def compile_and_lint(
@@ -92,8 +219,10 @@ class PromptCompiler:
         characters: dict[str, CharacterLock],
         locations: dict[str, LocationLock],
         available_assets: set[str],
+        previous_shot: ShotSpec | None = None,
     ) -> CompiledPromptResult:
         issues: list[LintIssue] = []
+        _lint_inter_shot_continuity(shot, previous_shot, issues)
 
         if shot.requires_reference_lock and not shot.reference_asset_ids:
             issues.append(
