@@ -79,7 +79,7 @@ class ProjectService:
     async def duplicate_project(self, project_id: str) -> Project:
         original = await self.repository.get_project(project_id)
         if original is None:
-            raise ApplicationError(404, "Không tìm thấy dự án gốc.")
+            raise ApplicationError(404, "Original project not found.")
         project_id_new = f"proj_{uuid.uuid4().hex[:10]}"
         cloned = Project(
             id=project_id_new,
