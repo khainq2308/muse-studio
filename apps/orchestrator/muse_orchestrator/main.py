@@ -37,7 +37,19 @@ app = FastAPI(title="MuseStudio Orchestrator API", version="0.7.0", lifespan=lif
 @app.middleware("http")
 async def collect_http_request_metrics(request: Request, call_next):
     started = time.perf_counter()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed = time.perf_counter() - started
+        route = getattr(request.scope.get("route"), "path", "/__unmatched__")
+        request_metrics.observe(
+            method=request.method,
+            route=route,
+            status_code=500,
+            duration_seconds=elapsed,
+        )
+        raise
+
     elapsed = time.perf_counter() - started
     route = getattr(request.scope.get("route"), "path", "/__unmatched__")
     request_metrics.observe(
