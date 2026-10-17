@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from muse_orchestrator.api.dependencies import get_asset_service
@@ -60,6 +61,20 @@ async def upload_asset(
         is_locked_reference=is_locked_reference,
     )
     return _to_asset_out(asset)
+
+
+@router.get("/{asset_id}/download")
+async def download_asset(
+    asset_id: str,
+    service: AssetService = Depends(get_asset_service),
+) -> FileResponse:
+    asset, path = await service.get_asset_file(asset_id)
+    return FileResponse(
+        path,
+        media_type=asset.mime_type,
+        filename=asset.filename,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)

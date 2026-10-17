@@ -31,4 +31,4 @@ Hoặc chạy bộ kiểm thử orchestrator:
 
 ## Current implementation boundary
 
-Project/connection/asset endpoints now use application services and a shared repository adapter. Workflow DAG validation/cache behavior is present, but production ARQ dispatch/polling, persistent media-engine job execution and final timeline export remain roadmap work. See docs/ARCHITECTURE.md, docs/IMPLEMENTATION_PLAN.md, and docs/MUSE2API_CAPABILITY_MATRIX.md.
+Project/connection/asset endpoints now use application services and a shared repository adapter. Workflow DAG validation/cache behavior is present, but production ARQ dispatch/polling, persistent media-engine job execution and the remaining export features (title card, subtitles, audio mixing) remain roadmap work. Timeline export itself renders the real clips with FFmpeg and requires FFmpeg/FFprobe on the server. See docs/ARCHITECTURE.md, docs/IMPLEMENTATION_PLAN.md, and docs/MUSE2API_CAPABILITY_MATRIX.md.

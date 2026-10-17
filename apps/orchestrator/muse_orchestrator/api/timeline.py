@@ -1,14 +1,15 @@
 from __future__ import annotations
+import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from muse_orchestrator.core.config import settings
+from muse_orchestrator.core.config import SecretRedactor, settings
 from muse_orchestrator.core.database import get_db
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
@@ -16,7 +17,10 @@ from muse_orchestrator.models.domain import (
     TimelineSequenceRecord, TimelineTrackRecord, TimelineClipRecord,
     ExportJobRecord, ExportJobState
 )
-from muse_orchestrator.services.timeline_service import TimelineValidationService
+from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage
+from muse_orchestrator.services.timeline_service import (
+    ExportClip, ExportError, TimelineValidationService
+)
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/timeline", tags=["M6 Timeline Editor & FFmpeg Export"])
 
@@ -264,6 +268,61 @@ async def get_latest_project_timeline(
     }
 
 
+async def _resolve_export_clips(
+    db: AsyncSession, project_id: str, sequence_id: str
+) -> tuple[list[ExportClip], list[str]]:
+    """Map the sequence's clip rows to real video files that belong to this project."""
+    rows = (
+        await db.execute(
+            select(TimelineClipRecord)
+            .where(TimelineClipRecord.sequence_id == sequence_id)
+            .order_by(TimelineClipRecord.order_index.asc())
+        )
+    ).scalars().all()
+    storage = LocalAssetStorage(settings.media_root)
+    clips: list[ExportClip] = []
+    unresolved: list[str] = []
+    for row in rows:
+        asset_id = row.asset_id
+        if not asset_id and row.take_id:
+            take = await db.get(ShotTakeRecord, row.take_id)
+            if take is not None and take.project_id == project_id:
+                asset_id = take.asset_id
+        asset = await db.get(Asset, asset_id) if asset_id else None
+        if asset is None or asset.project_id != project_id or not asset.mime_type.startswith("video/"):
+            unresolved.append(f"clip #{row.order_index}: không có asset video thuộc project này")
+            continue
+        try:
+            path = storage.resolve_safe_path(asset.storage_rel_path)
+        except AssetStorageError:
+            unresolved.append(f"clip #{row.order_index}: file asset không còn trên đĩa")
+            continue
+        clips.append(
+            ExportClip(
+                path=str(path),
+                effective_duration=row.effective_duration_seconds,
+                trim_start=row.trim_start_seconds,
+                transition_type=row.transition_type,
+                transition_duration=row.transition_duration_seconds,
+                start_time=row.start_time_seconds,
+            )
+        )
+    return clips, unresolved
+
+
+def _unsupported_export_features(seq: TimelineSequenceRecord) -> list[str]:
+    """Timeline features the exporter does not render yet, so the caller is never misled."""
+    manifest = seq.manifest_json or {}
+    features = ["clip_audio"]  # output always carries a silent AAC track, clip audio is not mixed
+    if manifest.get("title_card"):
+        features.append("title_card")
+    if manifest.get("has_subtitles"):
+        features.append("subtitles")
+    if manifest.get("audio_tracks"):
+        features.append("audio_tracks")
+    return features
+
+
 @router.post("/exports", status_code=status.HTTP_201_CREATED)
 async def launch_ffmpeg_export(
     project_id: str,
@@ -272,8 +331,9 @@ async def launch_ffmpeg_export(
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """
-    Thực thi FFmpeg Export ra MP4 (H.264 + AAC) ở phía Backend, lưu vào Asset Library
-    và xác thực kết quả bằng FFprobe (Mục 3.9, M6 & Tiêu chí nghiệm thu #12 PRD).
+    Render the timeline's real clips to MP4 (H.264 + AAC) with FFmpeg, verify the file with FFprobe
+    and store it in the Asset Library. A failed render or a failed verification is recorded as a
+    FAILED export job and returned as an error; no asset is created for it.
     """
     if payload.sequence_id:
         seq = await db.get(TimelineSequenceRecord, payload.sequence_id)
@@ -293,21 +353,61 @@ async def launch_ffmpeg_export(
     fps = payload.fps or seq.fps
     res = TimelineValidationService.resolve_resolution(aspect, payload.resolution)
 
+    clips, unresolved = await _resolve_export_clips(db, project_id, seq.id)
+    if unresolved:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Không thể export vì còn clip thiếu video: " + "; ".join(unresolved),
+        )
+    unsupported = _unsupported_export_features(seq)
+
     export_id = f"exp_{uuid.uuid4().hex[:10]}"
     out_dir = os.path.join(settings.media_root, project_id, "exports")
 
-    out_path, size_bytes, sha256_hex, ffmpeg_args, probe_meta = TimelineValidationService.render_and_probe_mp4(
-        output_dir=out_dir,
-        export_id=export_id,
-        aspect_ratio=aspect,
-        fps=fps,
-        resolution=res,
-        total_duration=max(1.0, seq.total_duration_seconds),
-    )
+    try:
+        # FFmpeg is a blocking subprocess; keep it off the event loop.
+        out_path, size_bytes, sha256_hex, ffmpeg_args, probe_meta = await asyncio.to_thread(
+            TimelineValidationService.render_and_probe_mp4,
+            output_dir=out_dir,
+            export_id=export_id,
+            fps=fps,
+            resolution=res,
+            clips=clips,
+        )
+        if not probe_meta.get("valid"):
+            raise ExportError(
+                "File export không vượt qua kiểm tra FFprobe.",
+                ffmpeg_args=ffmpeg_args,
+                probe_meta=probe_meta,
+            )
+    except ExportError as exc:
+        message = SecretRedactor.redact_text(exc.message)
+        db.add(ExportJobRecord(
+            id=export_id,
+            project_id=project_id,
+            sequence_id=seq.id,
+            state=ExportJobState.FAILED,
+            aspect_ratio=aspect,
+            fps=fps,
+            resolution=res,
+            video_codec="h264",
+            audio_codec="aac",
+            ffmpeg_args_json=exc.ffmpeg_args,
+            manifest_snapshot_json=seq.manifest_json,
+            ffprobe_verification_json=exc.probe_meta,
+            error_message_redacted=message,
+            finished_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"export_id": export_id, "state": ExportJobState.FAILED.value, "message": message},
+        ) from exc
 
+    probe_meta["unsupported_features"] = unsupported
     asset_id = f"ast_exp_{uuid.uuid4().hex[:8]}"
     rel_path = os.path.relpath(out_path, settings.media_root)
-    export_asset = Asset(
+    db.add(Asset(
         id=asset_id,
         project_id=project_id,
         asset_type="video",
@@ -317,14 +417,12 @@ async def launch_ffmpeg_export(
         size_bytes=size_bytes,
         sha256=sha256_hex,
         is_locked_reference=False,
-    )
-    db.add(export_asset)
-
+    ))
     job = ExportJobRecord(
         id=export_id,
         project_id=project_id,
         sequence_id=seq.id,
-        state=ExportJobState.SUCCEEDED if probe_meta.get("valid") else ExportJobState.FAILED,
+        state=ExportJobState.SUCCEEDED,
         aspect_ratio=aspect,
         fps=fps,
         resolution=res,
@@ -352,4 +450,5 @@ async def launch_ffmpeg_export(
         "download_url": f"/api/v1/assets/{asset_id}/download",
         "ffmpeg_args": ffmpeg_args,
         "ffprobe_verification": probe_meta,
+        "unsupported_features": unsupported,
     }

@@ -40,6 +40,18 @@ Before public deployment, also configure TLS, restrictive CORS origins, rate lim
 
 muse_media.probe.probe_video invokes FFprobe using a fixed argv list, requires a valid video stream and positive dimensions/duration, and records an exact decoded-frame count. muse_media.boundary_frames.extract_boundary_frames uses FFmpeg to extract frame index zero and the last decoded frame, validates PNG output, and records SHA-256 hashes. These utilities do not yet run as queued jobs or write MediaAsset records; wiring them into the orchestrator is a later milestone.
 
+## Timeline export
+
+POST /api/v1/projects/{id}/timeline/exports renders the sequence's real video clips with FFmpeg: each clip is trimmed, scaled and padded to the output frame, then joined with a hard cut (concat) or cross dissolve (xfade); timeline gaps are filled with black. The exporter runs off the event loop and then verifies the file with FFprobe (H.264 video, AAC audio, expected size, duration within tolerance). Clips must be video assets that belong to the same project.
+
+An export that cannot produce a verified MP4 is never reported as successful: a missing FFmpeg/FFprobe (503), an FFmpeg failure or a failed verification (422) is stored as a FAILED export job, returned as an error, and creates no asset. The finished file is served by GET /api/v1/assets/{asset_id}/download.
+
+Not rendered yet, and listed in every response as unsupported_features: clip audio (the output carries a silent AAC track), title card, subtitles and extra audio tracks.
+
+## Provider media downloads
+
+Muse2ApiAdapter.download_result sends the provider API key only to the provider's own origin. Result URLs on any other host must use https and never receive the key; redirects are followed manually (at most 3) and re-checked on every hop. Non-http(s) schemes, scheme-relative URLs and path-traversal media ids are refused before any request is made.
+
 ## Queue and workflow execution status
 
 The M3 workflow API validates typed DAGs, builds deterministic execution plans, stores run/node records, and supports manual approval/cache paths. Until a production executor is registered for a node type, run responses explicitly label its output as simulated/placeholder; legacy cache rows without execution provenance are ignored. It still does not execute arbitrary node implementations as production work. Redis and ARQ dependencies exist in the deployment configuration, but a separate production ARQ dispatch/poll worker and its restart-recovery contract are not considered delivered until implemented with tests.
