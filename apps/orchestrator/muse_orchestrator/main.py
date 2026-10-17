@@ -1,14 +1,16 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
+import time
 from collections.abc import AsyncGenerator
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.core.database import init_db
 from muse_orchestrator.core.security import verify_single_admin
+from muse_orchestrator.metrics import request_metrics
 from muse_orchestrator.providers.base import ProviderFailure
 from muse_orchestrator.services.asset_storage import AssetStorageError
 from muse_orchestrator.services.workflow_engine import WorkflowValidationError
@@ -29,7 +31,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
-app = FastAPI(title="MuseStudio Orchestrator API", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="MuseStudio Orchestrator API", version="0.7.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def collect_http_request_metrics(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - started
+    route = getattr(request.scope.get("route"), "path", "/__unmatched__")
+    request_metrics.observe(
+        method=request.method,
+        route=route,
+        status_code=response.status_code,
+        duration_seconds=elapsed,
+    )
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +99,15 @@ app.include_router(workflows_router, dependencies=_protected_dependencies)
 app.include_router(queue_router, dependencies=_protected_dependencies)
 app.include_router(batch_router, dependencies=_protected_dependencies)
 app.include_router(timeline_router, dependencies=_protected_dependencies)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics(_actor: str = Depends(verify_single_admin)) -> PlainTextResponse:
+    """Expose bounded-cardinality HTTP metrics for authenticated scrapers/operators."""
+    return PlainTextResponse(
+        content=request_metrics.render_prometheus(),
+        media_type="text/plain; version=0.0.4",
+    )
 
 
 @app.get("/healthz")
