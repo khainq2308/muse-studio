@@ -217,6 +217,13 @@ export const App: React.FC = () => {
     setShotForm(selectedShot ? shotFormFromShot(selectedShot) : null);
   }, [selectedShot]);
 
+  useEffect(() => {
+    setEditingBibleEntry(null);
+    setBibleForm(emptyBibleForm());
+    setLastImport(null);
+    setSelectedShotId('');
+  }, [selectedProjectId]);
+
   function notify(kind: NoticeKind, message: string) { setNotice({ kind, message }); }
 
   async function handleCreateProject(event: React.FormEvent<HTMLFormElement>) {
@@ -245,8 +252,8 @@ export const App: React.FC = () => {
     if (!selectedProject || scriptText.trim().length < 5) {
       notify('error', 'Chọn project và nhập kịch bản có ít nhất 5 ký tự.'); return;
     }
-    if (applyProposal && (shots.length > 0 || bibleEntries.length > 0)) {
-      const confirmed = window.confirm('Áp dụng proposal sẽ thay thế toàn bộ Story Bible, scenes và shots hiện có trong project. Kịch bản gốc vẫn được lưu thành revision. Tiếp tục?');
+    if (applyProposal) {
+      const confirmed = window.confirm('Áp dụng proposal sẽ ghi lại Story Bible, scenes và shots theo nội dung phân tích. Dữ liệu đã có trong các khu vực này sẽ bị thay thế; kịch bản gốc vẫn được lưu thành revision. Xác nhận apply?');
       if (!confirmed) return;
     }
     setImportingScript(true); setLastImport(null);
@@ -432,10 +439,10 @@ export const App: React.FC = () => {
               <div className="script-toolbar"><label className="field compact-field">Source format<select value={scriptFormat} onChange={(event) => setScriptFormat(event.target.value)}><option value="museflow">MuseFlow Node Blocks</option><option value="markdown">Markdown</option><option value="txt">Plain text</option><option value="json">JSON</option></select></label><span className="character-count">{scriptText.length.toLocaleString()} characters</span></div>
               <textarea className="script-textarea" value={scriptText} onChange={(event) => setScriptText(event.target.value)} placeholder={'SCENE 1: Quán Cà Phê Poirot — Đêm mưa\nSHOT 1: Conan quan sát chiếc cốc\n- Character: Conan Edogawa\n- Location: Quán Cà Phê Poirot\n- Camera: slow push-in\n- Action: Conan nhìn xuống chiếc cốc, rồi ngước mắt về phía cửa sổ\n- Duration: 4.5\n\nSHOT 2: Ran nhận ra dấu hiệu bất thường\n- Character: Ran Mouri\n- Camera: static\n- Action: Ran đặt cốc xuống và nghiêng người nhìn Conan\n- Duration: 5.0'} spellCheck={false} />
               <div className="script-actions">
-                <button type="button" className="button button-secondary" disabled={importingScript || scriptText.trim().length < 5 || apiState !== 'online'} onClick={() => void handleImportScript(false)}>{importingScript ? 'Đang xử lý…' : 'Analyze & save revision'}</button>
-                <button type="button" className="button button-primary" disabled={importingScript || scriptText.trim().length < 5 || apiState !== 'online'} onClick={() => void handleImportScript(true)}>{importingScript ? 'Đang xử lý…' : 'Apply to Story Bible + Shots'} <span>→</span></button>
+                <button type="button" className="button button-secondary" disabled={importingScript || workspaceLoading || scriptText.trim().length < 5 || apiState !== 'online'} onClick={() => void handleImportScript(false)}>{importingScript ? 'Đang xử lý…' : 'Analyze & save revision'}</button>
+                <button type="button" className="button button-primary" disabled={importingScript || workspaceLoading || scriptText.trim().length < 5 || apiState !== 'online'} onClick={() => void handleImportScript(true)}>{importingScript ? 'Đang xử lý…' : 'Apply to Story Bible + Shots'} <span>→</span></button>
               </div>
-              <div className="callout callout-warning"><span className="callout-icon">!</span><p><strong>Apply proposal sẽ thay thế workspace hiện tại.</strong> Nếu đã có Story Bible hoặc shots, ứng dụng sẽ yêu cầu xác nhận trước khi ghi đè. Dùng Analyze & save revision nếu chỉ muốn lưu revision và phân tích.</p></div>
+              <div className="callout callout-warning"><span className="callout-icon">!</span><p><strong>Apply proposal sẽ thay thế workspace hiện tại.</strong> Ứng dụng luôn yêu cầu xác nhận trước khi ghi vào workspace; dữ liệu hiện có sẽ bị thay thế. Dùng Analyze & save revision nếu chỉ muốn lưu revision và phân tích.</p></div>
               {lastImport && <div className="import-result">
                 <div className="import-result-heading"><span className="result-check">✓</span><div><strong>Revision #{lastImport.version_number} saved</strong><small>{lastImport.raw_content_preserved ? 'Original script preserved' : 'Check source retention'}</small></div></div>
                 <div className="result-metrics"><div><strong>{lastImport.detected_scenes}</strong><span>Scenes detected</span></div><div><strong>{lastImport.detected_characters}</strong><span>Characters</span></div><div><strong>{lastImport.detected_locations}</strong><span>Locations</span></div><div><strong>{lastImport.generated_shots}</strong><span>Shots applied</span></div></div>
@@ -484,7 +491,7 @@ export const App: React.FC = () => {
                   <label className="field">Mutable attributes <span className="field-hint">JSON object</span><textarea className="code-textarea" rows={5} spellCheck={false} value={bibleForm.mutable_attributes} onChange={(event) => setBibleForm({ ...bibleForm, mutable_attributes: event.target.value })} placeholder={'{"current_outfit":"signature outfit"}'} /></label>
                   <label className="field">Reference asset IDs <span className="field-hint">Phân cách bằng dấu phẩy</span><input value={bibleForm.reference_asset_ids} onChange={(event) => setBibleForm({ ...bibleForm, reference_asset_ids: event.target.value })} placeholder="asset-id-1, asset-id-2" /></label>
                   <label className="checkbox-field"><input type="checkbox" checked={bibleForm.requires_reference_lock} onChange={(event) => setBibleForm({ ...bibleForm, requires_reference_lock: event.target.checked })} /><span><strong>Require reference lock</strong><small>Shots có thể bị block khi asset bắt buộc chưa tồn tại.</small></span></label>
-                  <button className="button button-primary button-full" type="submit" disabled={savingBible || !selectedProjectId}>{savingBible ? 'Đang lưu…' : 'Save & recompile prompts'}</button>
+                  <button className="button button-primary button-full" type="submit" disabled={savingBible || workspaceLoading || !selectedProjectId}>{savingBible ? 'Đang lưu…' : 'Save & recompile prompts'}</button>
                 </form>
               </section>
             </div>
@@ -518,7 +525,7 @@ export const App: React.FC = () => {
                     <label className="field">Action<textarea rows={4} value={shotForm.action} onChange={(event) => setShotForm({ ...shotForm, action: event.target.value })} /></label>
                     <div className="form-grid form-grid-compact"><label className="field">Duration (seconds)<input type="number" min="0.1" max="300" step="0.1" value={shotForm.duration_seconds} onChange={(event) => setShotForm({ ...shotForm, duration_seconds: event.target.value })} /></label>
                       <label className="field">Approval state<select value={shotForm.approval_state} onChange={(event) => setShotForm({ ...shotForm, approval_state: event.target.value })}><option value="draft">Draft</option><option value="needs_review">Needs review</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label></div>
-                    <button type="submit" className="button button-primary button-full" disabled={savingShot}>{savingShot ? 'Đang lưu…' : 'Save shot & re-run lint'}</button>
+                    <button type="submit" className="button button-primary button-full" disabled={savingShot || workspaceLoading}>{savingShot ? 'Đang lưu…' : 'Save shot & re-run lint'}</button>
                   </form>
                   <div className="detail-divider" /><div className="detail-section-heading"><h3>Prompt preview</h3><span className="hash-chip">SHA {selectedShot.prompt_hash ? selectedShot.prompt_hash.slice(0, 10) : '—'}</span></div>
                   <pre className="prompt-preview">{selectedShot.prompt_final || 'Prompt sẽ xuất hiện sau khi pipeline biên dịch shot.'}</pre>
