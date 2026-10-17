@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import os
 import tempfile
 import pytest
@@ -47,7 +48,10 @@ SHOT 2: Culprit drops the key
 
 
 @pytest.mark.asyncio
-async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(client: AsyncClient):
+async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
     # 1. Tạo Project, Connection Mock, Import Script (2 shots)
     p_res = await client.post("/api/v1/projects", json={"name": "M6 Final Cut Movie", "aspect_ratio": "16:9", "fps": 24})
     proj_id = p_res.json()["id"]
@@ -136,12 +140,31 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(client: AsyncC
     assert "TIMELINE_GAP" in warning_codes
     assert custom_tl["total_duration_seconds"] == 10.0  # kết thúc ở 5.0 + (6.0 - 1.0) = 10.0s
 
-    # 6. Xuất MP4 bằng FFmpeg Export Engine & Kiểm tra FFprobe Verification (Tiêu chí nghiệm thu #12)
+    # 6. Export: the mock provider's "videos" are placeholder bytes that FFmpeg cannot decode, so the
+    # render itself is stubbed here. What this test pins down is that the exporter is handed the
+    # real clips of the sequence (resolved to files inside the media root) and that the result is
+    # stored as a downloadable asset. Real FFmpeg behaviour is covered in test_timeline_export.py.
+    render_calls: list[dict] = []
+
+    def fake_render(*, output_dir: str, export_id: str, fps: int, resolution: str, clips: list):
+        render_calls.append({"fps": fps, "resolution": resolution, "clips": clips})
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f"{export_id}.mp4")
+        data = b"\x00\x00\x00\x18ftypmp42" + b"exported-bytes"
+        with open(out_path, "wb") as handle:
+            handle.write(data)
+        width, height = (int(v) for v in resolution.split("x"))
+        probe = {"valid": True, "probed_by": "unit_test", "codec_name": "h264", "audio_codec": "aac",
+                 "width": width, "height": height, "duration_seconds": 9.5}
+        return out_path, len(data), hashlib.sha256(data).hexdigest(), ["ffmpeg", "-y"], probe
+
+    monkeypatch.setattr(TimelineValidationService, "render_and_probe_mp4", fake_render)
+
     exp_res = await client.post(
         f"/api/v1/projects/{proj_id}/timeline/exports",
         json={"sequence_id": tl["sequence_id"], "aspect_ratio": "9:16", "fps": 30},
     )
-    assert exp_res.status_code == 201
+    assert exp_res.status_code == 201, exp_res.text
     exp = exp_res.json()
     assert exp["state"] == "succeeded"
     assert exp["video_codec"] == "h264"
@@ -151,6 +174,22 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(client: AsyncC
     assert exp["ffprobe_verification"]["width"] == 1080
     assert exp["ffprobe_verification"]["height"] == 1920
     assert isinstance(exp["ffmpeg_args"], list) and exp["ffmpeg_args"][0] == "ffmpeg"
+
+    # The exporter received both real clips, in order, as files that exist on disk.
+    assert len(render_calls) == 1
+    clips = render_calls[0]["clips"]
+    assert [round(c.effective_duration, 3) for c in clips] == [4.0, 6.0]
+    assert all(os.path.isfile(c.path) for c in clips)
+    assert clips[1].transition_type == "cross_dissolve"
+
+    # Title card, subtitles and audio tracks are not rendered yet, and the response says so.
+    assert exp["unsupported_features"] == ["clip_audio", "title_card", "subtitles", "audio_tracks"]
+
+    # download_url points at a route that really serves the exported file.
+    download = await client.get(exp["download_url"])
+    assert download.status_code == 200
+    assert download.content == b"\x00\x00\x00\x18ftypmp42" + b"exported-bytes"
+    assert download.headers["content-type"] == "video/mp4"
 
 
 @pytest.mark.asyncio
@@ -198,18 +237,17 @@ async def test_timeline_export_resolution_defaults_and_custom_override(
     assert sequence_response.status_code == 201
     sequence_id = sequence_response.json()["sequence_id"]
 
-    render_calls: list[tuple[str, str]] = []
+    render_calls: list[str] = []
 
     def fake_render_and_probe_mp4(
         *,
         output_dir: str,
         export_id: str,
-        aspect_ratio: str,
         fps: int,
         resolution: str,
-        total_duration: float,
+        clips: list,
     ):
-        render_calls.append((aspect_ratio, resolution))
+        render_calls.append(resolution)
         width, height = (int(value) for value in resolution.split("x"))
         probe = {
             "valid": True,
@@ -218,7 +256,7 @@ async def test_timeline_export_resolution_defaults_and_custom_override(
             "audio_codec": "aac",
             "width": width,
             "height": height,
-            "duration_seconds": max(1.0, total_duration),
+            "duration_seconds": 1.0,
         }
         return (
             os.path.join(output_dir, f"{export_id}.mp4"),
@@ -253,8 +291,4 @@ async def test_timeline_export_resolution_defaults_and_custom_override(
         assert export["ffprobe_verification"]["width"] == expected_width
         assert export["ffprobe_verification"]["height"] == expected_height
 
-    assert render_calls == [
-        ("9:16", "1080x1920"),
-        ("1:1", "1080x1080"),
-        ("9:16", "720x1280"),
-    ]
+    assert render_calls == ["1080x1920", "1080x1080", "720x1280"]

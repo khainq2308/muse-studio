@@ -245,6 +245,16 @@ class AssetService:
                 pass
             raise
 
+    async def get_asset_file(self, asset_id: str) -> tuple[Asset, Path]:
+        """Return the asset row and its file, which is guaranteed to sit inside the media root."""
+        asset = await self.repository.get_asset(asset_id)
+        if asset is None:
+            raise ApplicationError(404, "Asset không tồn tại.")
+        try:
+            return asset, self.storage.resolve_safe_path(asset.storage_rel_path)
+        except AssetStorageError as exc:
+            raise ApplicationError(404, "File của asset không còn trên máy chủ.") from exc
+
     async def delete_asset(self, asset_id: str, force: bool = False) -> None:
         asset = await self.repository.get_asset(asset_id)
         if asset is None:
