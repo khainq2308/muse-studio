@@ -189,10 +189,12 @@ class ConnectionService:
                 connection.last_error_redacted = SecretRedactor.redact_text(
                     str(exc), [raw_api_key or ""]
                 )
+        accounts = await self.repository.list_connection_accounts(connection_id)
         connection.capabilities_snapshot = {
             "probed_at": connection.last_checked_at.isoformat(),
             "models": models,
-            "per_account_proxy": "unsupported",
+            "per_account_proxy": "supported" if accounts else "unsupported",
+            "account_count": len(accounts),
             "quota_lookup": "unsupported",
         }
         return await self.repository.save_connection(connection)
