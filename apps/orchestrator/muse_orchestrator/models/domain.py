@@ -231,3 +231,70 @@ class ShotRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# --- M3: WORKFLOW CANVAS & EXECUTION ENGINE MODELS ---
+
+class WorkflowDefinition(Base):
+    __tablename__ = "workflows"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    current_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class WorkflowVersion(Base):
+    """Lưu trữ tách biệt logic đồ thị (nodes/edges) và vị trí giao diện (ui_layout_json) theo Mục 3.6 PRD."""
+    __tablename__ = "workflow_versions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), default="1.0")
+    nodes_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    edges_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    ui_layout_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), index=True)
+    workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_mode: Mapped[str] = mapped_column(String(32), default="full")  # full | dry_run | from_here | downstream
+    status: Mapped[str] = mapped_column(String(32), default="running")  # running | waiting_approval | succeeded | failed | canceled
+    execution_plan_order: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NodeExecution(Base):
+    __tablename__ = "node_executions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id", ondelete="CASCADE"), index=True)
+    node_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    node_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[NodeExecutionState] = mapped_column(
+        Enum(NodeExecutionState), default=NodeExecutionState.IDLE
+    )
+    cache_key: Mapped[str] = mapped_column(String(64), index=True)
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+    input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    output_refs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    logs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkflowCacheEntry(Base):
+    __tablename__ = "workflow_cache_entries"
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    node_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    output_refs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
