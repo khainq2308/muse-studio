@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+
 import pytest
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
@@ -11,25 +14,35 @@ from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAss
 
 
 @pytest.mark.asyncio
-async def test_api_routes_require_admin_token_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_all_product_api_routes_require_admin_token_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from muse_orchestrator.core import security
 
     monkeypatch.setattr(security.settings, "studio_admin_token", "expected-admin-token")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        protected_routes = [
-            ("GET", "/api/v1/projects"),
-            ("GET", "/api/v1/connections"),
-            ("DELETE", "/api/v1/assets/asset-auth-test"),
-            ("GET", "/api/v1/projects/project-auth-test/story-bible"),
-            ("POST", "/api/v1/projects/project-auth-test/workflows"),
-            ("GET", "/api/v1/queue/tasks"),
-            ("POST", "/api/v1/projects/project-auth-test/batch/tick"),
-            ("GET", "/api/v1/projects/project-auth-test/timeline"),
+        product_routes = [
+            route
+            for route in app.routes
+            if isinstance(route, APIRoute) and route.path.startswith("/api/v1/")
         ]
-        for method, path in protected_routes:
-            response = await client.request(method, path)
-            assert response.status_code == 401, f"{method} {path}: {response.text}"
-            assert response.json()["detail"] == "Invalid X-Studio-Admin-Token."
+        assert product_routes, "Expected registered product API routes"
+
+        # Derive test requests from every registered API route so new GET/POST/
+        # PUT/PATCH/DELETE handlers are covered automatically.
+        for route in product_routes:
+            path = re.sub(r"\{[^}]+\}", "auth-test-id", route.path)
+            for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+                response = await client.request(
+                    method,
+                    path,
+                    params={"take_a_id": "auth-test-a", "take_b_id": "auth-test-b"},
+                )
+                assert response.status_code == 401, (
+                    f"{method} {route.path} should require admin auth, "
+                    f"got {response.status_code}: {response.text}"
+                )
+                assert response.json()["detail"] == "Invalid X-Studio-Admin-Token."
 
         # The operational health check intentionally remains public.
         health = await client.get("/healthz")
