@@ -16,9 +16,26 @@ async def test_api_routes_require_admin_token_when_configured(monkeypatch: pytes
 
     monkeypatch.setattr(security.settings, "studio_admin_token", "expected-admin-token")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        for path in ("/api/v1/projects", "/api/v1/connections"):
-            response = await client.get(path)
-            assert response.status_code == 401
+        protected_routes = [
+            ("GET", "/api/v1/projects"),
+            ("GET", "/api/v1/connections"),
+            ("DELETE", "/api/v1/assets/asset-auth-test"),
+            ("GET", "/api/v1/projects/project-auth-test/story-bible"),
+            ("POST", "/api/v1/projects/project-auth-test/workflows"),
+            ("GET", "/api/v1/queue/tasks"),
+            ("POST", "/api/v1/projects/project-auth-test/batch/tick"),
+            ("GET", "/api/v1/projects/project-auth-test/timeline"),
+        ]
+        for method, path in protected_routes:
+            response = await client.request(method, path)
+            assert response.status_code == 401, f"{method} {path}: {response.text}"
+            assert response.json()["detail"] == "Invalid X-Studio-Admin-Token."
+
+        # The operational health check intentionally remains public.
+        health = await client.get("/healthz")
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+
         authorized = await verify_single_admin("expected-admin-token")
         assert authorized == "admin_operator"
 
