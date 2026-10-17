@@ -167,6 +167,10 @@ class StoryBibleEntry(Base):
     immutable_traits: Mapped[str] = mapped_column(Text, default="")
     mutable_attributes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     reference_asset_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    first_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    previous_shot_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    next_shot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     requires_reference_lock: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -372,5 +376,30 @@ class ShotTakeRecord(Base):
     prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     account_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    first_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_frame_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    continuity_flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     director_notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- M5: BATCH RENDER & CONTINUITY QA MODELS ---
+
+class BatchRenderJobRecord(Base):
+    """Lưu vết một lần chạy Batch Render Fan-Out trên toàn Project hoặc Scene (Mục 3.7 & M5 PRD)."""
+    __tablename__ = "batch_render_jobs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    scene_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("provider_connections.id"), index=True)
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="running")  # running | completed | partial_failure
+    total_shots: Mapped[int] = mapped_column(Integer, default=0)
+    enqueued_count: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_unchanged_count: Mapped[int] = mapped_column(Integer, default=0)
+    blocked_count: Mapped[int] = mapped_column(Integer, default=0)
+    task_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    skipped_shot_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    blocked_shot_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

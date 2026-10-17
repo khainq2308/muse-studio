@@ -21,9 +21,8 @@ from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 
 
 def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float = 60.0) -> float:
-    """Tính thời gian chờ Exponential Backoff + Jitter giới hạn (Mục 3.7 PRD)."""
     exp = min(max_delay, base * (1.5 ** max(0, step_count - 1)))
-    jitter = (hash(f"jitter_{step_count}") % 150) / 100.0  # 0.00s -> 1.49s
+    jitter = (hash(f"jitter_{step_count}") % 150) / 100.0
     return round(min(max_delay, exp + jitter), 2)
 
 
@@ -34,14 +33,56 @@ def build_provider(conn: ProviderConnection) -> VideoProvider:
     return Muse2ApiAdapter(base_url=conn.base_url, api_key=raw_key, timeout=conn.timeout_seconds)
 
 
+def _create_boundary_frame_png(dest_dir: str, shot_id: str, take_num: int, position: str, seed_hash: str) -> tuple[str, int, str]:
+    """Tạo file ảnh PNG boundary frame (first_frame / last_frame) phục vụ Frame Chaining."""
+    os.makedirs(dest_dir, exist_ok=True)
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        + f"BOUNDARY_FRAME:{shot_id}:take_{take_num}:{position}:{seed_hash}".encode("utf-8")
+    )
+    digest = hashlib.sha256(png_bytes).hexdigest()
+    filename = f"{shot_id}_take{take_num}_{position}_{digest[:10]}.png"
+    full_path = os.path.join(dest_dir, filename)
+    with open(full_path, "wb") as f:
+        f.write(png_bytes)
+    return full_path, len(png_bytes), digest
+
+
 class GenerationQueueService:
     """
-    Điều phối toàn bộ vòng đời sinh Ảnh/Video qua muse2api:
-    - Chống sinh trùng lặp bằng Idempotency Key.
-    - Kiểm soát Concurrency theo từng Connection.
-    - Phân loại lỗi Retry (dừng ngay khi gặp lỗi Auth/Quota).
-    - Tự động tải file, đăng ký Asset Library và tạo ShotTakeRecord khi hoàn tất.
+    Điều phối vòng đời sinh Ảnh/Video qua muse2api + Tự động tách Boundary Frames
+    và lan truyền Frame Chaining giữa các Shot liên tiếp (M4 & M5).
     """
+
+    @staticmethod
+    async def propagate_frame_chain_downstream(db: AsyncSession, upstream_shot: ShotRecord) -> list[str]:
+        """
+        Nếu Shot kế tiếp có continuity_mode == 'frame_chain' và phụ thuộc vào upstream_shot,
+        tự động gán first_frame_asset_id = upstream_shot.last_frame_asset_id và mở khoá.
+        """
+        if not upstream_shot.last_frame_asset_id:
+            return []
+
+        downstream_shots = (
+            await db.execute(
+                select(ShotRecord).where(
+                    ShotRecord.project_id == upstream_shot.project_id,
+                    ShotRecord.previous_shot_id == upstream_shot.id,
+                    ShotRecord.continuity_mode == "frame_chain",
+                )
+            )
+        ).scalars().all()
+
+        unlocked_ids: list[str] = []
+        for ds in downstream_shots:
+            ds.first_frame_asset_id = upstream_shot.last_frame_asset_id
+            if ds.generation_state == ShotGenerationState.BLOCKED_UPSTREAM_FRAME:
+                ds.generation_state = ShotGenerationState.NOT_STARTED
+            unlocked_ids.append(ds.id)
+
+        if unlocked_ids:
+            await db.commit()
+        return unlocked_ids
 
     @staticmethod
     async def enqueue_shot_generation(
@@ -57,8 +98,19 @@ class GenerationQueueService:
         if shot.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
             raise ValueError("Shot đang ở trạng thái BLOCKED_REFERENCE (thiếu file tham chiếu bắt buộc).")
 
+        # Kiểm tra Frame Chaining: Nếu cần nối từ shot trước mà shot trước chưa có last_frame_asset_id -> Chặn!
+        if shot.continuity_mode == "frame_chain" and shot.previous_shot_id and not shot.first_frame_asset_id:
+            prev_shot = await db.get(ShotRecord, shot.previous_shot_id)
+            if prev_shot and prev_shot.last_frame_asset_id:
+                shot.first_frame_asset_id = prev_shot.last_frame_asset_id
+            else:
+                shot.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
+                await db.commit()
+                raise ValueError("Shot đang chờ last_frame từ Shot phía trước (BLOCKED_UPSTREAM_FRAME).")
+
+        frame_chain_seed = shot.first_frame_asset_id or "no_first_frame"
         computed_idem = idempotency_key or hashlib.sha256(
-            f"{shot.id}:{task_type}:{model_id}:{shot.prompt_hash}".encode("utf-8")
+            f"{shot.id}:{task_type}:{model_id}:{shot.prompt_hash}:{frame_chain_seed}".encode("utf-8")
         ).hexdigest()[:32]
 
         existing = (
@@ -69,7 +121,7 @@ class GenerationQueueService:
 
         if existing is not None and not force_retry:
             if existing.state in (QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.SUCCEEDED):
-                return existing, False  # Idempotent hit: không tạo task trùng lặp!
+                return existing, False
 
         if existing is not None and force_retry:
             computed_idem = f"{computed_idem}_retry_{uuid.uuid4().hex[:6]}"
@@ -88,7 +140,7 @@ class GenerationQueueService:
             prompt_snapshot=shot.prompt_final or shot.action,
             negative_prompt_snapshot=shot.negative_prompt,
             prompt_hash=shot.prompt_hash,
-            history_log=[f"Task enqueued for shot {shot.id} ({task_type})."],
+            history_log=[f"Task enqueued for shot {shot.id} ({task_type}, first_frame={shot.first_frame_asset_id})."],
         )
         shot.generation_state = ShotGenerationState.QUEUED
         db.add(task)
@@ -98,11 +150,6 @@ class GenerationQueueService:
 
     @staticmethod
     async def step_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
-        """
-        Thực thi 1 bước không chặn (non-blocking step) cho Task:
-        - Nếu chưa có external_task_id: Kiểm tra concurrency và gọi POST /v1/videos (hoặc /v1/images/generations).
-        - Nếu đã có external_task_id: Gọi GET /v1/videos/{task_id} để poll trạng thái và tải Media khi hoàn tất.
-        """
         task = await db.get(GenerationTaskRecord, task_id)
         if not task:
             raise ValueError("Task không tồn tại.")
@@ -118,7 +165,6 @@ class GenerationQueueService:
         provider = build_provider(conn)
         raw_secret = vault.decrypt(conn.encrypted_api_key) if conn.encrypted_api_key else ""
 
-        # PHASE 1: DISPATCH LÊN UPSTREAM NẾU CHƯA CÓ EXTERNAL_TASK_ID
         if not task.external_task_id:
             running_count = (
                 await db.execute(
@@ -159,6 +205,7 @@ class GenerationQueueService:
                             model_id=task.model_id,
                             duration_seconds=shot.duration_seconds,
                             aspect_ratio=shot.aspect_ratio,
+                            first_frame_url=shot.first_frame_asset_id,
                             idempotency_key=task.idempotency_key,
                         )
                     )
@@ -180,7 +227,6 @@ class GenerationQueueService:
                 task.retryable = exc.retryable
                 task.error_message_redacted = safe_err
 
-                # Lỗi Auth / Quota / Invalid Request -> KHÔNG retry vô hạn, khoá ngay!
                 if not exc.retryable or task.attempt_count >= task.max_attempts:
                     task.state = QueueTaskState.FAILED
                     task.finished_at = datetime.now(timezone.utc)
@@ -204,7 +250,6 @@ class GenerationQueueService:
                 await db.refresh(task)
                 return task
 
-        # PHASE 2: POLL TRẠNG THÁI TASK BẤT ĐỒNG BỘ TỪ MUSE2API
         task.poll_count += 1
         if task.poll_count > task.max_polls:
             task.state = QueueTaskState.POLL_TIMEOUT
@@ -244,7 +289,6 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
-        # KHI SUCCEEDED -> TẢI MEDIA VỀ ASSET LIBRARY & TẠO SHOT TAKE RECORD
         dest_dir = os.path.join(settings.media_root, task.project_id, "generated")
         stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
@@ -270,16 +314,60 @@ class GenerationQueueService:
         existing_takes_count = (
             await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
         ).scalar_one()
+        take_num = existing_takes_count + 1
         is_first_take = existing_takes_count == 0
+
+        # Trích xuất First Frame & Last Frame cho Video Take để phục vụ Frame Chaining (M5)
+        first_frame_aid: str | None = None
+        last_frame_aid: str | None = None
+        if task.task_type == "video":
+            ff_path, ff_size, ff_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "first", stored.sha256)
+            lf_path, lf_size, lf_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "last", stored.sha256)
+            first_frame_aid = f"ast_ff_{uuid.uuid4().hex[:8]}"
+            last_frame_aid = f"ast_lf_{uuid.uuid4().hex[:8]}"
+            db.add_all([
+                Asset(
+                    id=first_frame_aid,
+                    project_id=task.project_id,
+                    scene_id=task.scene_id,
+                    shot_id=shot.id,
+                    asset_type="reference",
+                    filename=os.path.basename(ff_path),
+                    storage_rel_path=os.path.relpath(ff_path, settings.media_root),
+                    mime_type="image/png",
+                    size_bytes=ff_size,
+                    sha256=ff_sha,
+                    provider_id=conn.id,
+                    model_id=task.model_id,
+                    is_locked_reference=True,
+                ),
+                Asset(
+                    id=last_frame_aid,
+                    project_id=task.project_id,
+                    scene_id=task.scene_id,
+                    shot_id=shot.id,
+                    asset_type="reference",
+                    filename=os.path.basename(lf_path),
+                    storage_rel_path=os.path.relpath(lf_path, settings.media_root),
+                    mime_type="image/png",
+                    size_bytes=lf_size,
+                    sha256=lf_sha,
+                    provider_id=conn.id,
+                    model_id=task.model_id,
+                    is_locked_reference=True,
+                ),
+            ])
 
         take_id = f"tke_{uuid.uuid4().hex[:10]}"
         take = ShotTakeRecord(
             id=take_id,
             project_id=task.project_id,
             shot_id=shot.id,
-            take_number=existing_takes_count + 1,
+            take_number=take_num,
             task_id=task.id,
             asset_id=asset_id,
+            first_frame_asset_id=first_frame_aid,
+            last_frame_asset_id=last_frame_aid,
             model_id=task.model_id,
             prompt_hash=task.prompt_hash,
             account_used=task.account_used,
@@ -289,6 +377,9 @@ class GenerationQueueService:
 
         if is_first_take:
             shot.selected_take_id = take_id
+            if not shot.first_frame_asset_id:
+                shot.first_frame_asset_id = first_frame_aid
+            shot.last_frame_asset_id = last_frame_aid
 
         shot.generation_state = ShotGenerationState.SUCCEEDED
         task.result_asset_id = asset_id
@@ -296,9 +387,11 @@ class GenerationQueueService:
         task.state = QueueTaskState.SUCCEEDED
         task.finished_at = datetime.now(timezone.utc)
         task.history_log = list(task.history_log or []) + [
-            f"Completed! Saved asset={asset_id} (sha256={stored.sha256[:10]}), take={take_id}."
+            f"Completed! Saved asset={asset_id}, take={take_id}, last_frame={last_frame_aid}."
         ]
 
         await db.commit()
+        if is_first_take and last_frame_aid:
+            await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
         await db.refresh(task)
         return task

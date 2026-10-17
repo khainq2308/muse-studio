@@ -10,6 +10,7 @@ from muse_orchestrator.api.assets import router as assets_router
 from muse_orchestrator.api.pipeline import router as pipeline_router
 from muse_orchestrator.api.workflows import router as workflows_router
 from muse_orchestrator.api.queue import router as queue_router
+from muse_orchestrator.api.batch import router as batch_router
 
 
 @asynccontextmanager
@@ -18,7 +19,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
-app = FastAPI(title="MuseStudio Orchestrator API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="MuseStudio Orchestrator API", version="0.5.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,8 +35,9 @@ app.include_router(assets_router)
 app.include_router(pipeline_router)
 app.include_router(workflows_router)
 app.include_router(queue_router)
+app.include_router(batch_router)
 
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    return {"status": "ok", "service": "muse-orchestrator", "milestone": "M4"}
+    return {"status": "ok", "service": "muse-orchestrator", "milestone": "M5"}

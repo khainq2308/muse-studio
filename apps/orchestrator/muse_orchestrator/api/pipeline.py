@@ -44,6 +44,9 @@ class ShotUpdateIn(BaseModel):
     composition: str | None = None
     action: str | None = None
     duration_seconds: float | None = None
+    continuity_mode: str | None = None
+    previous_shot_id: str | None = None
+    first_frame_asset_id: str | None = None
     requires_reference_lock: bool | None = None
     reference_asset_ids: list[str] | None = None
     approval_state: ShotApprovalState | None = None
@@ -245,12 +248,15 @@ async def import_and_analyze_script(
                 summary=sc["summary"],
             ))
 
+        created_shot_records: list[ShotRecord] = []
         for sh in proposal.shots:
             sc_id = scene_id_by_idx.get(sh["scene_index"]) or next(iter(scene_id_by_idx.values()))
-            db.add(ShotRecord(
+            prev_id = created_shot_records[-1].id if (created_shot_records and created_shot_records[-1].scene_id == sc_id) else None
+            new_shot = ShotRecord(
                 id=f"sht_{uuid.uuid4().hex[:8]}",
                 project_id=project_id,
                 scene_id=sc_id,
+                previous_shot_id=prev_id,
                 sequence_index=sh["sequence_index"],
                 title=sh["title"],
                 story_beat=sh["story_beat"],
@@ -267,7 +273,11 @@ async def import_and_analyze_script(
                 continuity_notes=sh["continuity_notes"],
                 duration_seconds=sh["duration_seconds"],
                 aspect_ratio=proj.aspect_ratio,
-            ))
+            )
+            if created_shot_records and created_shot_records[-1].scene_id == sc_id:
+                created_shot_records[-1].next_shot_id = new_shot.id
+            created_shot_records.append(new_shot)
+            db.add(new_shot)
 
         await db.commit()
         shots = await _recompile_project_shots(project_id, db)
@@ -372,6 +382,12 @@ async def list_project_shots(project_id: str, db: AsyncSession = Depends(get_db)
             "negative_prompt": s.negative_prompt,
             "prompt_hash": s.prompt_hash,
             "lint_report": s.lint_report_json,
+            "continuity_mode": s.continuity_mode,
+            "previous_shot_id": s.previous_shot_id,
+            "next_shot_id": s.next_shot_id,
+            "first_frame_asset_id": s.first_frame_asset_id,
+            "last_frame_asset_id": s.last_frame_asset_id,
+            "selected_take_id": s.selected_take_id,
             "approval_state": s.approval_state,
             "generation_state": s.generation_state,
         }

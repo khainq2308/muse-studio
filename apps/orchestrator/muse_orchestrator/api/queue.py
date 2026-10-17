@@ -193,6 +193,10 @@ async def list_shot_takes(shot_id: str, db: AsyncSession = Depends(get_db)) -> l
             "model_id": t.model_id,
             "prompt_hash": t.prompt_hash,
             "account_used": t.account_used,
+            "first_frame_asset_id": t.first_frame_asset_id,
+            "last_frame_asset_id": t.last_frame_asset_id,
+            "continuity_flagged": t.continuity_flagged,
+            "director_notes": t.director_notes,
             "is_selected": t.is_selected,
         }
         for t in rows
@@ -219,6 +223,15 @@ async def select_shot_take(shot_id: str, take_id: str, db: AsyncSession = Depend
     if not found:
         raise HTTPException(status_code=404, detail="Take không thuộc về Shot này.")
 
+    selected_obj = next(t for t in takes if t.id == take_id)
     shot.selected_take_id = take_id
+    if selected_obj.last_frame_asset_id:
+        shot.last_frame_asset_id = selected_obj.last_frame_asset_id
     await db.commit()
-    return {"shot_id": shot_id, "selected_take_id": take_id}
+    unlocked = await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
+    return {
+        "shot_id": shot_id,
+        "selected_take_id": take_id,
+        "last_frame_asset_id": shot.last_frame_asset_id,
+        "propagated_downstream_shots": unlocked,
+    }
