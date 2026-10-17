@@ -133,3 +133,101 @@ class AuditEvent(Base):
     target_id: Mapped[str] = mapped_column(String(64), nullable=False)
     details_redacted: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- M2: SCRIPT STUDIO, STORY BIBLE & SHOT PIPELINE MODELS ---
+
+class ScriptRevision(Base):
+    """Lưu lịch sử kịch bản gốc; phân tích AI không bao giờ tự động ghi đè bản gốc (Mục 3.2 PRD)."""
+    __tablename__ = "script_revisions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_format: Mapped[str] = mapped_column(String(32), default="markdown")  # markdown | museflow | txt | json
+    raw_content: Mapped[str] = mapped_column(Text, nullable=False)
+    structured_proposal_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    diff_summary: Mapped[str] = mapped_column(Text, default="")
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StoryBibleEntry(Base):
+    """
+    Quản lý thống nhất 4 danh mục Story Bible (Mục 3.3 PRD):
+    entry_type: 'character' | 'location' | 'style' | 'prop'
+    """
+    __tablename__ = "story_bible_entries"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    entry_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    code_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)  # VD: char_conan, loc_cafe
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    immutable_traits: Mapped[str] = mapped_column(Text, default="")
+    mutable_attributes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    reference_asset_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    requires_reference_lock: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SceneRecord(Base):
+    __tablename__ = "scenes"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    scene_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    location_code: Mapped[str] = mapped_column(String(128), default="loc_default")
+    time_of_day: Mapped[str] = mapped_column(String(64), default="day")
+    lighting_mood: Mapped[str] = mapped_column(String(255), default="cinematic natural light")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ShotRecord(Base):
+    __tablename__ = "shots"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    scene_id: Mapped[str] = mapped_column(ForeignKey("scenes.id", ondelete="CASCADE"), index=True)
+    sequence_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    story_beat: Mapped[str] = mapped_column(Text, default="")
+
+    subject_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    location_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    prop_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    shot_size: Mapped[str] = mapped_column(String(64), default="medium_shot")
+    camera_angle: Mapped[str] = mapped_column(String(64), default="eye_level")
+    camera_motion: Mapped[str] = mapped_column(String(64), default="static")
+    composition: Mapped[str] = mapped_column(Text, default="subject centered")
+
+    action: Mapped[str] = mapped_column(Text, default="")
+    action_start: Mapped[str] = mapped_column(Text, default="")
+    action_end: Mapped[str] = mapped_column(Text, default="")
+    dialogue: Mapped[str] = mapped_column(Text, default="")
+    continuity_notes: Mapped[str] = mapped_column(Text, default="")
+    continuity_mode: Mapped[str] = mapped_column(String(32), default="standard")  # standard | frame_chain
+
+    duration_seconds: Mapped[float] = mapped_column(Float, default=5.0)
+    aspect_ratio: Mapped[str] = mapped_column(String(16), default="16:9")
+
+    requires_reference_lock: Mapped[bool] = mapped_column(Boolean, default=False)
+    reference_asset_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    prompt_final: Mapped[str] = mapped_column(Text, default="")
+    negative_prompt: Mapped[str] = mapped_column(Text, default="")
+    prompt_hash: Mapped[str] = mapped_column(String(64), default="")
+    lint_report_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+    approval_state: Mapped[ShotApprovalState] = mapped_column(
+        Enum(ShotApprovalState), default=ShotApprovalState.NEEDS_REVIEW
+    )
+    generation_state: Mapped[ShotGenerationState] = mapped_column(
+        Enum(ShotGenerationState), default=ShotGenerationState.NOT_STARTED
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
