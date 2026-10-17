@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
@@ -11,14 +13,42 @@ from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAss
 
 
 @pytest.mark.asyncio
-async def test_api_routes_require_admin_token_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_all_product_api_routes_require_admin_token_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from muse_orchestrator.core import security
 
     monkeypatch.setattr(security.settings, "studio_admin_token", "expected-admin-token")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        for path in ("/api/v1/projects", "/api/v1/connections"):
-            response = await client.get(path)
-            assert response.status_code == 401
+        product_routes = [
+            (method.upper(), path)
+            for path, operations in app.openapi()["paths"].items()
+            if path.startswith("/api/v1/")
+            for method in operations
+            if method.lower() in {"get", "post", "put", "patch", "delete"}
+        ]
+        assert product_routes, "Expected registered product API routes"
+
+        # Derive test requests from the OpenAPI route table so every documented
+        # GET/POST/PUT/PATCH/DELETE handler is covered automatically.
+        for method, route_template in product_routes:
+            path = re.sub(r"\{[^}]+\}", "auth-test-id", route_template)
+            response = await client.request(
+                method,
+                path,
+                params={"take_a_id": "auth-test-a", "take_b_id": "auth-test-b"},
+            )
+            assert response.status_code == 401, (
+                f"{method} {route_template} should require admin auth, "
+                f"got {response.status_code}: {response.text}"
+            )
+            assert response.json()["detail"] == "Invalid X-Studio-Admin-Token."
+
+        # The operational health check intentionally remains public.
+        health = await client.get("/healthz")
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+
         authorized = await verify_single_admin("expected-admin-token")
         assert authorized == "admin_operator"
 

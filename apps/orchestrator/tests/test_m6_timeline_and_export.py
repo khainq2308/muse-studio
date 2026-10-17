@@ -12,6 +12,7 @@ os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 from muse_orchestrator.main import app
 from muse_orchestrator.core.database import get_db
 from muse_orchestrator.models.domain import Base
+from muse_orchestrator.services.timeline_service import TimelineValidationService
 
 
 @pytest.fixture()
@@ -150,3 +151,110 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(client: AsyncC
     assert exp["ffprobe_verification"]["width"] == 1080
     assert exp["ffprobe_verification"]["height"] == 1920
     assert isinstance(exp["ffmpeg_args"], list) and exp["ffmpeg_args"][0] == "ffmpeg"
+
+
+@pytest.mark.asyncio
+async def test_application_errors_preserve_http_status_and_detail(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from muse_orchestrator.core import security
+
+    monkeypatch.setattr(security.settings, "studio_admin_token", "expected-admin-token")
+    headers = {"X-Studio-Admin-Token": "expected-admin-token"}
+
+    blank_name = await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={"name": "   "},
+    )
+    assert blank_name.status_code == 422
+    assert blank_name.json() == {"detail": "Project name cannot be blank."}
+
+    missing_project = await client.post(
+        "/api/v1/projects/project-that-does-not-exist/duplicate",
+        headers=headers,
+    )
+    assert missing_project.status_code == 404
+    assert missing_project.json() == {"detail": "Original project not found."}
+
+
+@pytest.mark.asyncio
+async def test_timeline_export_resolution_defaults_and_custom_override(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project_response = await client.post(
+        "/api/v1/projects",
+        json={"name": "Export Resolution Regression", "aspect_ratio": "16:9", "fps": 24},
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    sequence_response = await client.post(
+        f"/api/v1/projects/{project_id}/timeline/assemble",
+        json={"name": "Resolution Test Sequence"},
+    )
+    assert sequence_response.status_code == 201
+    sequence_id = sequence_response.json()["sequence_id"]
+
+    render_calls: list[tuple[str, str]] = []
+
+    def fake_render_and_probe_mp4(
+        *,
+        output_dir: str,
+        export_id: str,
+        aspect_ratio: str,
+        fps: int,
+        resolution: str,
+        total_duration: float,
+    ):
+        render_calls.append((aspect_ratio, resolution))
+        width, height = (int(value) for value in resolution.split("x"))
+        probe = {
+            "valid": True,
+            "probed_by": "unit_test",
+            "codec_name": "h264",
+            "audio_codec": "aac",
+            "width": width,
+            "height": height,
+            "duration_seconds": max(1.0, total_duration),
+        }
+        return (
+            os.path.join(output_dir, f"{export_id}.mp4"),
+            128,
+            "a" * 64,
+            ["ffmpeg", "-y"],
+            probe,
+        )
+
+    monkeypatch.setattr(TimelineValidationService, "render_and_probe_mp4", fake_render_and_probe_mp4)
+
+    cases = [
+        ({"sequence_id": sequence_id, "aspect_ratio": "9:16"}, "1080x1920", 1080, 1920),
+        ({"sequence_id": sequence_id, "aspect_ratio": "1:1"}, "1080x1080", 1080, 1080),
+        (
+            {"sequence_id": sequence_id, "aspect_ratio": "9:16", "resolution": "720x1280"},
+            "720x1280",
+            720,
+            1280,
+        ),
+    ]
+
+    for payload, expected_resolution, expected_width, expected_height in cases:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/timeline/exports",
+            json=payload,
+        )
+        assert response.status_code == 201, response.text
+        export = response.json()
+        assert export["state"] == "succeeded"
+        assert export["resolution"] == expected_resolution
+        assert export["ffprobe_verification"]["width"] == expected_width
+        assert export["ffprobe_verification"]["height"] == expected_height
+
+    assert render_calls == [
+        ("9:16", "1080x1920"),
+        ("1:1", "1080x1080"),
+        ("9:16", "720x1280"),
+    ]
