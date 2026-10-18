@@ -7,7 +7,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v ruff >/dev/null || { echo "ruff not installed: pip install ruff" >&2; exit 127; }
 cd "$ROOT"
 rc=0
-if [ "$1" = "--fix" ]; then
+fix=0
+if [ "$#" -gt 0 ] && [ "$1" = "--fix" ]; then fix=1; fi
+if [ "$fix" -eq 1 ]; then
   ruff check --fix apps/orchestrator apps/media-engine || rc=1
   ruff format apps/orchestrator apps/media-engine || rc=1
 else
