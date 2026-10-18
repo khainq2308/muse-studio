@@ -124,6 +124,30 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         self.assertEqual(json.loads(allowed.stdout)["decision"], "allow")
 
+    def test_gemini_broad_read_respects_gitignored_env_files(self):
+        adapter = load_module("test_gemini_guard_ignore", ROOT / ".gemini" / "hooks" / "before_tool.py")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True, text=True, check=False)
+            (root / ".gitignore").write_text(".env*\n!.env.example\n")
+            (root / ".env").write_text("API_KEY=secret")
+            (root / ".env.example").write_text("API_KEY=replace-me")
+            (root / "README.md").write_text("safe content")
+            adapter.ROOT = root
+            adapter.HOOKS = HOOKS
+
+            # Broad repository context reads are allowed only because Git proves .env ignored.
+            self.assertEqual(adapter.check_many_file_paths({"include": ["**/*"]}), 0)
+            self.assertEqual(
+                adapter.check_many_file_paths({
+                    "include": ["**/*"],
+                    "file_filtering_options": {"respect_git_ignore": False},
+                }),
+                2,
+            )
+            self.assertEqual(adapter.check_many_file_paths({"include": [".env.example"]}), 0)
+            self.assertEqual(adapter.check_many_file_paths({"include": [".env"]}), 2)
+
     def test_gemini_read_many_files_fails_closed_when_patterns_missing(self):
         adapter = load_module("test_gemini_guard_invalid", ROOT / ".gemini" / "hooks" / "before_tool.py")
         with contextlib.redirect_stderr(io.StringIO()):
