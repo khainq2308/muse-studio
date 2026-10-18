@@ -283,7 +283,7 @@ class Muse2ApiAdapter(VideoProvider):
         mime = ""
         try:
             async with httpx.AsyncClient(
-                timeout=60.0, follow_redirects=False, transport=self._transport
+                timeout=60.0, follow_redirects=False, transport=self._transport, proxy=self.proxy
             ) as client:
                 for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
                     # The API key is only ever sent to the provider's own origin, never to a
