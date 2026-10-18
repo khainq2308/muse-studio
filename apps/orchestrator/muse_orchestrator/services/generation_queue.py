@@ -1,9 +1,11 @@
 from __future__ import annotations
+import asyncio
 import hashlib
+import json
 import os
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +13,7 @@ from muse_orchestrator.core.config import settings, SecretRedactor
 from muse_orchestrator.core.security import vault
 from muse_orchestrator.models.domain import (
     ShotRecord, ShotGenerationState, ProviderConnection, ConnectionHealthState,
-    GenerationTaskRecord, QueueTaskState, Asset, ShotTakeRecord
+    GenerationTaskRecord, GenerationDispatchLeaseRecord, QueueTaskState, Asset, ShotTakeRecord
 )
 from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
@@ -48,6 +50,61 @@ def _create_boundary_frame_png(dest_dir: str, shot_id: str, take_num: int, posit
     with open(full_path, "wb") as f:
         f.write(png_bytes)
     return full_path, len(png_bytes), digest
+
+
+
+async def _verify_downloaded_artifact(path: str, task_type: str, provider_type: str, mime_type: str) -> None:
+    """Reject empty, mislabeled, or undecodable media before the task can succeed."""
+    if provider_type == "mock":
+        # Mock provider artifacts are deliberately synthetic and used only in tests/demo flows.
+        return
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+            raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Provider returned an empty media file.")
+        with open(path, "rb") as stream:
+            header = stream.read(32)
+    except OSError as exc:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "Downloaded media cannot be read from disk.", retryable=False
+        ) from exc
+
+    if task_type == "image":
+        valid_signatures = {
+            "image/png": header.startswith(b"\x89PNG\r\n\x1a\n"),
+            "image/jpeg": header.startswith(b"\xff\xd8\xff"),
+            "image/webp": header.startswith(b"RIFF") and header[8:12] == b"WEBP",
+        }
+        if mime_type not in valid_signatures or not valid_signatures[mime_type]:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST, "Downloaded image failed format/signature validation."
+            )
+        return
+
+    if task_type != "video" or mime_type != "video/mp4" or len(header) < 12 or header[4:8] != b"ftyp":
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "Downloaded video failed MP4 signature validation."
+        )
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type", "-of", "json", path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+    except (OSError, asyncio.TimeoutError) as exc:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "FFprobe could not verify the downloaded video.", retryable=False
+        ) from exc
+    if process.returncode != 0:
+        raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Downloaded MP4 is not decodable by FFprobe.")
+    try:
+        streams = json.loads(stdout.decode("utf-8", "replace")).get("streams", [])
+    except (json.JSONDecodeError, AttributeError):
+        streams = []
+    if not any(stream.get("codec_type") == "video" for stream in streams if isinstance(stream, dict)):
+        raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Downloaded MP4 contains no valid video stream.")
 
 
 class GenerationQueueService:
@@ -211,14 +268,17 @@ class GenerationQueueService:
         if task.state in (QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED, QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT):
             return task
 
-        # Lock the connection row while we check/consume a concurrency slot.
-        conn = (
-            await db.execute(
-                select(ProviderConnection)
-                .where(ProviderConnection.id == task.connection_id)
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
+        # Polling an existing task does not consume a new slot. Lock only for dispatch reservation.
+        if task.external_task_id:
+            conn = await db.get(ProviderConnection, task.connection_id)
+        else:
+            conn = (
+                await db.execute(
+                    select(ProviderConnection)
+                    .where(ProviderConnection.id == task.connection_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
         shot = await db.get(ShotRecord, task.shot_id)
         if not conn or not shot:
             raise ValueError("Connection hoặc Shot liên kết không tồn tại.")
@@ -227,6 +287,21 @@ class GenerationQueueService:
         raw_secret = vault.decrypt(conn.encrypted_api_key) if conn.encrypted_api_key else ""
 
         if not task.external_task_id:
+            # Reserve the slot in a short transaction, then release DB locks before network I/O.
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            now = datetime.now(timezone.utc)
+            if lease is not None:
+                expiry = lease.expires_at
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                if expiry > now:
+                    task.next_poll_delay_seconds = max(1.0, min(30.0, (expiry - now).total_seconds()))
+                    await db.commit()
+                    await db.refresh(task)
+                    return task
+                await db.delete(lease)
+                await db.flush()
+
             running_count = (
                 await db.execute(
                     select(func.count(GenerationTaskRecord.id)).where(
@@ -238,14 +313,29 @@ class GenerationQueueService:
             ).scalar_one()
 
             if running_count >= conn.max_concurrency:
+                task.state = QueueTaskState.QUEUED
+                shot.generation_state = ShotGenerationState.QUEUED
                 task.next_poll_delay_seconds = compute_backoff_seconds(1)
                 task.history_log = list(task.history_log or []) + [
                     f"Waiting for connection concurrency slot ({running_count}/{conn.max_concurrency} busy)."
                 ]
                 await db.commit()
+                await db.refresh(task)
                 return task
 
             task.attempt_count += 1
+            task.state = QueueTaskState.RUNNING
+            shot.generation_state = ShotGenerationState.RUNNING
+            task.next_poll_delay_seconds = compute_backoff_seconds(1)
+            lease_seconds = max(90.0, float(conn.timeout_seconds) * 2.0 + 30.0)
+            db.add(GenerationDispatchLeaseRecord(
+                task_id=task.id,
+                connection_id=conn.id,
+                expires_at=now + timedelta(seconds=lease_seconds),
+            ))
+            await db.commit()
+            await db.refresh(task)
+
             try:
                 if task.task_type == "image":
                     p_task = await provider.generate_image(
@@ -271,24 +361,24 @@ class GenerationQueueService:
                             idempotency_key=task.idempotency_key,
                         )
                     )
-
-                task.external_task_id = p_task.external_task_id
-                task.state = QueueTaskState.RUNNING
-                task.next_poll_delay_seconds = compute_backoff_seconds(1)
-                shot.generation_state = ShotGenerationState.RUNNING
-                task.history_log = list(task.history_log or []) + [
-                    f"Dispatched to {conn.name} -> external_task_id={p_task.external_task_id}."
-                ]
-                await db.commit()
-                await db.refresh(task)
-                return task
-
             except ProviderFailure as exc:
+                await db.refresh(task)
+                await db.refresh(shot)
+                lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+                if lease is not None:
+                    await db.delete(lease)
+                if task.state in (
+                    QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+                    QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+                ):
+                    await db.commit()
+                    await db.refresh(task)
+                    return task
+
                 safe_err = SecretRedactor.redact_text(str(exc), [raw_secret])
                 task.error_category = exc.category.value
                 task.retryable = exc.retryable
                 task.error_message_redacted = safe_err
-
                 if not exc.retryable or task.attempt_count >= task.max_attempts:
                     task.state = QueueTaskState.FAILED
                     task.finished_at = datetime.now(timezone.utc)
@@ -303,14 +393,59 @@ class GenerationQueueService:
                 else:
                     delay = compute_backoff_seconds(task.attempt_count)
                     task.state = QueueTaskState.QUEUED
+                    shot.generation_state = ShotGenerationState.QUEUED
                     task.next_poll_delay_seconds = delay
                     task.history_log = list(task.history_log or []) + [
                         f"Transient failure on attempt {task.attempt_count} (will retry in {delay}s): {safe_err}"
                     ]
-
                 await db.commit()
                 await db.refresh(task)
                 return task
+            except Exception as exc:
+                # Unexpected adapter failures are terminal rather than leaving RUNNING with no upstream ID.
+                await db.refresh(task)
+                await db.refresh(shot)
+                lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+                if lease is not None:
+                    await db.delete(lease)
+                if task.state not in (
+                    QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+                    QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+                ):
+                    task.state = QueueTaskState.FAILED
+                    task.finished_at = datetime.now(timezone.utc)
+                    task.retryable = False
+                    task.error_category = "provider_internal_error"
+                    task.error_message_redacted = f"Unexpected provider adapter error ({type(exc).__name__})."
+                    shot.generation_state = ShotGenerationState.FAILED
+                    task.history_log = list(task.history_log or []) + [task.error_message_redacted]
+                await db.commit()
+                await db.refresh(task)
+                return task
+
+            # Another operator may have paused/canceled the task while the request was in flight.
+            await db.refresh(task)
+            await db.refresh(shot)
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
+            task.external_task_id = p_task.external_task_id
+            task.history_log = list(task.history_log or []) + [
+                f"Dispatched to {conn.name} -> external_task_id={p_task.external_task_id}."
+            ]
+            if task.state not in (
+                QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+                QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+            ):
+                task.state = QueueTaskState.RUNNING
+                shot.generation_state = ShotGenerationState.RUNNING
+            else:
+                task.history_log = list(task.history_log or []) + [
+                    "Provider accepted the request after the local task state changed; local state was preserved."
+                ]
+            await db.commit()
+            await db.refresh(task)
+            return task
 
         task.poll_count += 1
         if task.poll_count > task.max_polls:
@@ -355,9 +490,18 @@ class GenerationQueueService:
             return task
 
         dest_dir = os.path.join(settings.media_root, task.project_id, "generated")
+        stored = None
         try:
             stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
+            await _verify_downloaded_artifact(
+                stored.local_path, task.task_type, conn.provider_type, stored.mime_type
+            )
         except ProviderFailure as exc:
+            if stored is not None:
+                try:
+                    os.unlink(stored.local_path)
+                except OSError:
+                    pass
             return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "download")
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
