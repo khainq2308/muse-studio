@@ -11,7 +11,10 @@ import pytest
 
 from muse_media.boundary_frames import BoundaryFrames
 from muse_orchestrator.providers.base import ProviderFailure
-from muse_orchestrator.services.generation_queue import _extract_video_boundary_frames
+from muse_orchestrator.services.generation_queue import (
+    _create_mock_boundary_frame_png,
+    _extract_video_boundary_frames,
+)
 
 
 @pytest.mark.asyncio
@@ -143,3 +146,31 @@ async def test_bad_extractor_output_fails_closed_and_cleans_partial_frames(tmp_p
             extractor=broken_extractor,
         )
     assert not list((tmp_path / "generated").rglob("first_frame.png"))
+
+
+
+@pytest.mark.asyncio
+async def test_extractor_digest_mismatch_fails_closed_and_cleans_frames(tmp_path: Path):
+    def wrong_digest_extractor(_source, output_dir):
+        first = _create_mock_boundary_frame_png(output_dir, "shot_hash", 1, "first", "seed-a")
+        last = _create_mock_boundary_frame_png(output_dir, "shot_hash", 1, "last", "seed-b")
+        return BoundaryFrames(
+            first_frame_path=first.path,
+            last_frame_path=last.path,
+            first_frame_sha256="0" * 64,
+            last_frame_sha256=last.sha256,
+            source_frame_count=2,
+            source_duration_seconds=1.0,
+        )
+
+    with pytest.raises(ProviderFailure, match="Boundary-frame extraction failed"):
+        await _extract_video_boundary_frames(
+            "unused.mp4",
+            str(tmp_path / "generated"),
+            "shot_hash",
+            1,
+            "muse2api",
+            extractor=wrong_digest_extractor,
+        )
+    assert not list((tmp_path / "generated").rglob("first_frame.png"))
+    assert not list((tmp_path / "generated").rglob("last_frame.png"))
