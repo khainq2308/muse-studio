@@ -86,7 +86,7 @@ A missing command or dependency is **not a pass**. Use `scripts/doctor.sh`, reco
 | Capability | Claude Code | Codex | Gemini CLI | Any other agent |
 |---|---|---|---|---|
 | Persistent repo rules | `CLAUDE.md` points to `AGENTS.md` | `AGENTS.md` | `GEMINI.md` points to `AGENTS.md` | Configure its system/project prompt to read `AGENTS.md` |
-| Reusable skills | `.claude/skills/` mirror | `.agents/skills/` | `.agents/skills/` or `.gemini/skills/` | Read the relevant `SKILL.md` explicitly |
+| Reusable skills | `.claude/skills/` mirror | `.agents/skills/` | `.agents/skills/` | Read the relevant `SKILL.md` explicitly |
 | Specialist agents | `.claude/agents/*.md` | `.codex/agents/*.toml` | `.gemini/agents/*.md` | Map the role brief into the host's supported agent format |
 | Task commands | `.claude/commands/*.md` | Invoke a shared skill or script | Invoke a shared skill or script | Invoke documented workflow + script |
 | Hooks | `.claude/settings.json` + `.claude/hooks/` | Use the installed Codex hook interface/config if enabled | Use Gemini CLI `settings.json` hook events | Write an adapter for the host's event contract |
