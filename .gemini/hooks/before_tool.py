@@ -153,8 +153,8 @@ def check_many_file_paths(args: dict) -> int:
                 continue
 
             try:
+                candidate.resolve().relative_to(ROOT)
                 relative = candidate.absolute().relative_to(ROOT).as_posix()
-                resolved_relative = candidate.resolve().relative_to(ROOT).as_posix()
             except (OSError, RuntimeError, ValueError):
                 print(
                     "[gemini safety guard] Cannot safely resolve a potential secret path.",
@@ -162,16 +162,8 @@ def check_many_file_paths(args: dict) -> int:
                 )
                 return 2
 
-            included = any(
-                pattern_matches(path_name, pattern)
-                for path_name in {relative, resolved_relative}
-                for pattern in patterns
-            )
-            excluded = any(
-                pattern_matches(path_name, pattern)
-                for path_name in {relative, resolved_relative}
-                for pattern in exclusions
-            )
+            included = any(pattern_matches(relative, pattern) for pattern in patterns)
+            excluded = any(pattern_matches(relative, pattern) for pattern in exclusions)
             if not included or excluded:
                 continue
 
