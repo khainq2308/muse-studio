@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib
 import os
+import uuid
 from muse_orchestrator.providers.base import (
     VideoProvider, ProviderHealth, ModelCapability,
     ImageGenerationRequest, VideoGenerationRequest,
@@ -84,7 +85,7 @@ class MockVideoProvider(VideoProvider):
             ext, mime = "mp4", "video/mp4"
 
         digest = hashlib.sha256(dummy_bytes).hexdigest()
-        path = os.path.join(dest_dir, f"{digest[:16]}.{ext}")
+        path = os.path.join(dest_dir, f"{digest[:16]}_{uuid.uuid4().hex[:8]}.{ext}")
         with open(path, "wb") as f:
             f.write(dummy_bytes)
         return StoredMedia(local_path=path, mime_type=mime, size_bytes=len(dummy_bytes), sha256=digest)
