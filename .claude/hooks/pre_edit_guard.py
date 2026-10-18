@@ -40,7 +40,7 @@ def main() -> None:
         block("[pre_edit_guard] Path cannot be safely resolved inside the project directory.")
         return
     name = rel.name
-    if name == ".env" or (name.startswith(".env.") and name != ".env.example"):
+    if name.startswith(".env") and name != ".env.example":
         block("[pre_edit_guard] Real .env files are off-limits. Use .env.example for placeholders.")
     if PROTECTED_PARTS & set(rel.parts):
         block(f"[pre_edit_guard] '{rel}' is a generated/protected location.")
