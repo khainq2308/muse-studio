@@ -227,6 +227,20 @@ class GenerationQueueService:
         number of tries via max_polls); anything else is a terminal FAILED that frees the slot.
         """
         safe_err = SecretRedactor.redact_text(str(exc), [raw_secret])
+        # The network lease was committed before the call; clear it on every failure path.
+        await db.refresh(task)
+        await db.refresh(shot)
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
+        if task.state in (
+            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+        ):
+            await db.commit()
+            await db.refresh(task)
+            return task
+
         task.error_category = exc.category.value
         task.retryable = exc.retryable
         task.error_message_redacted = safe_err
