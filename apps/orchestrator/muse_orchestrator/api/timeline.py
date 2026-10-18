@@ -458,64 +458,84 @@ async def launch_ffmpeg_export(
         "unsupported_features": unsupported,
     }
 
+# --- P3 HARDENING: PRESERVE ROUTE SIGNATURE & INCLUDE unsupported_features IN ALL 422 RESPONSES ---
+import functools as _p3_functools
+import inspect as _p3_inspect
+import json as _p3_json
+from fastapi.responses import JSONResponse as _P3JSONResponse
 
-# --- P3 HARDENING: ENSURE unsupported_features IS PRESENT IN EARLY 422 EXPORT ERRORS ---
-from fastapi.responses import JSONResponse as _FastAPIJSONResponse
 
-_orig_launch_ffmpeg_export = launch_ffmpeg_export
-if not getattr(launch_ffmpeg_export, "_p3_patched", False):
-    async def _wrapped_launch_ffmpeg_export(
-        project_id: str,
-        payload: ExportLaunchIn,
-        db: AsyncSession = Depends(get_db),
-        actor: str = Depends(verify_single_admin),
-    ) -> Any:
-        # Tính trước unsupported_features ngay khi tìm thấy TimelineSequenceRecord hợp lệ
-        seq_obj = None
-        if payload.sequence_id:
-            seq_obj = await db.get(TimelineSequenceRecord, payload.sequence_id)
-        else:
-            seq_obj = (
-                await db.execute(
-                    select(TimelineSequenceRecord)
-                    .where(TimelineSequenceRecord.project_id == project_id)
-                    .order_by(TimelineSequenceRecord.created_at.desc())
-                )
-            ).scalars().first()
+def _install_p3_timeline_api_patch() -> None:
+    orig_ep = globals().get("launch_ffmpeg_export")
+    if orig_ep is None or getattr(orig_ep, "_p3_installed", False):
+        return
+
+    orig_sig = _p3_inspect.signature(orig_ep)
+
+    @_p3_functools.wraps(orig_ep)
+    async def _p3_export_wrapper(*args: Any, **kwargs: Any) -> Any:
+        bound = orig_sig.bind_partial(*args, **kwargs)
+        b_args = bound.arguments
+        project_id = b_args.get("project_id")
+        payload = b_args.get("payload")
+        db = b_args.get("db") or b_args.get("session")
 
         early_unsupported: list[str] = []
-        if seq_obj and seq_obj.project_id == project_id:
-            collect_fn = getattr(TimelineValidationService, "collect_unsupported_features", None)
-            if callable(collect_fn):
-                try:
-                    early_unsupported = list(collect_fn(seq_obj.manifest_json or {}) or [])
-                except Exception:
-                    early_unsupported = []
+        if db is not None and project_id:
+            try:
+                seq_id = getattr(payload, "sequence_id", None) if payload else None
+                if seq_id:
+                    seq_obj = await db.get(TimelineSequenceRecord, seq_id)
+                else:
+                    seq_obj = (
+                        await db.execute(
+                            select(TimelineSequenceRecord)
+                            .where(TimelineSequenceRecord.project_id == project_id)
+                            .order_by(TimelineSequenceRecord.created_at.desc())
+                        )
+                    ).scalars().first()
+                if seq_obj and seq_obj.project_id == project_id:
+                    manifest = seq_obj.manifest_json or {}
+                    collect_fn = getattr(TimelineValidationService, "collect_unsupported_features", None)
+                    if callable(collect_fn):
+                        early_unsupported = list(collect_fn(manifest) or [])
+                    else:
+                        if manifest.get("title_card"):
+                            early_unsupported.append("title_card")
+                        if manifest.get("has_subtitles"):
+                            early_unsupported.append("subtitles")
+                        if manifest.get("audio_tracks"):
+                            early_unsupported.append("audio_tracks")
+            except Exception:
+                early_unsupported = []
 
         try:
-            resp = await _orig_launch_ffmpeg_export(project_id=project_id, payload=payload, db=db, actor=actor)
-            if isinstance(resp, _FastAPIJSONResponse) and resp.status_code == 422:
-                import json as _json
-                body_data = _json.loads(resp.body.decode("utf-8") or "{}")
-                if "unsupported_features" not in body_data:
-                    body_data["unsupported_features"] = early_unsupported
-                    return _FastAPIJSONResponse(status_code=422, content=body_data)
+            resp = await orig_ep(*args, **kwargs)
+            if isinstance(resp, _P3JSONResponse) and resp.status_code == 422:
+                data = _p3_json.loads(resp.body.decode("utf-8") or "{}")
+                if isinstance(data, dict) and "unsupported_features" not in data:
+                    data["unsupported_features"] = early_unsupported
+                    return _P3JSONResponse(status_code=422, content=data)
             return resp
         except HTTPException as exc:
             if exc.status_code == 422:
-                detail_val = exc.detail
-                if isinstance(detail_val, dict):
-                    content = dict(detail_val)
+                if isinstance(exc.detail, dict):
+                    content = dict(exc.detail)
                     content.setdefault("unsupported_features", early_unsupported)
                 else:
-                    content = {"detail": str(detail_val), "unsupported_features": early_unsupported}
-                return _FastAPIJSONResponse(status_code=422, content=content)
+                    content = {"detail": str(exc.detail), "unsupported_features": early_unsupported}
+                return _P3JSONResponse(status_code=422, content=content)
             raise
 
-    _wrapped_launch_ffmpeg_export._p3_patched = True
-    # Cập nhật route handler trong router.routes
-    for _route in router.routes:
-        if getattr(_route, "path", "").endswith("/exports") and "POST" in getattr(_route, "methods", set()):
-            _route.endpoint = _wrapped_launch_ffmpeg_export
-            _route.dependant.call = _wrapped_launch_ffmpeg_export
+    _p3_export_wrapper.__signature__ = orig_sig
+    _p3_export_wrapper._p3_installed = True
+    globals()["launch_ffmpeg_export"] = _p3_export_wrapper
 
+    for r in router.routes:
+        if getattr(r, "endpoint", None) is orig_ep:
+            r.endpoint = _p3_export_wrapper
+            if hasattr(r, "dependant") and hasattr(r.dependant, "call"):
+                r.dependant.call = _p3_export_wrapper
+
+
+_install_p3_timeline_api_patch()

@@ -150,7 +150,7 @@ async def test_upstream_errors_are_still_classified(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(monkeypatch, tmp_path):
-    """P2 Regression: Chặn URL IP nội bộ/loopback/link-local và chặn redirect trỏ về hostname phân giải ra IP nội bộ."""
+    """P2 Regression: Chặn URL IP nội bộ/loopback/link-local và chặn redirect phân giải ra IP nội bộ."""
     import socket
     import httpx
     from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
@@ -158,7 +158,6 @@ async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(mo
 
     adapter = Muse2ApiAdapter(base_url="https://api.muse.example.com", api_key="sk-live-secret-token")
 
-    # 1. Chặn trực tiếp các URL HTTPS trỏ tới IP nội bộ / loopback / cloud metadata / localhost
     for forbidden_url in [
         "https://127.0.0.1/media/video.mp4",
         "https://10.0.0.15/media/video.mp4",
@@ -169,9 +168,6 @@ async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(mo
     ]:
         with pytest.raises(ProviderFailure, match="SSRF"):
             await adapter.download_result(forbidden_url, str(tmp_path))
-
-    # 2. Chặn Redirect tới một domain bên ngoài nhưng phân giải DNS ra IP nội bộ (10.10.1.5)
-    orig_getaddrinfo = socket.getaddrinfo
 
     def fake_getaddrinfo(host, port, *args, **kwargs):
         if host == "rebind.attacker.example.org":
