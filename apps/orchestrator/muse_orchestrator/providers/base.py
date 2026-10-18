@@ -61,6 +61,7 @@ class VideoGenerationRequest:
     model_id: str = "muse-video-v1"
     duration_seconds: float = 5.0
     aspect_ratio: str = "16:9"
+    # First-frame image as an HTTP(S) URL or data URI; never an internal Asset ID.
     first_frame_url: str | None = None
     reference_image_urls: list[str] = field(default_factory=list)
     idempotency_key: str = ""
