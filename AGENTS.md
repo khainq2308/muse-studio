@@ -75,7 +75,8 @@ Legacy code may not fully meet the target layering. Do not add new violations; w
 | Frontend typecheck/build | `scripts/test.sh web` |
 | Lint + layering ratchet | `scripts/lint.sh` |
 | Layering details | `python3 scripts/check_layering.py --report` |
-| Roadmap / documentation gate | `python3 scripts/check_docs_sync.py` |
+| Roadmap gap signals (advisory) | `python3 scripts/audit_roadmap.py` |
+| Roadmap / documentation consistency | `python3 scripts/check_docs_sync.py` |
 | Cross-platform agent assets | `python3 scripts/check_agent_assets.py` |
 | Development API (SQLite) | `scripts/dev.sh` |
 
