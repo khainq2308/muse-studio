@@ -13,7 +13,7 @@ def is_secret_env_path(path: Path) -> bool:
     except (OSError, RuntimeError):
         return True
     return any(
-        part.startswith(".env") and part != ".env.example"
+        part.casefold().startswith(".env") and part.casefold() != ".env.example"
         for part in parts
     )
 
@@ -21,9 +21,10 @@ def is_secret_env_path(path: Path) -> bool:
 def is_secret_pattern(pattern: str) -> bool:
     normalized = pattern.replace("\\", "/")
     name = normalized.rsplit("/", 1)[-1]
+    folded = name.casefold()
     return (
-        name.startswith(".env") and name != ".env.example"
-        or name in {".env*", ".env.*", "**/.env", "**/.env.*", "**/.env*"}
+        folded.startswith(".env") and folded != ".env.example"
+        or folded in {".env*", ".env.*", "**/.env", "**/.env.*", "**/.env*"}
     )
 
 
