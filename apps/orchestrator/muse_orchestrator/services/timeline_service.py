@@ -182,7 +182,8 @@ class TimelineValidationService:
         def add_clip(clip: ExportClip) -> str:
             idx = state["inputs"]
             state["inputs"] += 1
-            inputs.extend(["-i", clip.path])
+            # Local files only: stops a crafted container from making ffmpeg open other protocols.
+            inputs.extend(["-protocol_whitelist", "file,pipe", "-i", clip.path])
             label = next_label("v")
             start = max(0.0, clip.trim_start)
             end = start + clip.effective_duration
@@ -418,7 +419,13 @@ class TimelineValidationService:
                 ffmpeg_args=plan.args,
             )
 
-        probe_meta = cls.verify_output(out_path, plan)
+        try:
+            probe_meta = cls.verify_output(out_path, plan)
+        except ExportError:
+            # The hardened verifier raises instead of returning valid=False; do not leave the
+            # rejected MP4 on disk.
+            cls._discard(out_path)
+            raise
         probe_meta["notes"] = plan.notes
         if not probe_meta["valid"]:
             cls._discard(out_path)
@@ -479,7 +486,12 @@ def _p1_probe_video_stream_duration(file_path: str, fallback_fps: float = 24.0) 
         "-of", "json",
         str(file_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=_FFPROBE_TIMEOUT_SECONDS
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False, None
     if proc.returncode != 0:
         return False, None
     try:
@@ -628,8 +640,16 @@ def _install_p1_timeline_patches() -> None:
                     )
                     if not src_path or not os.path.isfile(str(src_path)):
                         continue
-                    trim_s = float(c.get("trim_start_seconds", 0.0) if isinstance(c, dict) else getattr(c, "trim_start_seconds", 0.0))
-                    eff_dur = c.get("effective_duration_seconds") if isinstance(c, dict) else getattr(c, "effective_duration_seconds", None)
+                    # ExportClip exposes `trim_start` / `effective_duration` (the *_seconds names
+                    # only exist on dict clips), so read both spellings.
+                    if isinstance(c, dict):
+                        trim_s = float(c.get("trim_start_seconds", 0.0))
+                        eff_dur = c.get("effective_duration_seconds")
+                    else:
+                        trim_s = float(getattr(c, "trim_start_seconds", None) or getattr(c, "trim_start", 0.0) or 0.0)
+                        eff_dur = getattr(c, "effective_duration_seconds", None)
+                        if eff_dur is None:
+                            eff_dur = getattr(c, "effective_duration", None)
                     if eff_dur is None:
                         src_d = float(c.get("source_duration_seconds", 0.0) if isinstance(c, dict) else getattr(c, "source_duration_seconds", 0.0))
                         trim_e = float(c.get("trim_end_seconds", 0.0) if isinstance(c, dict) else getattr(c, "trim_end_seconds", 0.0))
