@@ -2,7 +2,6 @@
 """PreToolUse(Read|Grep|Glob): block direct access to real .env secrets."""
 from __future__ import annotations
 
-import fnmatch
 from pathlib import Path
 
 from _common import block, project_dir, read_event
