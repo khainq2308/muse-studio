@@ -265,5 +265,9 @@ class AssetService:
             file_path: Path | None = self.storage.resolve_safe_path(asset.storage_rel_path)
         except AssetStorageError as exc:
             raise ApplicationError(500, "Stored asset path is invalid or missing.") from exc
+        shared_path = await self.repository.has_other_asset_with_storage_path(
+            asset.storage_rel_path, asset.id
+        )
         await self.repository.delete_asset(asset)
-        file_path.unlink(missing_ok=True)
+        if not shared_path:
+            file_path.unlink(missing_ok=True)
