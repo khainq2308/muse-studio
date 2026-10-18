@@ -8,6 +8,7 @@
 | Chat / Script Analysis | POST /v1/chat/completions | unverified | No dated real-instance probe is recorded in this repository. | Cho phép import kịch bản Markdown/JSON trực tiếp |
 | Image Generation | POST /v1/images/generations | mock-only | Mock provider/tests only; no dated real-instance probe is recorded. | Cho phép upload ảnh tham chiếu thủ công |
 | Video Generation | POST /v1/videos | mock-only | Mock provider/tests only; no dated real-instance probe is recorded. | Xử lý bất đồng bộ qua ARQ non-blocking polling |
+| Video first-frame conditioning | POST /v1/videos | unverified | Source-code/schema references are documented in `docs/FRAME_CHAIN_PROVIDER_CONTRACT.md`; no dated live-instance probe exists. | Resolve Asset to a validated data URI and map to `image` / `first_frame_image`; fail closed for missing or corrupt frames. |
 | Poll Video Task | GET /v1/videos/{task_id} | mock-only | Mock provider/tests only; no dated real-instance probe is recorded. | Exponential backoff + jitter |
 | Media Download | GET /v1/media/{name} | mock-only | Mock responses only; no dated real-instance probe is recorded. | Tải về storage, kiểm tra bằng ffprobe |
 | Per-Instance Proxy | MUSE2API_BROWSER_PROXY | unverified | No dated real-instance probe is recorded in this repository. | Tạo nhiều ConnectionProfile trỏ tới các instance riêng |
