@@ -27,15 +27,15 @@ def main() -> None:
     event = read_event()
     tool_input = event.get("tool_input") or {}
     raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
-    if not isinstance(raw_path, str) or not raw_path:
-        return
+    if not isinstance(tool_input, dict) or not isinstance(raw_path, str) or not raw_path:
+        block("[pre_edit_guard] Missing or invalid edit path; refusing to bypass the guard.")
     root = project_dir()
     path = Path(raw_path)
     path = path if path.is_absolute() else root / path
     try:
         rel = path.resolve().relative_to(root)
-    except ValueError:
-        block("[pre_edit_guard] Path resolves outside the project directory.")
+    except (ValueError, OSError, RuntimeError):
+        block("[pre_edit_guard] Path cannot be safely resolved inside the project directory.")
         return
     name = rel.name
     if name == ".env" or (name.startswith(".env.") and name != ".env.example"):
