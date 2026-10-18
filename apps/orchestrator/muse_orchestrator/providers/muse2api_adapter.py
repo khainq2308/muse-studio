@@ -230,55 +230,101 @@ class Muse2ApiAdapter(VideoProvider):
         return f"{self.base_url}/v1/media/{quote('/'.join(segments), safe='/')}"
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
-        os.makedirs(dest_dir, exist_ok=True)
+        # P1a: network and filesystem errors become ProviderFailure so the queue can
+        # retry or fail the task instead of leaving it stuck in RUNNING.
+        # P2b: stream straight to a temp file (hashed incrementally) instead of
+        # buffering the whole file in RAM.
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except OSError as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST, f"Cannot create download directory: {exc}", None, False
+            ) from exc
         url = self._resolve_download_url(result_ref)
-        async with httpx.AsyncClient(
-            timeout=60.0, follow_redirects=False, transport=self._transport
-        ) as client:
-            for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
-                # The API key is only ever sent to the provider's own origin, never to a
-                # host named in an upstream response or in a redirect.
-                headers = {"Accept": "*/*"}
-                if self._is_provider_origin(url) and self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
-                async with client.stream("GET", url, headers=headers) as resp:
-                    if resp.status_code in _REDIRECT_STATUSES:
-                        location = resp.headers.get("location")
-                        if not location:
-                            raise ProviderFailure(
-                                ErrorCategory.INVALID_REQUEST, "Result download redirected without a location."
-                            )
-                        url = self._validate_download_url(urljoin(url, location))
-                        continue
-                    if resp.status_code >= 400:
-                        body = (await resp.aread())[:4096].decode("utf-8", "replace")
-                        raise classify_http_error(resp.status_code, SecretRedactor.redact_text(body, [self.api_key or ""]))
-                    if resp.status_code != 200:
-                        raise ProviderFailure(
-                            ErrorCategory.INVALID_REQUEST, f"Unexpected status {resp.status_code} while downloading result."
-                        )
-                    declared = resp.headers.get("content-length")
-                    if declared and declared.isdigit() and int(declared) > _MAX_DOWNLOAD_BYTES:
-                        raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result file exceeds the size limit.")
-                    chunks: list[bytes] = []
-                    total = 0
-                    async for chunk in resp.aiter_bytes():
-                        total += len(chunk)
-                        if total > _MAX_DOWNLOAD_BYTES:
-                            raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result file exceeds the size limit.")
-                        chunks.append(chunk)
-                    content = b"".join(chunks)
-                    content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
-                    break
-            else:
-                raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result download redirected too many times.")
-            digest = hashlib.sha256(content).hexdigest()
-            ext = _EXT_BY_CONTENT_TYPE.get(content_type, "mp4")
-            mime = content_type if content_type in _EXT_BY_CONTENT_TYPE else "video/mp4"
-            file_path = os.path.join(dest_dir, f"{digest[:16]}.{ext}")
-            with open(file_path, "wb") as f:
-                f.write(content)
-            return StoredMedia(local_path=file_path, mime_type=mime, size_bytes=len(content), sha256=digest)
+        tmp_path = os.path.join(dest_dir, f".download_{os.urandom(8).hex()}.tmp")
+        hasher = hashlib.sha256()
+        total = 0
+        content_type = "video/mp4"
+        try:
+            async with httpx.AsyncClient(
+                timeout=60.0, follow_redirects=False, transport=self._transport
+            ) as client:
+                for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
+                    # The API key is only ever sent to the provider's own origin, never to a
+                    # host named in an upstream response or in a redirect.
+                    headers = {"Accept": "*/*"}
+                    if self._is_provider_origin(url) and self.api_key:
+                        headers["Authorization"] = f"Bearer {self.api_key}"
+                    try:
+                        async with client.stream("GET", url, headers=headers) as resp:
+                            if resp.status_code in _REDIRECT_STATUSES:
+                                location = resp.headers.get("location")
+                                if not location:
+                                    raise ProviderFailure(
+                                        ErrorCategory.INVALID_REQUEST, "Result download redirected without a location."
+                                    )
+                                url = self._validate_download_url(urljoin(url, location))
+                                continue
+                            if resp.status_code >= 400:
+                                body = (await resp.aread())[:4096].decode("utf-8", "replace")
+                                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(body, [self.api_key or ""]))
+                            if resp.status_code != 200:
+                                raise ProviderFailure(
+                                    ErrorCategory.INVALID_REQUEST, f"Unexpected status {resp.status_code} while downloading result."
+                                )
+                            declared = resp.headers.get("content-length")
+                            if declared and declared.isdigit() and int(declared) > _MAX_DOWNLOAD_BYTES:
+                                raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result file exceeds the size limit.")
+                            try:
+                                f = open(tmp_path, "wb")
+                            except OSError as exc:
+                                raise ProviderFailure(
+                                    ErrorCategory.INVALID_REQUEST, f"Cannot write download file: {exc}", None, False
+                                ) from exc
+                            try:
+                                async for chunk in resp.aiter_bytes():
+                                    total += len(chunk)
+                                    if total > _MAX_DOWNLOAD_BYTES:
+                                        raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result file exceeds the size limit.")
+                                    hasher.update(chunk)
+                                    try:
+                                        f.write(chunk)
+                                    except OSError as exc:
+                                        raise ProviderFailure(
+                                            ErrorCategory.INVALID_REQUEST, f"Failed writing download file: {exc}", None, False
+                                        ) from exc
+                            finally:
+                                f.close()
+                            content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                            break
+                    except httpx.RequestError as exc:
+                        # Timeouts, connection resets, DNS failures: transient, safe to retry.
+                        safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
+                        raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
+                else:
+                    raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result download redirected too many times.")
+        except ProviderFailure:
+            # Remove the partial temp file; the queue decides retry vs terminal.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        digest = hasher.hexdigest()
+        ext = _EXT_BY_CONTENT_TYPE.get(content_type, "mp4")
+        mime = content_type if content_type in _EXT_BY_CONTENT_TYPE else "video/mp4"
+        file_path = os.path.join(dest_dir, f"{digest[:16]}.{ext}")
+        try:
+            os.replace(tmp_path, file_path)
+        except OSError as exc:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST, f"Cannot finalize download file: {exc}", None, False
+            ) from exc
+        return StoredMedia(local_path=file_path, mime_type=mime, size_bytes=total, sha256=digest)
 
 # --- P2 HARDENING: SSRF PROTECTION ON EXTERNAL DOWNLOADS & REDIRECTS ---
 import functools as _p2_functools
