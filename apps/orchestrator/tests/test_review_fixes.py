@@ -1,3 +1,4 @@
+import pytest
 from muse_orchestrator.core.security import SecretVault
 from muse_orchestrator.services.generation_queue import compute_backoff_seconds
 
@@ -23,7 +24,6 @@ def test_dispatch_lease_model_is_registered_with_metadata():
 
 @pytest.mark.asyncio
 async def test_artifact_verifier_rejects_mislabeled_or_undecodable_media(tmp_path):
-    import pytest
     from muse_orchestrator.providers.base import ProviderFailure
     from muse_orchestrator.services.generation_queue import _verify_downloaded_artifact
 
