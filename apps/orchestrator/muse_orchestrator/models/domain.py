@@ -2,7 +2,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timezone
 from typing import Any
-from sqlalchemy import String, Integer, Float, Boolean, ForeignKey, DateTime, Enum, JSON, Text, UniqueConstraint
+from sqlalchemy import String, Integer, Float, Boolean, ForeignKey, DateTime, Enum, JSON, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -355,6 +355,20 @@ class GenerationTaskRecord(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class GenerationDispatchLeaseRecord(Base):
+    """Short-lived reservation preventing duplicate dispatch while a provider call is in flight."""
+
+    __tablename__ = "generation_dispatch_leases"
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("generation_tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("provider_connections.id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ShotTakeRecord(Base):
     __tablename__ = "shot_takes"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -468,7 +482,21 @@ class ExportJobRecord(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-# --- M7: MULTI-CONNECTION ACCOUNTS / PROXIES, BACKUP ---
+class BackupRecord(Base):
+    """M7: a project backup archive (ZIP stored under media_root/backups)."""
+
+    __tablename__ = "project_backups"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_rel_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 
 
 class ConnectionAccount(Base):
@@ -503,19 +531,6 @@ class ConnectionAccount(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class BackupRecord(Base):
-    """M7: a project backup archive (ZIP stored under media_root/backups)."""
-
-    __tablename__ = "project_backups"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
-    filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    storage_rel_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class StructuredLogRecord(Base):
@@ -531,3 +546,4 @@ class StructuredLogRecord(Base):
     task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     payload_redacted: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
