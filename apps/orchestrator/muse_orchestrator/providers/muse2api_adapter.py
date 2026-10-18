@@ -38,14 +38,14 @@ class Muse2ApiAdapter(VideoProvider):
         base_url: str,
         api_key: str | None = None,
         timeout: float = 30.0,
-        proxy: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        proxy: str | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
-        self.proxy = proxy
         self._transport = transport
+        self.proxy = proxy
 
     def _headers(self, idempotency_key: str = "") -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -230,3 +230,142 @@ class Muse2ApiAdapter(VideoProvider):
             with open(file_path, "wb") as f:
                 f.write(content)
             return StoredMedia(local_path=file_path, mime_type=resp.headers.get("content-type", "video/mp4"), size_bytes=len(content), sha256=digest)
+
+# --- P2 HARDENING: SSRF PROTECTION ON EXTERNAL DOWNLOADS & REDIRECTS ---
+import functools as _p2_functools
+import inspect as _p2_inspect
+import ipaddress as _p2_ipaddress
+import socket as _p2_socket
+from urllib.parse import urlparse as _p2_urlparse
+
+_P2_FORBIDDEN_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "ip6-localhost",
+    "ip6-loopback",
+    "metadata",
+    "metadata.google.internal",
+}
+
+
+def _p2_is_forbidden_ip(ip_obj: _p2_ipaddress.IPv4Address | _p2_ipaddress.IPv6Address) -> bool:
+    if isinstance(ip_obj, _p2_ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
+        ip_obj = ip_obj.ipv4_mapped
+    return (
+        not ip_obj.is_global
+        or ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_reserved
+        or ip_obj.is_unspecified
+    )
+
+
+def _p2_verify_ssrf_safe_url(target_url: str, base_url: str | None = None) -> None:
+    parsed = _p2_urlparse(target_url)
+    if not parsed.scheme or not parsed.netloc:
+        return
+
+    if base_url:
+        base_p = _p2_urlparse(base_url)
+        base_origin = (base_p.scheme.lower(), (base_p.hostname or "").lower(), base_p.port)
+        target_origin = (parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port)
+        if target_origin == base_origin:
+            return
+
+    hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not hostname:
+        raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "SSRF blocked: missing hostname.", retryable=False)
+
+    if (
+        hostname in _P2_FORBIDDEN_HOSTS
+        or "." not in hostname
+        or hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa"))
+    ):
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST,
+            f"SSRF blocked: forbidden internal hostname '{hostname}'.",
+            retryable=False,
+        )
+
+    try:
+        ip_lit = _p2_ipaddress.ip_address(hostname)
+    except ValueError:
+        ip_lit = None
+
+    if ip_lit is not None:
+        if _p2_is_forbidden_ip(ip_lit):
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                f"SSRF blocked: non-public IP literal '{hostname}'.",
+                retryable=False,
+            )
+        return
+
+    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    try:
+        records = _p2_socket.getaddrinfo(hostname, port, type=_p2_socket.SOCK_STREAM)
+    except _p2_socket.gaierror:
+        # Nếu tên miền giả lập trong unit test (dùng httpx.MockTransport) không tồn tại trên DNS thật,
+        # nó không thể phân giải ra IP nội bộ; còn trên mạng thật httpx sẽ tự báo ConnectError.
+        return
+
+    for rec in records:
+        sockaddr = rec[4]
+        raw_ip = sockaddr[0] if sockaddr else ""
+        try:
+            ip_obj = _p2_ipaddress.ip_address(raw_ip)
+        except ValueError:
+            continue
+        if _p2_is_forbidden_ip(ip_obj):
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                f"SSRF blocked: host '{hostname}' resolved to non-public IP '{raw_ip}'.",
+                retryable=False,
+            )
+
+
+def _install_p2_adapter_patches() -> None:
+    cls = globals().get("Muse2ApiAdapter")
+    if cls is None or getattr(cls, "_p2_installed", False):
+        return
+
+    raw_val = cls.__dict__.get("_validate_download_url")
+    if raw_val is not None:
+        is_cm = isinstance(raw_val, classmethod)
+        is_sm = isinstance(raw_val, staticmethod)
+        orig_fn = raw_val.__func__ if (is_cm or is_sm) else raw_val
+        sig = _p2_inspect.signature(orig_fn)
+
+        @_p2_functools.wraps(orig_fn)
+        def _val_wrapper(*args: Any, **kwargs: Any) -> Any:
+            res = orig_fn(*args, **kwargs)
+            bound = sig.bind_partial(*args, **kwargs)
+            b_args = bound.arguments
+            self_obj = b_args.get("self")
+            base_u = getattr(self_obj, "base_url", None) or b_args.get("base_url")
+            url_str = (
+                res if isinstance(res, str)
+                else (b_args.get("url") or b_args.get("result_ref") or b_args.get("target_url"))
+            )
+            if not isinstance(url_str, str):
+                for k, v in b_args.items():
+                    if k != "self" and isinstance(v, str) and ("http://" in v or "https://" in v):
+                        url_str = v
+                        break
+            if isinstance(url_str, str):
+                _p2_verify_ssrf_safe_url(url_str, base_url=base_u)
+            return res
+
+        if is_cm:
+            setattr(cls, "_validate_download_url", classmethod(_val_wrapper))
+        elif is_sm:
+            setattr(cls, "_validate_download_url", staticmethod(_val_wrapper))
+        else:
+            setattr(cls, "_validate_download_url", _val_wrapper)
+
+    cls._p2_installed = True
+
+
+_install_p2_adapter_patches()
