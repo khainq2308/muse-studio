@@ -11,7 +11,7 @@ This change addresses the first contract and provides source-backed compatibilit
 
 ## Local frame handoff
 
-Before dispatching a video task with a first-frame asset, the queue:
+Before dispatching a frame-chained video task with a first-frame asset, the queue:
 
 - verifies the Asset belongs to the same project as the shot;
 - only permits PNG, JPEG, or WebP and rejects empty or greater-than-20-MiB files;
