@@ -113,6 +113,20 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(adapter.check_many_file_paths({}), 2)
             self.assertEqual(adapter.check_many_file_paths({"include": "README.md"}), 2)
 
+    def test_claude_search_hooks_block_explicit_env_targets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            grep = self.run_hook(
+                HOOKS / "pre_read_guard.py", root,
+                {"tool_name": "Grep", "tool_input": {"path": ".env", "pattern": "TOKEN"}},
+            )
+            self.assertEqual(grep.returncode, 2, grep.stderr)
+            glob = self.run_hook(
+                HOOKS / "pre_read_guard.py", root,
+                {"tool_name": "Glob", "tool_input": {"path": ".", "pattern": "**/.env*"}},
+            )
+            self.assertEqual(glob.returncode, 2, glob.stderr)
+
     def test_edit_guard_scans_env_example_for_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_hook(
@@ -159,6 +173,17 @@ class LayeringBaselineTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_stop_gate_detects_committed_branch_python_changes(self):
+        module = load_module("test_stop_gate_paths", HOOKS / "stop_gate.py")
+        def runner(command, cwd, timeout):
+            if command[:3] == ["git", "status", "--porcelain"]:
+                return 0, ""
+            if command[:4] == ["git", "diff", "--name-only", "origin/main...HEAD"]:
+                return 0, "apps/orchestrator/muse_orchestrator/api/projects.py\n"
+            return 0, ""
+        changed = module.collect_changed_paths(ROOT, runner=runner)
+        self.assertIn("apps/orchestrator/muse_orchestrator/api/projects.py", changed)
 
     def test_baseline_rejects_regression(self):
         self.module.BASELINE.write_text(json.dumps({"projects.py": 0}))
