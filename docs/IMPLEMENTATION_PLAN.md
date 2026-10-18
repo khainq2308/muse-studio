@@ -2,9 +2,13 @@
 
 * **M0 (Completed):** Repo audit, Capability Matrix, DAG Engine, Prompt Compiler/Linter, Secret Redactor, Contract Tests.
 * **M1 (Completed):** Project CRUD + Revisions, Encrypted Connection Profiles + Capability Probe, Safe Asset Storage, Studio Web M1 Dashboard.
-* **M2 (Completed):** Script Studio, Story Bible (Character/Location/Style/Props), Shot Board CRUD & MuseFlow Script Parser.
-* **M3 (Completed):** Workflow Canvas (React Flow + Typed DAG Execution).
-* **M4 (Completed):** Live `muse2api` Async Queue & Non-blocking Polling Worker.
-* **M5 (Completed):** Batch Render, Takes A/B Review & Frame Chaining.
-* **M6 (Completed):** Timeline Editor & FFmpeg MP4 Export.
-* **M7 (Completed):** Multi-Connection Accounts/Proxies (per-account API keys + proxy, least-recently-used selection in the generation queue), Observability Metrics (JSON summary + Prometheus exposition), Orphan Media Cleanup (scan/cleanup API + daily ARQ cron), Backup/Restore (project ZIP snapshots with ID remapping), System Operations (structured logs with secret redaction, redacted diagnostics bundle, audit trail on account/backup/cleanup actions — concepts ported from PR #9).
+* **M2 (Partial):** Script parser/backend primitives exist; production Studio Web Script Studio, Story Bible and Shot Board UI are incomplete.
+* **M3 (Partial):** DAG validation/planning/cache primitives exist; the React Flow workflow canvas and production node executors are incomplete.
+* **M4 (Partial):** Queue/polling logic exists; production ARQ worker wiring and reliable API enqueue/re-enqueue require end-to-end verification.
+* **M5 (Partial):** Batch/take concepts exist; frame chaining must use real, validated boundary-frame PNG assets and pass an integration test.
+* **M6 (Partial):** Backend FFmpeg export supports a subset of transitions; Timeline Editor UI, clip audio, title cards, subtitles and extra audio tracks are incomplete.
+* **M7 (Partial):** Some operations/backup/observability slices exist; full production readiness requires acceptance evidence for accounts/proxies, workers, cleanup and end-to-end operations.
+
+## Verification policy
+
+scripts/audit_roadmap.py reports heuristic navigation signals, not behavior. scripts/check_docs_sync.py detects disagreement between those signals and explicit milestone labels. A milestone is complete only after implementation, acceptance tests and relevant runtime evidence are reviewed.
