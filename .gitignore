@@ -7,7 +7,8 @@ __pycache__/
 .venv/
 venv/
 env/
-.env
+.env*
+!.env.example
 node_modules/
 *.egg-info/
 dist/
@@ -16,3 +17,6 @@ storage/
 *.db
 *.sqlite3
 .DS_Store
+.claude/settings.local.json
+.gemini/settings.local.json
+*.bak-*

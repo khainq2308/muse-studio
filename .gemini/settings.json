@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|write_file|replace|read_file|read_many_files|grep_search|glob",
+        "sequential": true,
+        "hooks": [
+          {
+            "name": "muse-safety-guard",
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.gemini/hooks/before_tool.py\"",
+            "timeout": 10000,
+            "description": "Adapts shared repository secret and destructive-command guards to Gemini CLI events."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -60,4 +60,4 @@ The M3 workflow API validates typed DAGs, builds deterministic execution plans, 
 
 ## Continuous integration
 
-.github/workflows/ci.yml runs orchestrator pytest, media-engine unit tests and the frontend TypeScript build on pull requests. Media-engine unit tests mock subprocess calls, so CI does not require a running FFmpeg executable or contact a real provider.
+.github/workflows/ci.yml runs agent-kit metadata/link checks and guard tests, orchestrator pytest, media-engine unit tests and the frontend TypeScript build on pull requests. The orchestrator job installs FFmpeg/FFprobe because export integration tests exercise real media rendering; the media-engine unit-test job mocks subprocess calls. CI does not contact a real muse2api provider, and passing mocks do not verify external provider capabilities.
