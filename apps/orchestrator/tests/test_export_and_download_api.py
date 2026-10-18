@@ -114,9 +114,9 @@ async def test_export_of_undecodable_clip_fails_and_creates_no_output(client: As
 
     # 422 when FFmpeg rejects the placeholder, 503 on a machine without FFmpeg; never 201.
     assert response.status_code in (422, 503), response.text
-    detail = response.json()["detail"]
-    assert detail["state"] == "failed"
-    assert detail["export_id"].startswith("exp_")
+    body = response.json()
+    assert body["state"] == "failed"
+    assert body["export_id"].startswith("exp_")
     exports_dir = Path(settings.media_root) / project_id / "exports"
     assert not list(exports_dir.glob("*.mp4"))
 
@@ -161,7 +161,7 @@ async def test_export_that_fails_verification_is_not_stored_as_an_asset(
     response = await client.post(f"/api/v1/projects/{project_id}/timeline/exports", json={})
 
     assert response.status_code == 422
-    assert response.json()["detail"]["state"] == "failed"
+    assert response.json()["state"] == "failed"
 
 
 @pytest.mark.asyncio
