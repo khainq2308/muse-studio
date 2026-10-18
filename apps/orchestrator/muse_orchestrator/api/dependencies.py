@@ -6,6 +6,7 @@ from muse_orchestrator.services.asset_storage import LocalAssetStorage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.application.account_service import ConnectionAccountService
+from muse_orchestrator.application.system_service import SystemService
 from muse_orchestrator.application.services import (
     AssetService,
     ConnectionService,
@@ -50,3 +51,9 @@ def get_backup_service(
     repository: StudioRepository = Depends(get_studio_repository),
 ) -> BackupService:
     return BackupService(repository, LocalAssetStorage(settings.media_root))
+
+
+def get_system_service(
+    repository: StudioRepository = Depends(get_studio_repository),
+) -> SystemService:
+    return SystemService(repository)

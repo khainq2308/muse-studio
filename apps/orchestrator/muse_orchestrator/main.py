@@ -25,6 +25,7 @@ from muse_orchestrator.api.connection_accounts import router as connection_accou
 from muse_orchestrator.api.metrics import router as metrics_router
 from muse_orchestrator.api.maintenance import router as maintenance_router
 from muse_orchestrator.api.backups import router as backups_router
+from muse_orchestrator.api.system import router as system_router
 
 
 @asynccontextmanager
@@ -90,6 +91,7 @@ app.include_router(connection_accounts_router, dependencies=_protected_dependenc
 app.include_router(metrics_router, dependencies=_protected_dependencies)
 app.include_router(maintenance_router, dependencies=_protected_dependencies)
 app.include_router(backups_router, dependencies=_protected_dependencies)
+app.include_router(system_router, dependencies=_protected_dependencies)
 
 
 @app.get("/healthz")
