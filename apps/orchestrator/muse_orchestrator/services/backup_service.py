@@ -18,6 +18,7 @@ from sqlalchemy import Enum as SAEnum
 from sqlalchemy import select
 
 from muse_orchestrator.application.services import ApplicationError
+from muse_orchestrator.application.system_service import write_audit
 from muse_orchestrator.core.config import settings
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import (
@@ -261,7 +262,14 @@ class BackupService:
             manifest_json=manifest,
         )
         record = await self.repository.create_backup_record(record)
-        await self._prune_old_backups(project_id)
+        pruned = await self._prune_old_backups(project_id)
+        await write_audit(
+            self.repository,
+            action="backup.create",
+            target_type="project_backup",
+            target_id=record.id,
+            details={"project_id": project_id, "size_bytes": record.size_bytes, "pruned": pruned},
+        )
         return record
 
     async def _prune_old_backups(self, project_id: str) -> int:
@@ -295,6 +303,13 @@ class BackupService:
         except Exception:
             pass
         await self.repository.delete_backup_record(record)
+        await write_audit(
+            self.repository,
+            action="backup.delete",
+            target_type="project_backup",
+            target_id=backup_id,
+            details={"project_id": record.project_id},
+        )
 
     def backup_file_path(self, record: BackupRecord) -> Path:
         try:
@@ -373,6 +388,13 @@ class BackupService:
             project.name = project_name
             await db.commit()
             await db.refresh(project)
+        await write_audit(
+            self.repository,
+            action="backup.restore",
+            target_type="project",
+            target_id=project.id,
+            details={"project_name": project.name, "tables_restored": report.get("tables_restored")},
+        )
         return project, report
 
     async def _restore_asset_media(

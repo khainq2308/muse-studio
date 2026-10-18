@@ -189,7 +189,7 @@ class ConnectionService:
                 connection.last_error_redacted = SecretRedactor.redact_text(
                     str(exc), [raw_api_key or ""]
                 )
-        accounts = await self.repository.list_connection_accounts(connection_id)
+        accounts = await self.repository.list_accounts(connection_id)
         connection.capabilities_snapshot = {
             "probed_at": connection.last_checked_at.isoformat(),
             "models": models,

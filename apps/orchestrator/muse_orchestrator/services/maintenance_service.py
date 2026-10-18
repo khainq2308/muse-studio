@@ -100,6 +100,18 @@ async def cleanup_orphan_media(
                 freed_bytes += orphan.size_bytes
             except OSError as exc:
                 errors.append(f"{orphan.rel_path}: {exc}")
+    if not dry_run and deleted:
+        # M7: audit trail for destructive cleanup (ported from PR #9).
+        from muse_orchestrator.application.system_service import write_audit
+        from muse_orchestrator.infrastructure.repositories import StudioRepository
+
+        await write_audit(
+            StudioRepository(db),
+            action="storage.cleanup",
+            target_type="media_root",
+            target_id="orphan_media",
+            details={"deleted": deleted, "freed_bytes": freed_bytes, "errors": errors},
+        )
     return {
         "dry_run": dry_run,
         "retention_hours": retention_hours if retention_hours is not None else settings.orphan_cleanup_retention_hours,
