@@ -127,10 +127,13 @@ async def _extract_video_boundary_frames(
             if not os.path.isfile(path) or os.path.getsize(path) <= 0:
                 raise MediaProcessingError("Boundary-frame extractor returned a missing or empty frame.")
             with open(path, "rb") as stream:
-                signature = stream.read(8)
-            if signature != b"\x89PNG\r\n\x1a\n":
+                content = stream.read()
+            if not content.startswith(b"\x89PNG\r\n\x1a\n"):
                 raise MediaProcessingError("Boundary-frame extractor returned a non-PNG artifact.")
-            artifacts.append(_BoundaryFrameArtifact(position, path, os.path.getsize(path), digest))
+            actual_digest = hashlib.sha256(content).hexdigest()
+            if digest != actual_digest:
+                raise MediaProcessingError("Boundary-frame extractor returned an incorrect SHA-256 digest.")
+            artifacts.append(_BoundaryFrameArtifact(position, path, len(content), actual_digest))
         return artifacts
     except Exception as exc:
         shutil.rmtree(output_dir, ignore_errors=True)
