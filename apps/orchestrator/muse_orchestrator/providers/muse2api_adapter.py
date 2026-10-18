@@ -102,11 +102,13 @@ class Muse2ApiAdapter(VideoProvider):
         api_key: str | None = None,
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        proxy: str | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self._transport = transport
+        self.proxy = proxy
 
     def _headers(self, idempotency_key: str = "") -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -118,7 +120,7 @@ class Muse2ApiAdapter(VideoProvider):
 
     async def health(self) -> ProviderHealth:
         start = time.perf_counter()
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, proxy=self.proxy) as client:
             try:
                 h_resp = await client.get(f"{self.base_url}/healthz")
                 r_resp = await client.get(f"{self.base_url}/readyz")
@@ -133,7 +135,7 @@ class Muse2ApiAdapter(VideoProvider):
                 return ProviderHealth(healthy=False, ready=False, status_state="unavailable", latency_ms=round(latency, 2), details={"error": safe_msg})
 
     async def list_models(self) -> list[ModelCapability]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
             except httpx.RequestError as exc:
