@@ -720,17 +720,18 @@ class GenerationQueueService:
                 os.unlink(stored.local_path)
             except OSError:
                 pass
-            for frame in boundary_artifacts:
-                try:
-                    os.unlink(frame.path)
-                except OSError:
-                    pass
             lease = await db.get(GenerationDispatchLeaseRecord, task.id)
             if lease is not None:
                 await db.delete(lease)
             await db.commit()
             await db.refresh(task)
             return task
+
+        existing_takes_count = (
+            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
+        ).scalar_one()
+        take_num = existing_takes_count + 1
+        is_first_take = existing_takes_count == 0
 
         boundary_artifacts: list[_BoundaryFrameArtifact] = []
         if task.task_type == "video":
@@ -739,9 +740,7 @@ class GenerationQueueService:
                     stored.local_path,
                     dest_dir,
                     shot.id,
-                    (await db.execute(
-                        select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id)
-                    )).scalar_one() + 1,
+                    take_num,
                     conn.provider_type,
                 )
             except ProviderFailure as exc:
@@ -752,6 +751,25 @@ class GenerationQueueService:
                 return await GenerationQueueService._handle_poll_failure(
                     db, task, shot, conn, exc, raw_secret, "boundary-frame extraction"
                 )
+
+        # Extraction runs outside the event loop; re-check cancellation before persisting artifacts.
+        await db.refresh(task)
+        await db.refresh(shot)
+        if task.state in (
+            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+        ):
+            for path in [stored.local_path, *(frame.path for frame in boundary_artifacts)]:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
+            await db.commit()
+            await db.refresh(task)
+            return task
 
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
@@ -772,12 +790,6 @@ class GenerationQueueService:
             is_locked_reference=(task.task_type == "image"),
         )
         db.add(asset)
-
-        existing_takes_count = (
-            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
-        ).scalar_one()
-        take_num = existing_takes_count + 1
-        is_first_take = existing_takes_count == 0
 
         first_frame_aid: str | None = None
         last_frame_aid: str | None = None
