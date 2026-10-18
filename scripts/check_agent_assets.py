@@ -13,10 +13,10 @@ REQUIRED_DOCS = ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "docs/AGENT_WORKFLOW.md"
 SKILL_ROOT = ROOT / ".agents" / "skills"
 CLAUDE_SKILLS = ROOT / ".claude" / "skills"
 FRONT = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
-LINK = re.compile(r"!?\\[[^\\]]*\\]\\(([^)]+)\\)")
-INLINE_CODE = re.compile(r"(?<!\\x60)\\x60([^\\x60\\n]+)\\x60(?!\\x60)")
+LINK = re.compile(r"!? \[[^\]]*\]\(([^)]+)\)")
+INLINE_CODE = re.compile(r"(?<!\x60)\x60([^\x60\n]+)\x60(?!\x60)")
 CODE_PATH = re.compile(
-    r"(?<![A-Za-z0-9_])(?:\\./)?(?:scripts|docs|\\.agents|\\.claude|\\.codex|\\.gemini)/[^\\s\\x60'\\"<>]+"
+    r"(?<![A-Za-z0-9_])(?:\./)?(?:scripts|docs|\.agents|\.claude|\.codex|\.gemini)/[^\s\x60'\"<>]+"
 )
 
 
