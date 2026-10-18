@@ -90,15 +90,14 @@ def check_many_file_paths(args: dict) -> int:
             )
             if excluded:
                 continue
+            # Gemini's read_many_files uses glob patterns and nodir=true: directory
+            # matches are not read directly. Recursive include patterns also yield files,
+            # so inspect those matches only rather than walking each directory repeatedly.
             if path.is_dir():
-                for base, dirs, names in os.walk(path, followlinks=False):
-                    dirs[:] = [d for d in dirs if d not in PRUNED_DIRS]
-                    for name in names:
-                        candidate = Path(base) / name
-                        if is_secret_path(candidate):
-                            print("[gemini safety guard] read_many_files path includes a real .env secret file.", file=sys.stderr)
-                            return 2
-            elif is_secret_path(path):
+                continue
+            if any(part in PRUNED_DIRS for part in rel.parts):
+                continue
+            if is_secret_path(path):
                 print("[gemini safety guard] read_many_files pattern includes a real .env secret file.", file=sys.stderr)
                 return 2
     return 0
@@ -108,6 +107,9 @@ def main() -> int:
         event = json.load(sys.stdin)
     except (json.JSONDecodeError, OSError):
         print("[gemini safety guard] Invalid hook JSON; refusing tool call.", file=sys.stderr)
+        return 2
+    if not isinstance(event, dict):
+        print("[gemini safety guard] Hook event must be a JSON object; refusing tool call.", file=sys.stderr)
         return 2
     tool_name = event.get("tool_name", "")
     args = event.get("tool_input") or {}
