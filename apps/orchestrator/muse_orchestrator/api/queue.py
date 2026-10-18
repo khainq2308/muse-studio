@@ -112,7 +112,14 @@ async def list_queue_tasks(
     if connection_id:
         stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
     if state:
-        stmt = stmt.where(GenerationTaskRecord.state == QueueTaskState(state))
+        try:
+            state_filter = QueueTaskState(state)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"state không hợp lệ. Giá trị cho phép: {[s.value for s in QueueTaskState]}",
+            )
+        stmt = stmt.where(GenerationTaskRecord.state == state_filter)
     if model_id:
         stmt = stmt.where(GenerationTaskRecord.model_id == model_id)
     if account_used:
@@ -164,6 +171,14 @@ async def cancel_task(task_id: str, db: AsyncSession = Depends(get_db), actor: s
     task = await db.get(GenerationTaskRecord, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
+    if task.state in (
+        QueueTaskState.SUCCEEDED,
+        QueueTaskState.FAILED,
+        QueueTaskState.CANCELED,
+        QueueTaskState.POLL_TIMEOUT,
+    ):
+        # Do not rewrite a finished task (and its shot) into CANCELED.
+        return _serialize_task(task)
     task.state = QueueTaskState.CANCELED
     task.finished_at = datetime.now(timezone.utc)
     shot = await db.get(ShotRecord, task.shot_id)

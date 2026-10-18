@@ -10,7 +10,9 @@ from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter, _origi
 
 BASE = "https://muse.example.com"
 API_KEY = "sk-secret-key"
-VIDEO = httpx.Response(200, headers={"content-type": "video/mp4"}, content=b"VIDEO-BYTES")
+VIDEO = httpx.Response(
+    200, headers={"content-type": "video/mp4"}, content=b"\x00\x00\x00\x18ftypmp42VIDEO-BYTES"
+)
 
 
 def _redirect(location: str | None) -> httpx.Response:
@@ -36,13 +38,47 @@ class Upstream:
 BEARER = f"Bearer {API_KEY}"
 
 
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_html_masquerading_as_mp4_and_removes_partial_file(tmp_path: Path) -> None:
+    upstream = Upstream({
+        f"{BASE}/v1/media/html": httpx.Response(
+            200, headers={"content-type": "video/mp4"}, content=b"<html>upstream error</html>"
+        )
+    })
+
+    with pytest.raises(ProviderFailure, match="signature"):
+        await upstream.adapter().download_result("html", str(tmp_path))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_identical_downloads_get_distinct_paths(tmp_path: Path) -> None:
+    upstream = Upstream({
+        f"{BASE}/v1/media/a.mp4": VIDEO,
+        f"{BASE}/v1/media/b.mp4": httpx.Response(
+            200, headers={"content-type": "video/mp4"}, content=b"\x00\x00\x00\x18ftypmp42VIDEO-BYTES"
+        ),
+    })
+    adapter = upstream.adapter()
+
+    first = await adapter.download_result("a.mp4", str(tmp_path))
+    second = await adapter.download_result("b.mp4", str(tmp_path))
+
+    assert first.sha256 == second.sha256
+    assert first.local_path != second.local_path
+    assert Path(first.local_path).is_file()
+    assert Path(second.local_path).is_file()
+
 @pytest.mark.asyncio
 async def test_media_id_on_the_provider_gets_the_api_key(tmp_path: Path) -> None:
     upstream = Upstream({f"{BASE}/v1/media/task_1.mp4": VIDEO})
 
     stored = await upstream.adapter().download_result("task_1.mp4", str(tmp_path))
 
-    assert stored.size_bytes == len(b"VIDEO-BYTES")
+    assert stored.size_bytes == len(VIDEO.content)
     assert upstream.requests == [(f"{BASE}/v1/media/task_1.mp4", BEARER)]
 
 

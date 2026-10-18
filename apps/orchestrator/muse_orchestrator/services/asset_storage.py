@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,7 +78,9 @@ class LocalAssetStorage:
             raise AssetStorageError("Project path escaped the media root.") from exc
         target_directory.mkdir(parents=True, exist_ok=True)
 
-        final_filename = f"{digest[:12]}_{safe_name}"
+        # A random token keeps two assets with identical bytes+name from sharing one file,
+        # otherwise deleting one asset (or rolling back a failed insert) removes the other's file.
+        final_filename = f"{digest[:12]}_{uuid.uuid4().hex[:8]}_{safe_name}"
         full_path = (target_directory / final_filename).resolve()
         try:
             full_path.relative_to(self.root_path)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import os
 import tempfile
 import pytest
@@ -144,3 +145,85 @@ SHOT 3: Stuck Poll Timeout Shot
     step_timeout = (await client.post(f"/api/v1/queue/tasks/{t_stuck['id']}/step")).json()  # Poll 3 -> Vượt ngưỡng max_polls=2
     assert step_timeout["state"] == "poll_timeout"
     assert step_timeout["error_category"] == "upstream_poll_timeout"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monkeypatch):
+    """A duplicate worker invocation must not dispatch the same unclaimed task twice."""
+    from sqlalchemy import select
+    from muse_orchestrator.models.domain import (
+        GenerationDispatchLeaseRecord, GenerationTaskRecord, Project,
+        ProviderConnection, SceneRecord, ShotRecord, QueueTaskState,
+    )
+    from muse_orchestrator.providers.base import ProviderTask
+    from muse_orchestrator.services import generation_queue as queue_module
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'dispatch-lease.db'}", future=True)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    SessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with SessionLocal() as session:
+        session.add_all([
+            Project(id="proj_lease", name="Lease test"),
+            ProviderConnection(
+                id="conn_lease", name="lease-mock", provider_type="mock",
+                base_url="http://localhost:8080", max_concurrency=1,
+            ),
+            SceneRecord(id="scene_lease", project_id="proj_lease", scene_index=1, title="Scene"),
+            ShotRecord(
+                id="shot_lease", project_id="proj_lease", scene_id="scene_lease",
+                sequence_index=1, title="Shot", location_code="roof",
+            ),
+            GenerationTaskRecord(
+                id="task_lease", project_id="proj_lease", scene_id="scene_lease",
+                shot_id="shot_lease", connection_id="conn_lease", task_type="video",
+                model_id="muse-video-mock-v1", idempotency_key="lease-idempotency",
+                state=QueueTaskState.QUEUED, prompt_snapshot="test prompt",
+            ),
+        ])
+        await session.commit()
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowProvider:
+        calls = 0
+
+        async def generate_video(self, request):
+            self.calls += 1
+            started.set()
+            await release.wait()
+            return ProviderTask(external_task_id="external-lease-task", status="queued")
+
+    provider = SlowProvider()
+    monkeypatch.setattr(queue_module, "build_provider", lambda _connection: provider)
+
+    try:
+        async with SessionLocal() as first_session:
+            first_call = asyncio.create_task(
+                queue_module.GenerationQueueService.step_task(first_session, "task_lease")
+            )
+            await asyncio.wait_for(started.wait(), timeout=5)
+
+            async with SessionLocal() as second_session:
+                second_result = await asyncio.wait_for(
+                    queue_module.GenerationQueueService.step_task(second_session, "task_lease"),
+                    timeout=5,
+                )
+                assert second_result.state == QueueTaskState.RUNNING
+                assert second_result.external_task_id is None
+                assert provider.calls == 1
+
+            release.set()
+            first_result = await asyncio.wait_for(first_call, timeout=5)
+            assert first_result.external_task_id == "external-lease-task"
+            assert provider.calls == 1
+
+        async with SessionLocal() as session:
+            lease = await session.get(GenerationDispatchLeaseRecord, "task_lease")
+            assert lease is None
+    finally:
+        release.set()
+        await engine.dispose()
+

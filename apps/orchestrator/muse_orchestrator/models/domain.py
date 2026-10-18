@@ -355,6 +355,20 @@ class GenerationTaskRecord(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class GenerationDispatchLeaseRecord(Base):
+    """Short-lived reservation preventing duplicate dispatch while a provider call is in flight."""
+
+    __tablename__ = "generation_dispatch_leases"
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("generation_tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("provider_connections.id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ShotTakeRecord(Base):
     __tablename__ = "shot_takes"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
