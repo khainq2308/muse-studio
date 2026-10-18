@@ -11,4 +11,4 @@
 
 ## Verification policy
 
-scripts/audit_roadmap.py reports heuristic navigation signals, not behavior. scripts/check_docs_sync.py detects disagreement between those signals and explicit milestone labels. A milestone is complete only after implementation, acceptance tests and relevant runtime evidence are reviewed.
+scripts/audit_roadmap.py reports heuristic navigation signals, not behavior. scripts/check_docs_sync.py validates that each milestone has one explicit, allowed status and that capability-matrix status labels use the approved vocabulary; it deliberately does not infer completion from file names or dependencies. A milestone is complete only after implementation, acceptance tests and relevant runtime evidence are reviewed.
