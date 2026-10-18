@@ -191,6 +191,24 @@ class GuardTests(unittest.TestCase):
             allowed_readme = adapter.check_many_file_paths({"include": ["README.md"]})
             self.assertEqual(allowed_readme, 0)
 
+    def test_gemini_broad_grep_blocks_unignored_env_variants(self):
+        adapter = load_module("test_gemini_grep_scan", ROOT / ".gemini" / "hooks" / "before_tool.py")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True, text=True, check=False)
+            (root / ".env.production").write_text("API_KEY=secret")
+            (root / "README.md").write_text("safe")
+            adapter.ROOT = root
+            adapter.HOOKS = HOOKS
+
+            # A broad grep could read an unignored .env.production file.
+            self.assertEqual(adapter.check_grep_search_paths({"path": ".", "pattern": "API_KEY"}), 2)
+            self.assertEqual(adapter.check_grep_search_paths({"path": ".", "include": "*.md", "pattern": "MuseStudio"}), 0)
+
+            (root / ".gitignore").write_text(".env*\n!.env.example\n")
+            self.assertEqual(adapter.check_grep_search_paths({"path": ".", "pattern": "API_KEY"}), 0)
+            self.assertEqual(adapter.check_grep_search_paths({"path": ".", "include": ".env.production", "pattern": "API_KEY"}), 2)
+
     def test_gemini_grep_search_blocks_explicit_secret_path(self):
         adapter = ROOT / ".gemini" / "hooks" / "before_tool.py"
         denied = self.run_hook(
