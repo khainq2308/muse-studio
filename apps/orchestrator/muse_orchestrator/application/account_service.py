@@ -10,6 +10,7 @@ from muse_orchestrator.providers.base import ProviderFailure
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
 
 from muse_orchestrator.application.services import ApplicationError
+from muse_orchestrator.application.system_service import write_audit
 from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import ConnectionAccount, ConnectionHealthState
@@ -77,7 +78,15 @@ class ConnectionAccountService:
             priority=int(values.get("priority", 100)),
             health_state=ConnectionHealthState.UNKNOWN,
         )
-        return await self.repository.create_account(account)
+        created = await self.repository.create_account(account)
+        await write_audit(
+            self.repository,
+            action="account.create",
+            target_type="connection_account",
+            target_id=created.id,
+            details={"connection_id": connection.id, "label": created.label},
+        )
+        return created
 
     async def list_accounts(self, connection_id: str) -> list[ConnectionAccount]:
         await self._require_connection(connection_id)
@@ -110,13 +119,29 @@ class ConnectionAccountService:
             proxy_url = str(values["proxy_url"] or "").strip() or None
             account.proxy_display_host = _validate_proxy_url(proxy_url)
             account.encrypted_proxy_url = self.secret_vault.encrypt(proxy_url) if proxy_url else None
-        return await self.repository.save_account(account)
+        saved = await self.repository.save_account(account)
+        await write_audit(
+            self.repository,
+            action="account.update",
+            target_type="connection_account",
+            target_id=saved.id,
+            details={"label": saved.label, "enabled": saved.enabled},
+        )
+        return saved
 
     async def delete_account(self, account_id: str) -> None:
         account = await self.repository.get_account(account_id)
         if account is None:
             raise ApplicationError(404, "Connection account not found.")
+        label, connection_id = account.label, account.connection_id
         await self.repository.delete_account(account)
+        await write_audit(
+            self.repository,
+            action="account.delete",
+            target_type="connection_account",
+            target_id=account_id,
+            details={"connection_id": connection_id, "label": label},
+        )
 
     async def test_account(self, account_id: str) -> ConnectionAccount:
         account = await self.repository.get_account(account_id)
@@ -160,4 +185,12 @@ class ConnectionAccountService:
             account.last_error_redacted = SecretRedactor.redact_text(
                 str(exc), [raw_api_key or "", raw_proxy_url or ""]
             )
-        return await self.repository.save_account(account)
+        saved = await self.repository.save_account(account)
+        await write_audit(
+            self.repository,
+            action="account.test",
+            target_type="connection_account",
+            target_id=saved.id,
+            details={"label": saved.label, "health_state": str(saved.health_state)},
+        )
+        return saved

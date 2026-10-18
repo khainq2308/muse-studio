@@ -11,6 +11,7 @@ from muse_orchestrator.models.domain import (
     Project,
     ProjectRevision,
     ProviderConnection,
+    StructuredLogRecord,
 )
 
 
@@ -104,6 +105,13 @@ class StudioRepository:
         )
         return list(result.scalars().all())
 
+    async def list_all_accounts(self) -> list[ConnectionAccount]:
+        """M7: all connection accounts (for diagnostics)."""
+        result = await self.session.execute(
+            select(ConnectionAccount).order_by(ConnectionAccount.created_at.desc())
+        )
+        return list(result.scalars().all())
+
     async def get_account(self, account_id: str) -> ConnectionAccount | None:
         return await self.session.get(ConnectionAccount, account_id)
 
@@ -139,3 +147,46 @@ class StudioRepository:
     async def delete_backup_record(self, record: BackupRecord) -> None:
         await self.session.delete(record)
         await self.session.commit()
+
+    async def create_audit_event(self, event: AuditEvent) -> AuditEvent:
+        """M7: persist an audit trail entry (ported from PR #9)."""
+        self.session.add(event)
+        await self.session.commit()
+        await self.session.refresh(event)
+        return event
+
+    async def list_audit_events(self, limit: int = 100) -> list[AuditEvent]:
+        """M7: newest audit events first."""
+        result = await self.session.execute(
+            select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(max(1, limit))
+        )
+        return list(result.scalars().all())
+
+    async def create_structured_log(self, entry: StructuredLogRecord) -> StructuredLogRecord:
+        """M7: persist a structured operational log entry (ported from PR #9)."""
+        self.session.add(entry)
+        await self.session.commit()
+        await self.session.refresh(entry)
+        return entry
+
+    async def list_structured_logs(
+        self,
+        *,
+        level: str | None = None,
+        event: str | None = None,
+        correlation_id: str | None = None,
+        project_id: str | None = None,
+        limit: int = 100,
+    ) -> list[StructuredLogRecord]:
+        """M7: newest structured logs first, with optional filters."""
+        stmt = select(StructuredLogRecord).order_by(StructuredLogRecord.created_at.desc())
+        if level:
+            stmt = stmt.where(StructuredLogRecord.level == level)
+        if event:
+            stmt = stmt.where(StructuredLogRecord.event == event)
+        if correlation_id:
+            stmt = stmt.where(StructuredLogRecord.correlation_id == correlation_id)
+        if project_id:
+            stmt = stmt.where(StructuredLogRecord.project_id == project_id)
+        result = await self.session.execute(stmt.limit(max(1, limit)))
+        return list(result.scalars().all())
