@@ -6,12 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from muse_orchestrator.models.domain import (
     Asset,
     AuditEvent,
-    BackupRecord,
-    ConnectionAccount,
     Project,
     ProjectRevision,
     ProviderConnection,
-    StructuredLogRecord,
+    BackupRecord,
 )
 
 
@@ -84,6 +82,14 @@ class StudioRepository:
         await self.session.commit()
         await self.session.refresh(asset)
         return asset
+
+    async def has_other_asset_with_storage_path(self, storage_rel_path: str, asset_id: str) -> bool:
+        result = await self.session.execute(
+            select(Asset.id)
+            .where(Asset.storage_rel_path == storage_rel_path, Asset.id != asset_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def delete_asset(self, asset: Asset) -> None:
         await self.session.delete(asset)
