@@ -1,9 +1,15 @@
 from __future__ import annotations
+import functools as _p2_functools
 import hashlib
+import inspect as _p2_inspect
+import ipaddress as _p2_ipaddress
 import os
+import socket as _p2_socket
 import time
 import uuid
+from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import urlparse as _p2_urlparse
 import httpx
 from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.providers.base import (
@@ -370,12 +376,6 @@ class Muse2ApiAdapter(VideoProvider):
         return StoredMedia(local_path=file_path, mime_type=mime, size_bytes=total, sha256=digest)
 
 # --- P2 HARDENING: SSRF PROTECTION ON EXTERNAL DOWNLOADS & REDIRECTS ---
-import functools as _p2_functools
-import inspect as _p2_inspect
-import ipaddress as _p2_ipaddress
-import socket as _p2_socket
-from urllib.parse import urlparse as _p2_urlparse
-
 _P2_FORBIDDEN_HOSTS = {
     "localhost",
     "localhost.localdomain",
