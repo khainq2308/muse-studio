@@ -146,7 +146,7 @@ def check_many_file_paths(args: dict) -> int:
         base_path = Path(base)
         for name in names:
             candidate = base_path / name
-            if not (name == ".env" or name.startswith(".env.") or candidate.is_symlink()):
+            if not (name.startswith(".env") or candidate.is_symlink()):
                 continue
             if not is_secret_path(candidate):
                 continue
