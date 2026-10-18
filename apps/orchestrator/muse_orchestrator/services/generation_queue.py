@@ -490,6 +490,11 @@ class GenerationQueueService:
                     task.state = QueueTaskState.QUEUED
                     shot.generation_state = ShotGenerationState.QUEUED
                     task.next_poll_delay_seconds = delay
+                    if account is not None and exc.category in (
+                        ErrorCategory.AUTH_FAILED, ErrorCategory.QUOTA_EXHAUSTED
+                    ):
+                        # This account is no longer the candidate for the retry.
+                        task.account_id_used = None
                     task.history_log = list(task.history_log or []) + [
                         f"Transient failure on attempt {task.attempt_count} (will retry in {delay}s): {safe_err}"
                     ]

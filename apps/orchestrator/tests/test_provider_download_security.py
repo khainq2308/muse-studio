@@ -10,7 +10,12 @@ from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter, _origi
 
 BASE = "https://muse.example.com"
 API_KEY = "sk-secret-key"
-VIDEO = httpx.Response(200, headers={"content-type": "video/mp4"}, content=b"VIDEO-BYTES")
+# Minimal MP4 ftyp box signature for adapter-level download tests; FFprobe is tested by the queue verifier.
+VIDEO = httpx.Response(
+    200,
+    headers={"content-type": "video/mp4"},
+    content=b"\x00\x00\x00\x18ftypmp42" + b"VIDEO-BYTES",
+)
 
 
 def _redirect(location: str | None) -> httpx.Response:
@@ -42,7 +47,7 @@ async def test_media_id_on_the_provider_gets_the_api_key(tmp_path: Path) -> None
 
     stored = await upstream.adapter().download_result("task_1.mp4", str(tmp_path))
 
-    assert stored.size_bytes == len(b"VIDEO-BYTES")
+    assert stored.size_bytes == len(VIDEO.content)
     assert upstream.requests == [(f"{BASE}/v1/media/task_1.mp4", BEARER)]
 
 

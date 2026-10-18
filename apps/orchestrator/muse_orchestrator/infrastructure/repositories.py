@@ -10,6 +10,8 @@ from muse_orchestrator.models.domain import (
     ProjectRevision,
     ProviderConnection,
     BackupRecord,
+    ConnectionAccount,
+    StructuredLogRecord,
 )
 
 
