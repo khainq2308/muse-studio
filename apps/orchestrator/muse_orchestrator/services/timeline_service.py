@@ -25,6 +25,80 @@ _FFPROBE_TIMEOUT_SECONDS = 60.0
 _STDERR_TAIL_CHARS = 800
 
 
+def _parse_frame_rate(rate_str: str | None, fallback_fps: float = 24.0) -> float:
+    if not rate_str or rate_str in ("0/0", "N/A"):
+        return float(fallback_fps)
+    if "/" in str(rate_str):
+        num_s, den_s = str(rate_str).split("/", 1)
+        try:
+            num, den = float(num_s), float(den_s)
+            if den > 0 and num > 0:
+                return num / den
+        except ValueError:
+            return float(fallback_fps)
+    try:
+        val = float(rate_str)
+        return val if val > 0 else float(fallback_fps)
+    except ValueError:
+        return float(fallback_fps)
+
+
+def _extract_video_stream_duration(video_stream: dict[str, Any], fallback_fps: float = 24.0) -> float | None:
+    raw_dur = video_stream.get("duration")
+    if raw_dur not in (None, "", "N/A"):
+        try:
+            dur = float(raw_dur)
+            if dur > 0:
+                return dur
+        except (TypeError, ValueError):
+            pass
+    raw_frames = video_stream.get("nb_frames")
+    if raw_frames not in (None, "", "N/A"):
+        try:
+            frames = float(raw_frames)
+            fps = _parse_frame_rate(
+                video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate"),
+                fallback_fps=fallback_fps,
+            )
+            if frames > 0 and fps > 0:
+                return frames / fps
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _probe_source_video_duration(source_path: str, fallback_fps: float = 24.0) -> float | None:
+    if not shutil.which("ffprobe") or not os.path.isfile(source_path):
+        return None
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type,duration,nb_frames,avg_frame_rate,r_frame_rate:format=duration",
+        "-of", "json",
+        source_path,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    streams = payload.get("streams") or []
+    if streams:
+        v_dur = _extract_video_stream_duration(streams[0], fallback_fps=fallback_fps)
+        if v_dur is not None:
+            return v_dur
+    fmt_dur = (payload.get("format") or {}).get("duration")
+    if fmt_dur not in (None, "", "N/A"):
+        try:
+            return float(fmt_dur)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 class ExportError(Exception):
     """An export could not produce a verified MP4. Never raised for a "valid" fake output."""
 
@@ -442,3 +516,93 @@ class TimelineValidationService:
             os.unlink(path)
         except OSError:
             pass
+
+
+# --- P1 HARDENING: VIDEO STREAM DURATION & SOURCE CLIP SPAN VERIFICATION ---
+_orig_verify_output = getattr(TimelineValidationService, "verify_output", None)
+if _orig_verify_output is not None and not getattr(TimelineValidationService, "_p1_verify_patched", False):
+    @classmethod
+    def _patched_verify_output(
+        cls,
+        output_path: str,
+        expected_width: int,
+        expected_height: int,
+        expected_duration: float,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        meta = _orig_verify_output(
+            output_path,
+            expected_width,
+            expected_height,
+            expected_duration,
+            *args,
+            **kwargs,
+        )
+        unsupported = kwargs.get("unsupported_features") or []
+        tolerance = float(kwargs.get("duration_tolerance", 0.35))
+        if shutil.which("ffprobe") and os.path.isfile(output_path):
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_type,duration,nb_frames,avg_frame_rate,r_frame_rate",
+                "-of", "json",
+                output_path,
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if proc.returncode != 0:
+                raise ExportError("ffprobe failed to inspect video stream duration.", unsupported_features=unsupported)
+            payload = json.loads(proc.stdout or "{}")
+            streams = payload.get("streams") or []
+            if not streams:
+                raise ExportError("Output MP4 has no video stream.", unsupported_features=unsupported)
+            video_dur = _extract_video_stream_duration(streams[0])
+            if video_dur is None or abs(video_dur - float(expected_duration)) > tolerance:
+                raise ExportError(
+                    f"Output video stream duration ({video_dur}s) does not match expected timeline duration ({expected_duration}s).",
+                    unsupported_features=unsupported,
+                )
+            meta["video_duration_seconds"] = round(video_dur, 3)
+        return meta
+
+    TimelineValidationService.verify_output = _patched_verify_output
+    TimelineValidationService._p1_verify_patched = True
+
+_orig_build_export_plan = getattr(TimelineValidationService, "build_export_plan", None)
+if _orig_build_export_plan is not None and not getattr(TimelineValidationService, "_p1_plan_patched", False):
+    @classmethod
+    def _patched_build_export_plan(cls, *args: Any, **kwargs: Any) -> Any:
+        plan = _orig_build_export_plan(*args, **kwargs)
+        unsupported = getattr(plan, "unsupported_features", None)
+        if unsupported is None and isinstance(plan, dict):
+            unsupported = plan.get("unsupported_features", [])
+        unsupported = list(unsupported or [])
+
+        # Kiểm tra từng clip nguồn nếu có source_path để chặn sớm clip ngắn hơn effective_duration
+        raw_clips = kwargs.get("clips")
+        if raw_clips is None and len(args) >= 1 and isinstance(args[0], list):
+            raw_clips = args[0]
+        if isinstance(raw_clips, list):
+            for idx, clip in enumerate(raw_clips):
+                if not isinstance(clip, dict):
+                    continue
+                src_path = clip.get("source_path") or clip.get("file_path")
+                if not src_path or not isinstance(src_path, str):
+                    continue
+                trim_s = max(0.0, float(clip.get("trim_start_seconds", 0.0)))
+                trim_e = max(0.0, float(clip.get("trim_end_seconds", 0.0)))
+                src_dur_field = float(clip.get("source_duration_seconds", 5.0))
+                eff_dur = float(clip.get("effective_duration_seconds") or max(0.1, src_dur_field - trim_s - trim_e))
+                required_span = round(trim_s + eff_dur, 3)
+                actual_v_dur = _probe_source_video_duration(src_path)
+                if actual_v_dur is not None and (actual_v_dur + 0.15) < required_span:
+                    raise ExportError(
+                        f"Source video for clip #{idx + 1} is shorter ({actual_v_dur:.2f}s) than required timeline span ({required_span:.2f}s).",
+                        unsupported_features=unsupported,
+                    )
+        return plan
+
+    TimelineValidationService.build_export_plan = _patched_build_export_plan
+    TimelineValidationService._p1_plan_patched = True
+

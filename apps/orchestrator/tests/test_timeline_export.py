@@ -303,3 +303,32 @@ def test_render_rejects_undecodable_input_instead_of_faking_success(tmp_path: Pa
     assert excinfo.value.status_code == 422
     assert excinfo.value.ffmpeg_args and excinfo.value.ffmpeg_args[0] == "ffmpeg"
     assert not (out_dir / "exp_bad.mp4").exists()
+
+def test_p1_verify_output_rejects_short_video_stream_padded_by_longer_audio(tmp_path):
+    """P1 Regression: video stream 1.0s + audio stream 3.0s (format.duration=3.0s) phải bị từ chối."""
+    import shutil
+    import subprocess
+    import pytest
+    from muse_orchestrator.services.timeline_service import TimelineValidationService, ExportError
+
+    if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+        pytest.skip("FFmpeg/FFprobe required")
+
+    mismatched_mp4 = tmp_path / "short_video_long_audio.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "color=c=blue:s=1280x720:r=24:d=1.0",
+        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo:d=3.0",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        str(mismatched_mp4),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    with pytest.raises(ExportError, match="video stream duration"):
+        TimelineValidationService.verify_output(
+            str(mismatched_mp4),
+            expected_width=1280,
+            expected_height=720,
+            expected_duration=3.0,
+        )

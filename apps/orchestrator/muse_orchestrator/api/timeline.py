@@ -457,3 +457,65 @@ async def launch_ffmpeg_export(
         "ffprobe_verification": probe_meta,
         "unsupported_features": unsupported,
     }
+
+
+# --- P3 HARDENING: ENSURE unsupported_features IS PRESENT IN EARLY 422 EXPORT ERRORS ---
+from fastapi.responses import JSONResponse as _FastAPIJSONResponse
+
+_orig_launch_ffmpeg_export = launch_ffmpeg_export
+if not getattr(launch_ffmpeg_export, "_p3_patched", False):
+    async def _wrapped_launch_ffmpeg_export(
+        project_id: str,
+        payload: ExportLaunchIn,
+        db: AsyncSession = Depends(get_db),
+        actor: str = Depends(verify_single_admin),
+    ) -> Any:
+        # Tính trước unsupported_features ngay khi tìm thấy TimelineSequenceRecord hợp lệ
+        seq_obj = None
+        if payload.sequence_id:
+            seq_obj = await db.get(TimelineSequenceRecord, payload.sequence_id)
+        else:
+            seq_obj = (
+                await db.execute(
+                    select(TimelineSequenceRecord)
+                    .where(TimelineSequenceRecord.project_id == project_id)
+                    .order_by(TimelineSequenceRecord.created_at.desc())
+                )
+            ).scalars().first()
+
+        early_unsupported: list[str] = []
+        if seq_obj and seq_obj.project_id == project_id:
+            collect_fn = getattr(TimelineValidationService, "collect_unsupported_features", None)
+            if callable(collect_fn):
+                try:
+                    early_unsupported = list(collect_fn(seq_obj.manifest_json or {}) or [])
+                except Exception:
+                    early_unsupported = []
+
+        try:
+            resp = await _orig_launch_ffmpeg_export(project_id=project_id, payload=payload, db=db, actor=actor)
+            if isinstance(resp, _FastAPIJSONResponse) and resp.status_code == 422:
+                import json as _json
+                body_data = _json.loads(resp.body.decode("utf-8") or "{}")
+                if "unsupported_features" not in body_data:
+                    body_data["unsupported_features"] = early_unsupported
+                    return _FastAPIJSONResponse(status_code=422, content=body_data)
+            return resp
+        except HTTPException as exc:
+            if exc.status_code == 422:
+                detail_val = exc.detail
+                if isinstance(detail_val, dict):
+                    content = dict(detail_val)
+                    content.setdefault("unsupported_features", early_unsupported)
+                else:
+                    content = {"detail": str(detail_val), "unsupported_features": early_unsupported}
+                return _FastAPIJSONResponse(status_code=422, content=content)
+            raise
+
+    _wrapped_launch_ffmpeg_export._p3_patched = True
+    # Cập nhật route handler trong router.routes
+    for _route in router.routes:
+        if getattr(_route, "path", "").endswith("/exports") and "POST" in getattr(_route, "methods", set()):
+            _route.endpoint = _wrapped_launch_ffmpeg_export
+            _route.dependant.call = _wrapped_launch_ffmpeg_export
+

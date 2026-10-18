@@ -183,3 +183,98 @@ async def test_export_error_status_code_is_passed_through(
     assert detail["message"] == "FFmpeg chưa được cài."
     # The "not rendered yet" contract also holds when the render fails.
     assert "clip_audio" in detail["unsupported_features"]
+
+@pytest.mark.asyncio
+async def test_p1_and_p3_short_source_video_rejected_and_early_422_includes_unsupported_features(client, tmp_path):
+    """
+    - P1 Integration: Khi file video nguồn ngắn hơn thời lượng clip trên timeline (1.0s < 3.0s),
+      export phải trả về 422, không tạo Asset mới.
+    - P3 Integration: Khi clip có asset_id không tồn tại (early 422), phản hồi vẫn phải có unsupported_features.
+    """
+    import shutil
+    import subprocess
+    from muse_orchestrator.core.config import settings
+
+    p_res = await client.post("/api/v1/projects", json={"name": "P1 & P3 Verification Project"})
+    proj_id = p_res.json()["id"]
+
+    # Kiểm tra P3 trước: Tạo timeline với asset_id không tồn tại và Title Card (unsupported feature)
+    tl_bad_asset = (
+        await client.post(
+            f"/api/v1/projects/{proj_id}/timeline/assemble",
+            json={
+                "name": "Missing Asset Sequence",
+                "title_card": {"title": "Intro", "duration_seconds": 2.0},
+                "custom_clips": [
+                    {
+                        "asset_id": "ast_non_existent_999",
+                        "order_index": 1,
+                        "start_time_seconds": 0.0,
+                        "source_duration_seconds": 3.0,
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    exp_p3 = await client.post(
+        f"/api/v1/projects/{proj_id}/timeline/exports",
+        json={"sequence_id": tl_bad_asset["sequence_id"]},
+    )
+    assert exp_p3.status_code == 422
+    p3_body = exp_p3.json()
+    assert "unsupported_features" in p3_body
+    assert isinstance(p3_body["unsupported_features"], list)
+
+    # Kiểm tra P1: Tạo video nguồn thật chỉ dài 1.0 giây nhưng khai báo clip trên timeline dài 3.0 giây
+    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+        short_mp4 = tmp_path / "short_1s.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "color=c=red:s=640x360:r=24:d=1.0",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                str(short_mp4),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        up_res = await client.post(
+            "/api/v1/assets/upload",
+            data={"project_id": proj_id, "asset_type": "video"},
+            files={"file": ("short_1s.mp4", short_mp4.read_bytes(), "video/mp4")},
+        )
+        assert up_res.status_code == 201
+        short_asset_id = up_res.json()["id"]
+
+        assets_before = (await client.get(f"/api/v1/assets/project/{proj_id}")).json()
+
+        tl_short = (
+            await client.post(
+                f"/api/v1/projects/{proj_id}/timeline/assemble",
+                json={
+                    "name": "Short Clip Sequence",
+                    "custom_clips": [
+                        {
+                            "asset_id": short_asset_id,
+                            "order_index": 1,
+                            "start_time_seconds": 0.0,
+                            "source_duration_seconds": 3.0,
+                            "trim_start_seconds": 0.0,
+                            "trim_end_seconds": 0.0,
+                        }
+                    ],
+                },
+            )
+        ).json()
+
+        exp_p1 = await client.post(
+            f"/api/v1/projects/{proj_id}/timeline/exports",
+            json={"sequence_id": tl_short["sequence_id"]},
+        )
+        assert exp_p1.status_code == 422
+        assert "unsupported_features" in exp_p1.json()
+
+        # Đảm bảo không có Asset MP4 export giả nào được tạo thêm khi lỗi
+        assets_after = (await client.get(f"/api/v1/assets/project/{proj_id}")).json()
+        assert len(assets_after) == len(assets_before)

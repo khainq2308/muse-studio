@@ -147,3 +147,50 @@ async def test_upstream_errors_are_still_classified(tmp_path: Path) -> None:
 
     assert excinfo.value.category == ErrorCategory.UPSTREAM_5XX
     assert excinfo.value.retryable is True
+
+@pytest.mark.asyncio
+async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(monkeypatch, tmp_path):
+    """P2 Regression: Chặn URL IP nội bộ/loopback/link-local và chặn redirect trỏ về hostname phân giải ra IP nội bộ."""
+    import socket
+    import httpx
+    from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
+    from muse_orchestrator.providers.base import ProviderFailure
+
+    adapter = Muse2ApiAdapter(base_url="https://api.muse.example.com", api_key="sk-live-secret-token")
+
+    # 1. Chặn trực tiếp các URL HTTPS trỏ tới IP nội bộ / loopback / cloud metadata / localhost
+    for forbidden_url in [
+        "https://127.0.0.1/media/video.mp4",
+        "https://10.0.0.15/media/video.mp4",
+        "https://192.168.1.20/media/video.mp4",
+        "https://169.254.169.254/latest/meta-data/",
+        "https://localhost/media/video.mp4",
+        "https://internal-service.local/media/video.mp4",
+    ]:
+        with pytest.raises(ProviderFailure, match="SSRF"):
+            await adapter.download_result(forbidden_url, str(tmp_path))
+
+    # 2. Chặn Redirect tới một domain bên ngoài nhưng phân giải DNS ra IP nội bộ (10.10.1.5)
+    orig_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        if host == "rebind.attacker.example.org":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.10.1.5", port or 443))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port or 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://api.muse.example.com/v1/media/clip.mp4":
+            return httpx.Response(302, headers={"Location": "https://rebind.attacker.example.org/evil.mp4"})
+        return httpx.Response(200, content=b"should_not_reach", headers={"content-type": "video/mp4"})
+
+    orig_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **kw: orig_async_client(transport=httpx.MockTransport(handler), **{k: v for k, v in kw.items() if k != "transport"}),
+    )
+
+    with pytest.raises(ProviderFailure, match="SSRF"):
+        await adapter.download_result("https://api.muse.example.com/v1/media/clip.mp4", str(tmp_path))
