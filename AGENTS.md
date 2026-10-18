@@ -73,7 +73,7 @@ Legacy code may not fully meet the target layering. Do not add new violations; w
 | Focused orchestrator tests | `scripts/test.sh orchestrator -k "<pattern>" -x` |
 | Media-engine tests | `scripts/test.sh media` |
 | Frontend typecheck/build | `scripts/test.sh web` |
-| Changed-app Ruff lint + layering ratchet | `scripts/lint.sh` (default checks changed app Python files; `--all` checks the legacy app tree; `--fix` modifies it) |
+| Changed-Python Ruff lint + layering ratchet | `scripts/lint.sh` (default checks changed Python files repo-wide; `--all` checks the legacy app tree; `--fix` modifies application code) |
 | Layering details | `python3 scripts/check_layering.py --report` |
 | Roadmap gap signals (advisory) | `python3 scripts/audit_roadmap.py` |
 | Roadmap / documentation consistency | `python3 scripts/check_docs_sync.py` |
