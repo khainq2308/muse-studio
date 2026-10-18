@@ -78,7 +78,7 @@ async def test_media_id_on_the_provider_gets_the_api_key(tmp_path: Path) -> None
 
     stored = await upstream.adapter().download_result("task_1.mp4", str(tmp_path))
 
-    assert stored.size_bytes == len(b"VIDEO-BYTES")
+    assert stored.size_bytes == len(VIDEO.content)
     assert upstream.requests == [(f"{BASE}/v1/media/task_1.mp4", BEARER)]
 
 
