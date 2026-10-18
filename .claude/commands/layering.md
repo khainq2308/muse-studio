@@ -1,12 +1,12 @@
 ---
-description: Pay down layering debt by moving one legacy API module's DB access into application + repository layers
-argument-hint: "[pipeline|workflows|queue|batch|timeline] (default: the worst offender per scripts/check_layering.py --report)"
+description: Pay down layering debt by moving one legacy API module's DB access into application and repository layers
+argument-hint: "[pipeline|workflows|queue|batch|timeline]"
 allowed-tools: Bash(python3 scripts/check_layering.py:*), Bash(scripts/test.sh:*), Bash(scripts/lint.sh:*), Read, Grep, Edit, Write, Task
 ---
-Module to refactor: `$ARGUMENTS` (if empty run `python3 scripts/check_layering.py --report` and take the top file).
+Choose the named module, or run python3 scripts/check_layering.py --report and select the largest count.
 
-Refactor with the **backend-dev** sub-agent, **behavior-preserving**:
-1. Run the full orchestrator tests first and record the baseline result. If already red, stop and tell me.
-2. Group the module's DB calls into use cases. Create `application/<name>_service.py` (raise `ApplicationError`), move queries/commits into repository methods, inject via `api/dependencies.py`, and reduce the route functions to HTTP translation.
-3. Do it in small steps, running the module's tests after each step. Do not change response shapes or status codes.
-4. Finish with: tests green, `python3 scripts/check_layering.py --update-baseline`, and a before/after count of direct DB calls.
+1. Run orchestrator tests first and record the actual baseline. If already failing, stop and report.
+2. Move touched use cases into application services and queries/commits into repositories. Wire dependencies in api/dependencies.py; keep route handlers HTTP-only.
+3. Refactor in small steps and run related tests after each.
+4. Run scripts/test.sh orchestrator, scripts/lint.sh and python3 scripts/check_layering.py.
+5. Use --update-baseline only after proving total debt decreased and no file regressed. The checker rejects baseline updates that do not reduce the count. Review the resulting baseline diff; never use it to silence regressions.
