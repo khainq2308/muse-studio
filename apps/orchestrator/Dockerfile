@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 WORKDIR /workspace/apps/orchestrator
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir -e ".[dev]"
 COPY . .

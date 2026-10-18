@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib
 import os
+import random
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import select, func
@@ -22,7 +23,8 @@ from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 
 def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float = 60.0) -> float:
     exp = min(max_delay, base * (1.5 ** max(0, step_count - 1)))
-    jitter = (hash(f"jitter_{step_count}") % 150) / 100.0
+    # random.uniform: str hash() is salted per process, so it gave identical jitter to every task.
+    jitter = random.uniform(0.0, 1.5)
     return round(min(max_delay, exp + jitter), 2)
 
 
@@ -123,7 +125,9 @@ class GenerationQueueService:
             if existing.state in (QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.SUCCEEDED):
                 return existing, False
 
-        if existing is not None and force_retry:
+        if existing is not None:
+            # force_retry, or the previous task ended FAILED/CANCELED/POLL_TIMEOUT/PAUSED:
+            # idempotency_key is UNIQUE, so a fresh task needs a fresh key (was an IntegrityError).
             computed_idem = f"{computed_idem}_retry_{uuid.uuid4().hex[:6]}"
 
         task = GenerationTaskRecord(
@@ -149,15 +153,70 @@ class GenerationQueueService:
         return task, True
 
     @staticmethod
+    async def _handle_poll_failure(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+        exc: ProviderFailure,
+        raw_secret: str,
+        phase: str,
+    ) -> GenerationTaskRecord:
+        """A poll/download error must never leave the task RUNNING with no follow-up job.
+
+        Retryable errors keep the task RUNNING with a backoff (poll_count already bounds the
+        number of tries via max_polls); anything else is a terminal FAILED that frees the slot.
+        """
+        safe_err = SecretRedactor.redact_text(str(exc), [raw_secret])
+        task.error_category = exc.category.value
+        task.retryable = exc.retryable
+        task.error_message_redacted = safe_err
+        if exc.retryable:
+            delay = compute_backoff_seconds(task.poll_count)
+            task.next_poll_delay_seconds = delay
+            task.history_log = list(task.history_log or []) + [
+                f"Transient {phase} failure (poll #{task.poll_count}, retry in {delay}s): {safe_err}"
+            ]
+        else:
+            task.state = QueueTaskState.FAILED
+            task.finished_at = datetime.now(timezone.utc)
+            shot.generation_state = ShotGenerationState.FAILED
+            if exc.category == ErrorCategory.AUTH_FAILED:
+                conn.health_state = ConnectionHealthState.AUTH_ERROR
+            elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
+                conn.health_state = ConnectionHealthState.DEGRADED
+            task.history_log = list(task.history_log or []) + [
+                f"Terminal {phase} failure: {safe_err}"
+            ]
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
     async def step_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
-        task = await db.get(GenerationTaskRecord, task_id)
+        # Row lock (no-op on SQLite) so two workers cannot step/dispatch the same task at once.
+        task = (
+            await db.execute(
+                select(GenerationTaskRecord)
+                .where(GenerationTaskRecord.id == task_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
         if not task:
             raise ValueError("Task không tồn tại.")
 
         if task.state in (QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED, QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT):
             return task
 
-        conn = await db.get(ProviderConnection, task.connection_id)
+        # Lock the connection row while we check/consume a concurrency slot.
+        conn = (
+            await db.execute(
+                select(ProviderConnection)
+                .where(ProviderConnection.id == task.connection_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
         shot = await db.get(ShotRecord, task.shot_id)
         if not conn or not shot:
             raise ValueError("Connection hoặc Shot liên kết không tồn tại.")
@@ -177,6 +236,7 @@ class GenerationQueueService:
             ).scalar_one()
 
             if running_count >= conn.max_concurrency:
+                task.next_poll_delay_seconds = compute_backoff_seconds(1)
                 task.history_log = list(task.history_log or []) + [
                     f"Waiting for connection concurrency slot ({running_count}/{conn.max_concurrency} busy)."
                 ]
@@ -263,7 +323,10 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
-        p_status = await provider.get_task(task.external_task_id)
+        try:
+            p_status = await provider.get_task(task.external_task_id)
+        except ProviderFailure as exc:
+            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "poll")
         if p_status.account_used:
             task.account_used = p_status.account_used
 
@@ -290,7 +353,10 @@ class GenerationQueueService:
             return task
 
         dest_dir = os.path.join(settings.media_root, task.project_id, "generated")
-        stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
+        try:
+            stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
+        except ProviderFailure as exc:
+            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "download")
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"

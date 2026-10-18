@@ -7,7 +7,7 @@ import hmac
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Header, HTTPException, status
 
-from muse_orchestrator.core.config import settings
+from muse_orchestrator.core.config import _DEV_ENVIRONMENTS, settings
 
 
 class SecretVault:
@@ -33,9 +33,9 @@ class SecretVault:
     def mask(secret: str | None) -> str:
         if not secret:
             return "[NOT_SET]"
-        if len(secret) <= 8:
+        if len(secret) <= 12:
             return "********"
-        return f"{secret[:3]}...{secret[-4:]}"
+        return f"{secret[:2]}...{secret[-2:]}"
 
 
 vault = SecretVault(settings.secret_encryption_key)
@@ -49,7 +49,7 @@ async def verify_single_admin(x_studio_admin_token: str | None = Header(default=
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid X-Studio-Admin-Token.",
             )
-    elif settings.environment.strip().lower() in {"prod", "production"}:
+    elif settings.environment.strip().lower() not in _DEV_ENVIRONMENTS:
         # Defensive runtime guard in addition to Settings validation.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

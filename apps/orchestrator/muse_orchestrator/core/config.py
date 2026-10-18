@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 _DEVELOPMENT_ENCRYPTION_KEY = "dev-only-32-byte-secret-key-change-me!!"
+_DEV_ENVIRONMENTS = {"development", "dev", "local", "test", "testing"}
 
 
 class Settings(BaseSettings):
@@ -23,7 +24,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
-        if self.environment.strip().lower() in {"prod", "production"}:
+        # Fail closed: only explicit dev/test environments may use the public default key.
+        if self.environment.strip().lower() not in _DEV_ENVIRONMENTS:
             if not self.studio_admin_token or not self.studio_admin_token.strip():
                 raise ValueError("STUDIO_ADMIN_TOKEN is required outside development.")
             if (
