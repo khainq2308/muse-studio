@@ -170,6 +170,8 @@ class GuardTests(unittest.TestCase):
             adapter.ROOT = root
             adapter.HOOKS = HOOKS
             (root / ".env").write_text("API_KEY=secret")
+            (root / ".envrc").write_text("API_KEY=secret")
+            (root / ".env.example.local").write_text("API_KEY=secret")
             (root / ".env.example").write_text("API_KEY=replace-me")
             (root / "README.md").write_text("safe content")
 
@@ -223,6 +225,8 @@ class GuardTests(unittest.TestCase):
                 }),
                 2,
             )
+            self.assertEqual(adapter.check_many_file_paths({"include": [".envrc"]}), 2)
+            self.assertEqual(adapter.check_many_file_paths({"include": [".env.example.local"]}), 2)
             self.assertEqual(adapter.check_many_file_paths({"include": [".env.example"]}), 0)
             self.assertEqual(adapter.check_many_file_paths({"include": [".env"]}), 2)
 
