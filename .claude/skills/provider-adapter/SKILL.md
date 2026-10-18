@@ -23,7 +23,7 @@ description: Guide for adding or changing video/image generation providers and t
 7. Tests with `httpx.MockTransport` — success, 401, 429 with retry-after, 5xx, timeout, malformed JSON, malicious result URL/redirect chain. No real network.
 
 ## Capability matrix discipline
-Statuses: `verified` (observed against a real instance, with date), `unverified`, `mock-only`, `unsupported`. Changing a status requires evidence (probe output from `ops/m0_probe_muse2api.py`). Never promote from reading code. UI must show `unsupported` honestly (no quota lookup, no per-account proxy on a single instance).
+Statuses: `verified` (observed against a real instance, with date), `unverified`, `mock-only`, `unsupported`. A `verified` row requires a committed `docs/evidence/` artifact containing ISO probe date, instance/version, request/response outcome and limitations; `scripts/check_docs_sync.py` checks for the date and that file path. Capture probe output with `ops/m0_probe_muse2api.py`, then curate it into the evidence artifact. Never promote from reading code, dependency presence or mock tests. UI must show `unsupported` honestly (no quota lookup, no per-account proxy on a single instance).
 
 ## Smells to fix when seen
 Hard-coded model ids (`muse-video-mock-v1` as default in API schemas), provider branching scattered across modules, adapter methods returning untyped dicts, retries inside adapters.
