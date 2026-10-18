@@ -25,8 +25,8 @@ if not backend and not media:
 problems: list[str] = []
 
 code, out = run(["python3", "scripts/check_layering.py", "--quiet"], root, 30)
-if code == 1:
-    problems.append("Layering ratchet failed (new DB access in api/):\n" + out.strip()[-1200:])
+if code != 0:
+    problems.append("Layering checker failed (regression or checker/tool error):\n" + out.strip()[-1200:])
 
 if backend:
     code, _ = run(["python3", "-c", "import pytest, fastapi"], root / "apps" / "orchestrator", 20)
