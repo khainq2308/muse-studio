@@ -13,7 +13,7 @@ if [ "$scope" = "all" ] && [ "$#" -gt 0 ]; then
 fi
 run_orchestrator() {
   echo "==> orchestrator tests"
-  ( cd "$ROOT/apps/orchestrator" && REQUIRE_FFMPEG="$(printenv REQUIRE_FFMPEG 2>/dev/null || echo 1)" python3 -m pytest -q -rs "$@" ) || rc=1
+  ( cd "$ROOT/apps/orchestrator" && PYTHONPATH="$ROOT/apps/media-engine${PYTHONPATH:+:$PYTHONPATH}" REQUIRE_FFMPEG="$(printenv REQUIRE_FFMPEG 2>/dev/null || echo 1)" python3 -m pytest -q -rs "$@" ) || rc=1
 }
 run_media() {
   echo "==> media-engine tests"
