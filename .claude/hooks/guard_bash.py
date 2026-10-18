@@ -76,8 +76,10 @@ def main() -> None:
     if bad:
         block(f"[guard_bash:rm] Refusing recursive delete of '{bad}'. Delete specific files inside the project instead.")
 
-    if SECRET_PATH.search(command) and re.search(r"\b(cat|less|more|head|tail|grep|sed|awk|cp|mv|echo|tee|source|export)\b|>", command):
-        block("[guard_bash:secrets] Do not read or modify .env files from the shell. Edit .env.example for documentation; secrets belong to the user.")
+    # Block any shell command that references a real .env file, regardless of the interpreter
+    # or utility used. Restricting this to cat/grep/cp misses python, node, perl and wrappers.
+    if SECRET_PATH.search(command):
+        block("[guard_bash:secrets] Do not access real .env files from the shell. Use .env.example for variable names/placeholders.")
 
 
 if __name__ == "__main__":
