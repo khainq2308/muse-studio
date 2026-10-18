@@ -9,7 +9,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-REQUIRED_DOCS = ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "docs/AGENT_WORKFLOW.md")
+REQUIRED_DOCS = ("README.md", "AGENTS.md", "CLAUDE.md", "GEMINI.md", "docs/AGENT_WORKFLOW.md")
 SKILL_ROOT = ROOT / ".agents" / "skills"
 CLAUDE_SKILLS = ROOT / ".claude" / "skills"
 FRONT = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
@@ -45,6 +45,7 @@ def check_frontmatter(path: Path, expected_name: str | None = None) -> list[str]
 def markdown_files() -> list[Path]:
     paths = {ROOT / rel for rel in REQUIRED_DOCS if (ROOT / rel).is_file()}
     folders = (
+        "docs",
         ".agents/skills",
         ".claude/skills",
         ".claude/commands",
