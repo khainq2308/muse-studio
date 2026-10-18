@@ -24,7 +24,6 @@
     ],
     "deny": [
       "Read(./.env)",
-      "Read(./.env.*)",
       "Edit(./.env)",
       "Write(./.env)",
       "Read(./storage/**)",
