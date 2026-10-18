@@ -81,12 +81,23 @@ class SecretRedactor:
         }
         result: dict[str, Any] = {}
         for key, value in data.items():
-            if key.lower() in sensitive_keys and isinstance(value, str):
-                result[key] = cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
-            elif isinstance(value, dict):
-                result[key] = cls.redact_dict(value, explicit_secrets)
-            elif isinstance(value, str):
-                result[key] = cls.redact_text(value, explicit_secrets)
-            else:
-                result[key] = value
+            result[key] = cls._redact_value(value, explicit_secrets, key.lower() in sensitive_keys)
         return result
+
+    @classmethod
+    def _redact_value(cls, value: Any, explicit_secrets: list[str] | None, sensitive: bool) -> Any:
+        """Redact one value, descending into dicts, lists and tuples.
+
+        ``sensitive`` marks values stored under a sensitive key: every string below such a key
+        is replaced (or has only its URL credentials redacted when it looks like a URL).
+        """
+        if isinstance(value, str):
+            if sensitive:
+                return cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
+            return cls.redact_text(value, explicit_secrets)
+        if isinstance(value, dict):
+            return cls.redact_dict(value, explicit_secrets)
+        if isinstance(value, (list, tuple)):
+            items = [cls._redact_value(item, explicit_secrets, sensitive) for item in value]
+            return tuple(items) if isinstance(value, tuple) else items
+        return value
