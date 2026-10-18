@@ -481,7 +481,7 @@ class GenerationQueueService:
         db.add(GenerationDispatchLeaseRecord(
             task_id=task.id,
             connection_id=conn.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=max(90.0, float(conn.timeout_seconds) * 2.0 + 30.0)),
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=max(180.0, float(conn.timeout_seconds) * 2.0 + 90.0)),
         ))
         await db.commit()
         try:
