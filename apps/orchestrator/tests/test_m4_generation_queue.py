@@ -197,7 +197,7 @@ async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monke
             return ProviderTask(external_task_id="external-lease-task", status="queued")
 
     provider = SlowProvider()
-    monkeypatch.setattr(queue_module, "build_provider", lambda _connection: provider)
+    monkeypatch.setattr(queue_module, "build_provider", lambda _connection, _account=None: provider)
 
     try:
         async with SessionLocal() as first_session:

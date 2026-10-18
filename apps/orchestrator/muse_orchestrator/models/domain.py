@@ -3,6 +3,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy import String, Integer, Float, Boolean, ForeignKey, DateTime, Enum, JSON, Text
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -331,6 +332,8 @@ class GenerationTaskRecord(Base):
     )
     external_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     account_used: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # Stable account identity; account_used remains the human-readable display label.
+    account_id_used: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)
@@ -480,3 +483,70 @@ class ExportJobRecord(Base):
     error_message_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BackupRecord(Base):
+    """M7: a project backup archive (ZIP stored under media_root/backups)."""
+
+    __tablename__ = "project_backups"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_rel_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+
+
+class ConnectionAccount(Base):
+    """M7: one provider account under a ProviderConnection.
+
+    A connection may hold several accounts (e.g. multiple muse2api API keys),
+    each with its own optional proxy. Secrets are stored encrypted; API
+    responses only ever expose masked values and the proxy display host.
+    """
+
+    __tablename__ = "connection_accounts"
+    __table_args__ = (UniqueConstraint("connection_id", "label", name="uq_account_connection_label"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("provider_connections.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key_masked: Mapped[str] = mapped_column(String(64), default="[NOT_SET]")
+    encrypted_proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proxy_display_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    health_state: Mapped[ConnectionHealthState] = mapped_column(
+        Enum(ConnectionHealthState), default=ConnectionHealthState.UNKNOWN
+    )
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_error_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+
+
+class StructuredLogRecord(Base):
+    """M7: structured operational log entry with correlation ID (ported from PR #9)."""
+
+    __tablename__ = "structured_logs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    correlation_id: Mapped[str] = mapped_column(String(64), index=True)
+    level: Mapped[str] = mapped_column(String(16), default="INFO")
+    event: Mapped[str] = mapped_column(String(128), nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    payload_redacted: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+

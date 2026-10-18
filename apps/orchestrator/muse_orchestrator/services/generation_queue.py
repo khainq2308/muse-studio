@@ -13,7 +13,8 @@ from muse_orchestrator.core.config import settings, SecretRedactor
 from muse_orchestrator.core.security import vault
 from muse_orchestrator.models.domain import (
     ShotRecord, ShotGenerationState, ProviderConnection, ConnectionHealthState,
-    GenerationTaskRecord, GenerationDispatchLeaseRecord, QueueTaskState, Asset, ShotTakeRecord
+    GenerationTaskRecord, GenerationDispatchLeaseRecord, QueueTaskState, Asset, ShotTakeRecord,
+    ConnectionAccount,
 )
 from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
@@ -21,6 +22,11 @@ from muse_orchestrator.providers.base import (
 )
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
+from muse_orchestrator.services.account_pool import (
+    build_provider_for_account,
+    mark_account_used,
+    resolve_task_account,
+)
 
 
 def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float = 60.0) -> float:
@@ -30,11 +36,17 @@ def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float
     return round(min(max_delay, exp + jitter), 2)
 
 
-def build_provider(conn: ProviderConnection) -> VideoProvider:
-    if conn.provider_type == "mock":
-        return MockVideoProvider()
-    raw_key = vault.decrypt(conn.encrypted_api_key)
-    return Muse2ApiAdapter(base_url=conn.base_url, api_key=raw_key, timeout=conn.timeout_seconds)
+def build_provider(
+    conn: ProviderConnection,
+    account: "ConnectionAccount | None" = None,
+) -> VideoProvider:
+    """Build a provider for a connection, optionally bound to one account.
+
+    M7: when the caller selects an account (see account_pool.select_account),
+    the provider uses that account's API key and proxy instead of the
+    connection-level credentials.
+    """
+    return build_provider_for_account(conn, account)
 
 
 def _create_boundary_frame_png(dest_dir: str, shot_id: str, take_num: int, position: str, seed_hash: str) -> tuple[str, int, str]:
@@ -252,6 +264,14 @@ class GenerationQueueService:
         task.error_category = exc.category.value
         task.retryable = exc.retryable
         task.error_message_redacted = safe_err
+        account = await db.get(ConnectionAccount, task.account_id_used) if task.account_id_used else None
+        if account is not None:
+            account.last_error_redacted = safe_err
+            account.last_checked_at = datetime.now(timezone.utc)
+            if exc.category == ErrorCategory.AUTH_FAILED:
+                account.health_state = ConnectionHealthState.AUTH_ERROR
+            elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
+                account.health_state = ConnectionHealthState.DEGRADED
         if exc.retryable:
             delay = compute_backoff_seconds(task.poll_count)
             task.next_poll_delay_seconds = delay
@@ -320,8 +340,51 @@ class GenerationQueueService:
         if not conn or not shot:
             raise ValueError("Connection hoặc Shot liên kết không tồn tại.")
 
-        provider = build_provider(conn)
-        raw_secret = vault.decrypt(conn.encrypted_api_key) if conn.encrypted_api_key else ""
+        # M7: select a connection account (least-recently-used) if any exist.
+        accounts = list((
+            await db.execute(
+                select(ConnectionAccount).where(ConnectionAccount.connection_id == conn.id)
+            )
+        ).scalars().all())
+        has_external_task = bool(task.external_task_id)
+        try:
+            account = resolve_task_account(accounts, task.account_id_used, has_external_task)
+        except LookupError as exc:
+            task.state = QueueTaskState.FAILED
+            task.error_category = "pinned_account_missing"
+            task.retryable = False
+            task.error_message_redacted = str(exc)
+            task.finished_at = datetime.now(timezone.utc)
+            shot.generation_state = ShotGenerationState.FAILED
+            task.history_log = list(task.history_log or []) + [str(exc)]
+            await db.commit()
+            await db.refresh(task)
+            return task
+
+        if not has_external_task and accounts and account is None:
+            # Never bypass a configured pool by falling back to connection-level keys
+            # when all pool accounts are disabled or unhealthy.
+            task.state = QueueTaskState.QUEUED
+            shot.generation_state = ShotGenerationState.QUEUED
+            task.account_id_used = None
+            task.next_poll_delay_seconds = compute_backoff_seconds(1)
+            task.history_log = list(task.history_log or []) + [
+                "Waiting for an enabled account with usable health; no account was selected."
+            ]
+            await db.commit()
+            await db.refresh(task)
+            return task
+
+        if account is not None and not has_external_task:
+            mark_account_used(account)
+            task.account_id_used = account.id
+            task.account_used = account.label
+        provider = build_provider(conn, account)
+        raw_secret = (
+            vault.decrypt(account.encrypted_api_key)
+            if account is not None
+            else vault.decrypt(conn.encrypted_api_key)
+        ) or ""
 
         if not task.external_task_id:
             # Reserve the slot in a short transaction, then release DB locks before network I/O.
@@ -404,6 +467,13 @@ class GenerationQueueService:
                 task.error_category = exc.category.value
                 task.retryable = exc.retryable
                 task.error_message_redacted = safe_err
+                if account is not None:
+                    account.last_error_redacted = safe_err
+                    account.last_checked_at = datetime.now(timezone.utc)
+                    if exc.category == ErrorCategory.AUTH_FAILED:
+                        account.health_state = ConnectionHealthState.AUTH_ERROR
+                    elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
+                        account.health_state = ConnectionHealthState.DEGRADED
                 if not exc.retryable or task.attempt_count >= task.max_attempts:
                     task.state = QueueTaskState.FAILED
                     task.finished_at = datetime.now(timezone.utc)
@@ -420,6 +490,11 @@ class GenerationQueueService:
                     task.state = QueueTaskState.QUEUED
                     shot.generation_state = ShotGenerationState.QUEUED
                     task.next_poll_delay_seconds = delay
+                    if account is not None and exc.category in (
+                        ErrorCategory.AUTH_FAILED, ErrorCategory.QUOTA_EXHAUSTED
+                    ):
+                        # This account is no longer the candidate for the retry.
+                        task.account_id_used = None
                     task.history_log = list(task.history_log or []) + [
                         f"Transient failure on attempt {task.attempt_count} (will retry in {delay}s): {safe_err}"
                     ]
@@ -509,7 +584,7 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
-        if p_status.account_used:
+        if p_status.account_used and not task.account_used:
             task.account_used = p_status.account_used
 
         if p_status.status in ("queued", "running"):
