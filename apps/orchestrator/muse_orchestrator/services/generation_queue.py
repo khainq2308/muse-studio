@@ -85,6 +85,7 @@ async def _verify_downloaded_artifact(path: str, task_type: str, provider_type: 
             ErrorCategory.INVALID_REQUEST, "Downloaded video failed MP4 signature validation."
         )
 
+    process = None
     try:
         process = await asyncio.create_subprocess_exec(
             "ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -93,7 +94,14 @@ async def _verify_downloaded_artifact(path: str, task_type: str, provider_type: 
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
-    except (OSError, asyncio.TimeoutError) as exc:
+    except asyncio.TimeoutError as exc:
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "FFprobe timed out while verifying the downloaded video.", retryable=False
+        ) from exc
+    except OSError as exc:
         raise ProviderFailure(
             ErrorCategory.INVALID_REQUEST, "FFprobe could not verify the downloaded video.", retryable=False
         ) from exc
