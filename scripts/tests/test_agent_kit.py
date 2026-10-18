@@ -67,6 +67,26 @@ class GuardTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 2, result.stderr)
 
+    def test_shell_guard_blocks_python_read_of_real_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            denied = self.run_hook(
+                HOOKS / "guard_bash.py", root,
+                {"tool_name": "Bash", "tool_input": {
+                    "command": "python3 -c \"print(open('.env').read())\"",
+                }},
+            )
+            self.assertEqual(denied.returncode, 2, denied.stderr)
+            self.assertIn("real .env files", denied.stderr)
+
+            allowed = self.run_hook(
+                HOOKS / "guard_bash.py", root,
+                {"tool_name": "Bash", "tool_input": {
+                    "command": "grep API_KEY .env.example",
+                }},
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
     def test_edit_guard_scans_env_example_for_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_hook(
