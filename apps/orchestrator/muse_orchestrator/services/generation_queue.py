@@ -261,9 +261,6 @@ class GenerationQueueService:
             task.history_log = list(task.history_log or []) + [
                 f"Terminal {phase} failure: {safe_err}"
             ]
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
         await db.commit()
         await db.refresh(task)
         return task
@@ -352,8 +349,9 @@ class GenerationQueueService:
                 connection_id=conn.id,
                 expires_at=now + timedelta(seconds=lease_seconds),
             ))
+            # expire_on_commit=False keeps the claimed task snapshot available without opening a
+            # new DB transaction while the provider request is in flight.
             await db.commit()
-            await db.refresh(task)
 
             try:
                 if task.task_type == "image":
