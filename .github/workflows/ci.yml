@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**", "refactor/**"]
+    branches: [main, "feat/**", "fix/**", "refactor/**", "chore/**", "docs/**"]
   pull_request:
     branches: [main]
 
@@ -11,15 +11,19 @@ permissions:
 
 jobs:
   agent-kit-check:
-    name: Shared agent kit consistency
+    name: Agent kit validation and unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Validate shared instructions, skill mirrors and local links
+      - name: Validate links, skills, configs and script syntax
         run: python scripts/check_agent_assets.py
+      - name: Check roadmap status consistency
+        run: python scripts/check_docs_sync.py
+      - name: Run agent-kit guard unit tests
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
 
   python-tests:
     name: Python tests
@@ -43,7 +47,6 @@ jobs:
       - name: Run orchestrator tests
         working-directory: apps/orchestrator
         env:
-          # Real-render export tests must run here; a missing FFmpeg fails them instead of skipping.
           REQUIRE_FFMPEG: "1"
         run: pytest -q -rs
 
