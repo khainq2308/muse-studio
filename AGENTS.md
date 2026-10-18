@@ -76,7 +76,7 @@ Legacy code may not fully meet the target layering. Do not add new violations; w
 | Changed-Python Ruff lint + layering ratchet | `scripts/lint.sh` (default checks changed Python files repo-wide; `--all` checks the legacy app tree; `--fix` modifies application code) |
 | Layering details | `python3 scripts/check_layering.py --report` |
 | Roadmap gap signals (advisory) | `python3 scripts/audit_roadmap.py` |
-| Roadmap / documentation consistency | `python3 scripts/check_docs_sync.py` |
+| Roadmap gap hints (heuristic) | `python3 scripts/audit_roadmap.py` |\n| Documentation status metadata validation | `python3 scripts/check_docs_sync.py` (not feature-completion proof) |
 | Cross-platform agent assets | `python3 scripts/check_agent_assets.py` |
 | Development API (SQLite) | `scripts/dev.sh` |
 
