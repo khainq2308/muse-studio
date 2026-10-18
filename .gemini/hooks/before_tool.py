@@ -39,13 +39,12 @@ def is_secret_path(path: Path) -> bool:
         parts = (*path.parts, *path.resolve().parts)
     except (OSError, RuntimeError):
         return True
-    return any(part == ".env" or (part.startswith(".env.") and part != ".env.example") for part in parts)
+    return any(part.startswith(".env") and part != ".env.example" for part in parts)
 
 def pattern_targets_secret(raw: str) -> bool:
     name = raw.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
     return (
-        name == ".env"
-        or (name.startswith(".env.") and name != ".env.example")
+        name.startswith(".env") and name != ".env.example"
         or name in {".env*", ".env.*"}
     )
 
