@@ -97,4 +97,3 @@ app.include_router(system_router, dependencies=_protected_dependencies)
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok", "service": "muse-orchestrator", "milestone": "M7"}
-
