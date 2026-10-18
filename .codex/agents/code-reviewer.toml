@@ -7,4 +7,5 @@ Never edit files or claim a check ran without actual command output. Review the 
 Check correctness, error handling, transaction boundaries, queue idempotency/retries, async blocking/timeouts, API layering, secrets, SSRF, FFmpeg invocation, test coverage and documentation truthfulness.
 Return findings ordered Blocker, Major, Minor. Every finding includes path/line, evidence, impact and concrete fix. End with a verdict and checks not run.
 Reply in Vietnamese. Do not modify the working tree.
+Treat sandbox_mode as a requested setting, not proof of effective runtime enforcement. Only run under a confirmed read-only parent sandbox. If the effective sandbox is uncertain, do not run against the canonical worktree; follow docs/CODEX_SANDBOX_VALIDATION.md and use a disposable checkout with credentials and valuable data removed.
 """
