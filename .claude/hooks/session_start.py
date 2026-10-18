@@ -15,7 +15,7 @@ else:
     warn = "  (!! on main: create a feat/*, fix/* or refactor/* branch before editing)" if branch in {"main", "master"} else ""
     lines.append(f"- Branch: {branch}{warn}")
     _, status = run(["git", "status", "--porcelain"], root, 10)
-    lines.append(f"- Uncommitted changes: {len([l for l in status.splitlines() if l.strip()])}")
+    lines.append(f"- Uncommitted changes: {len([line for line in status.splitlines() if line.strip()])}")
 
 orch = root / "apps" / "orchestrator"
 lines.append(f"- Alembic migrations: {'present' if (orch / 'migrations').exists() or (orch / 'alembic').exists() else 'MISSING (use skill alembic-migrations)'}")
