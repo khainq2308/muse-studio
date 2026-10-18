@@ -179,6 +179,51 @@ def check_many_file_paths(args: dict) -> int:
 
     return 0
 
+def check_grep_search_paths(args: dict) -> int:
+    """Prevent repository-wide grep from reading env files missed by direct-path guards."""
+    raw_path = args.get("path") or args.get("dir_path") or "."
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        print("[gemini safety guard] grep_search has a missing/invalid path.", file=sys.stderr)
+        return 2
+    supplied_path = Path(raw_path).expanduser()
+    candidate = supplied_path if supplied_path.is_absolute() else ROOT / supplied_path
+    try:
+        resolved = candidate.resolve()
+        rel = resolved.relative_to(ROOT).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        print("[gemini safety guard] grep_search path resolves outside the repository.", file=sys.stderr)
+        return 2
+
+    include = args.get("include") or args.get("glob")
+    if include is None or include == "":
+        include_patterns = [rel if resolved.is_file() else (f"{rel}/**/*" if rel not in {"", "."} else "**/*")]
+    else:
+        if isinstance(include, str):
+            include = [include]
+        if not isinstance(include, list) or any(not isinstance(item, str) or not item.strip() for item in include):
+            print("[gemini safety guard] grep_search has invalid include patterns.", file=sys.stderr)
+            return 2
+        if resolved.is_file():
+            include_patterns = [rel]
+        else:
+            prefix = "" if rel in {"", "."} else rel.rstrip("/") + "/"
+            include_patterns = [prefix + item.replace("\\", "/").lstrip("/") for item in include]
+
+    exclude = args.get("exclude") or []
+    if isinstance(exclude, str):
+        exclude = [exclude]
+    if not isinstance(exclude, list) or any(not isinstance(item, str) for item in exclude):
+        print("[gemini safety guard] grep_search has invalid exclude patterns.", file=sys.stderr)
+        return 2
+    prefix = "" if rel in {"", "."} or resolved.is_file() else rel.rstrip("/") + "/"
+    excludes = [prefix + item.replace("\\", "/").lstrip("/") for item in exclude]
+    return check_many_file_paths({
+        "include": include_patterns,
+        "exclude": excludes,
+        "file_filtering_options": {"respect_git_ignore": True},
+    })
+
+
 def main() -> int:
     try:
         event = json.load(sys.stdin)
@@ -215,6 +260,8 @@ def main() -> int:
         mapped["glob"] = mapped.get("glob") or mapped.get("include") or ""
         mapped["pattern"] = mapped.get("pattern") or ""
         result = run_guard("pre_read_guard.py", {"tool_name": "Grep" if tool_name == "grep_search" else "Glob", "tool_input": mapped})
+        if result == 0 and tool_name == "grep_search":
+            result = check_grep_search_paths(args)
     elif tool_name == "read_many_files":
         result = check_many_file_paths(args)
     else:
