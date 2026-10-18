@@ -224,8 +224,12 @@ class GenerationQueueService:
     @staticmethod
     async def load_first_frame_data_uri(db: AsyncSession, shot: ShotRecord) -> str | None:
         """Load a validated local frame as a data URI; never pass an internal Asset ID upstream."""
+        # A shot's stored opening frame is also retained for review/take history. Only
+        # frame_chain mode means it should be sent as the conditioning input on dispatch.
+        if shot.continuity_mode != "frame_chain":
+            return None
         if not shot.first_frame_asset_id:
-            if shot.continuity_mode == "frame_chain" and shot.previous_shot_id:
+            if shot.previous_shot_id:
                 raise ProviderFailure(
                     ErrorCategory.INVALID_REQUEST,
                     "Frame-chained shot has no first-frame asset; refusing to dispatch without continuity.",
