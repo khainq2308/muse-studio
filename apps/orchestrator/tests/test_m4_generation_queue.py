@@ -151,9 +151,8 @@ SHOT 3: Stuck Poll Timeout Shot
 async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monkeypatch):
     """A duplicate worker invocation must not dispatch the same unclaimed task twice."""
     from sqlalchemy import select
-    from muse_orchestrator import services as _services  # noqa: F401
     from muse_orchestrator.models.domain import (
-        Asset, GenerationDispatchLeaseRecord, GenerationTaskRecord, Project,
+        GenerationDispatchLeaseRecord, GenerationTaskRecord, Project,
         ProviderConnection, SceneRecord, ShotRecord, QueueTaskState,
     )
     from muse_orchestrator.providers.base import ProviderTask
@@ -201,19 +200,20 @@ async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monke
     monkeypatch.setattr(queue_module, "build_provider", lambda _connection: provider)
 
     try:
-        async with SessionLocal() as first_session, SessionLocal() as second_session:
+        async with SessionLocal() as first_session:
             first_call = asyncio.create_task(
                 queue_module.GenerationQueueService.step_task(first_session, "task_lease")
             )
             await asyncio.wait_for(started.wait(), timeout=5)
 
-            second_result = await asyncio.wait_for(
-                queue_module.GenerationQueueService.step_task(second_session, "task_lease"),
-                timeout=5,
-            )
-            assert second_result.state == QueueTaskState.RUNNING
-            assert second_result.external_task_id is None
-            assert provider.calls == 1
+            async with SessionLocal() as second_session:
+                second_result = await asyncio.wait_for(
+                    queue_module.GenerationQueueService.step_task(second_session, "task_lease"),
+                    timeout=5,
+                )
+                assert second_result.state == QueueTaskState.RUNNING
+                assert second_result.external_task_id is None
+                assert provider.calls == 1
 
             release.set()
             first_result = await asyncio.wait_for(first_call, timeout=5)
