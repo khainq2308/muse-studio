@@ -29,6 +29,12 @@ cd "$(git rev-parse --show-toplevel)"
 if ! git diff --quiet || ! git diff --cached --quiet; then
   die "Working tree có thay đổi chưa commit. Hãy commit hoặc 'git stash' trước (script không tự xóa thay đổi của bạn)."
 fi
+# P2c hardening: git diff --quiet misses untracked files, but `git add -A` below
+# would stage them. Refuse to run if any untracked file exists.
+_untracked=$(git ls-files --others --exclude-standard)
+if [ -n "$_untracked" ]; then
+  die "Có file untracked (git add -A sẽ commit nhầm). Hãy xóa hoặc 'git add' chúng trước:$_untracked"
+fi
 command -v python3 >/dev/null || die "Cần python3."
 
 PATCH_FILE="$(mktemp "${TMPDIR:-/tmp}/muse-fixes.XXXXXX.patch")"
