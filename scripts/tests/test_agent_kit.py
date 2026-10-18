@@ -165,6 +165,8 @@ class GuardTests(unittest.TestCase):
 
             # Broad repository context reads are allowed only because Git proves .env ignored.
             self.assertEqual(adapter.check_many_file_paths({"include": ["**/*"]}), 0)
+            (root / "alias.conf").symlink_to(root / ".env")
+            self.assertEqual(adapter.check_many_file_paths({"include": ["alias.conf"]}), 2)
             self.assertEqual(
                 adapter.check_many_file_paths({
                     "include": ["**/*"],
