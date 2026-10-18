@@ -40,6 +40,22 @@ class GuardTests(unittest.TestCase):
             timeout=10,
         )
 
+    def test_inline_code_path_checker_detects_missing_script_reference(self):
+        checker = load_module("test_agent_asset_paths", ROOT / "scripts" / "check_agent_assets.py")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "test.sh").write_text("#!/bin/sh\nexit 0\n")
+            docs = root / ".agents" / "skills" / "example"
+            docs.mkdir(parents=True)
+            source = docs / "SKILL.md"
+            source.write_text("Run `scripts/test.sh all`; stale reference: `scripts/missing.py`.\n")
+            checker.ROOT = root
+
+            issues = checker.check_code_paths([source])
+            self.assertFalse(any("scripts/test.sh" in issue for issue in issues), issues)
+            self.assertTrue(any("scripts/missing.py" in issue for issue in issues), issues)
+
     def test_malformed_or_non_object_events_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
