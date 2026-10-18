@@ -40,6 +40,28 @@ class GuardTests(unittest.TestCase):
             timeout=10,
         )
 
+    def test_docs_sync_checks_status_vocabulary_not_feature_signals(self):
+        checker = load_module("test_docs_sync_metadata", ROOT / "scripts" / "check_docs_sync.py")
+        plan_lines = [
+            f"* **M{number} ({"Completed" if number < 2 else "Partial"}):** milestone description"
+            for number in range(8)
+        ]
+        matrix = (
+            "| Capability / Endpoint | Method & Path | Status | Fallback |\n"
+            "| --- | --- | --- | --- |\n"
+            "| Health | GET /healthz | " + chr(96) + "mock-only" + chr(96) + " | Mock test only |\n"
+        )
+        self.assertEqual(checker.validate_documents("\n".join(plan_lines), matrix), [])
+
+        invalid_plan = "\n".join(plan_lines).replace("M3 (Partial)", "M3 (Almost done)")
+        self.assertTrue(
+            any("unknown status" in error for error in checker.validate_documents(invalid_plan, matrix))
+        )
+        invalid_matrix = matrix.replace("mock-only", "almost-verified")
+        self.assertTrue(
+            any("capability status" in error for error in checker.validate_documents("\n".join(plan_lines), invalid_matrix))
+        )
+
     def test_inline_code_path_checker_detects_missing_script_reference(self):
         checker = load_module("test_agent_asset_paths", ROOT / "scripts" / "check_agent_assets.py")
         with tempfile.TemporaryDirectory() as temp:
