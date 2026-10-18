@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 _DEVELOPMENT_ENCRYPTION_KEY = "dev-only-32-byte-secret-key-change-me!!"
+_DEV_ENVIRONMENTS = {"development", "dev", "local", "test", "testing"}
 
 
 class Settings(BaseSettings):
@@ -18,16 +19,18 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./musestudio_dev.db"
     redis_url: str = "redis://localhost:6379/0"
     media_root: str = "./storage/media"
+    secret_encryption_key: str = _DEVELOPMENT_ENCRYPTION_KEY
+    studio_admin_token: str | None = None
+
     # M7: orphan media cleanup (ARQ cron) and project backups.
     orphan_cleanup_enabled: bool = True
     orphan_cleanup_retention_hours: float = 24.0
     backup_retention_count: int = 10
-    secret_encryption_key: str = _DEVELOPMENT_ENCRYPTION_KEY
-    studio_admin_token: str | None = None
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
-        if self.environment.strip().lower() in {"prod", "production"}:
+        # Fail closed: only explicit dev/test environments may use the public default key.
+        if self.environment.strip().lower() not in _DEV_ENVIRONMENTS:
             if not self.studio_admin_token or not self.studio_admin_token.strip():
                 raise ValueError("STUDIO_ADMIN_TOKEN is required outside development.")
             if (
@@ -87,4 +90,3 @@ class SecretRedactor:
             else:
                 result[key] = value
         return result
-
