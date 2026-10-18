@@ -128,22 +128,69 @@ def check_configs() -> list[str]:
             errors.append(f"{relative}: invalid JSON: {exc}")
 
     claude = config_values.get(".claude/settings.json", {})
-    claude_pre_tool = claude.get("hooks", {}).get("PreToolUse", [])
-    claude_guard_registered = any(
-        "Read" in item.get("matcher", "")
-        and "pre_read_guard.py" in " ".join(
-            hook.get("command", "")
-            for hook in item.get("hooks", [])
+    claude_hooks = claude.get("hooks", {})
+
+    def hook_registered(
+        event_name: str,
+        expected_matchers: set[str],
+        script_name: str,
+        platform: str,
+    ) -> bool:
+        groups = claude_hooks.get(event_name, [])
+        for group in groups:
+            matcher = group.get("matcher", "")
+            matchers = {item.strip() for item in matcher.split("|") if item.strip()}
+            commands = [
+                hook.get("command", "")
+                for hook in group.get("hooks", [])
+                if isinstance(hook, dict)
+            ]
+            if expected_matchers.issubset(matchers) and any(
+                script_name in command for command in commands
+            ):
+                return True
+        errors.append(
+            f"{platform}: {event_name} hook for {script_name} "
+            f"is missing or does not match {sorted(expected_matchers)}"
         )
-        for item in claude_pre_tool
+        return False
+
+    hook_registered("PreToolUse", {"Bash"}, "guard_bash.py", ".claude/settings.json")
+    hook_registered(
+        "PreToolUse",
+        {"Read", "Grep", "Glob"},
+        "pre_read_guard.py",
+        ".claude/settings.json",
     )
-    if not claude_guard_registered:
-        errors.append(".claude/settings.json: PreToolUse read guard is not registered")
+    hook_registered(
+        "PreToolUse",
+        {"Edit", "Write", "MultiEdit"},
+        "pre_edit_guard.py",
+        ".claude/settings.json",
+    )
+    hook_registered(
+        "SessionStart",
+        set(),
+        "session_start.py",
+        ".claude/settings.json",
+    )
+    hook_registered(
+        "PostToolUse",
+        {"Edit", "Write", "MultiEdit"},
+        "post_edit.py",
+        ".claude/settings.json",
+    )
+    hook_registered("Stop", set(), "stop_gate.py", ".claude/settings.json")
 
     gemini = config_values.get(".gemini/settings.json", {})
     gemini_groups = gemini.get("hooks", {}).get("BeforeTool", [])
-    gemini_matchers = " ".join(item.get("matcher", "") for item in gemini_groups)
-    required_gemini_tools = (
+    gemini_matchers = {
+        tool.strip()
+        for group in gemini_groups
+        for tool in group.get("matcher", "").split("|")
+        if tool.strip()
+    }
+    required_gemini_tools = {
         "run_shell_command",
         "read_file",
         "read_many_files",
@@ -151,13 +198,22 @@ def check_configs() -> list[str]:
         "glob",
         "write_file",
         "replace",
-    )
-    missing_tools = [tool for tool in required_gemini_tools if tool not in gemini_matchers]
+    }
+    missing_tools = sorted(required_gemini_tools - gemini_matchers)
     if missing_tools:
         errors.append(
             ".gemini/settings.json: safety hook does not match "
             + ", ".join(missing_tools)
         )
+
+    gemini_hook_command = " ".join(
+        hook.get("command", "")
+        for group in gemini_groups
+        for hook in group.get("hooks", [])
+        if isinstance(hook, dict)
+    )
+    if "before_tool.py" not in gemini_hook_command:
+        errors.append(".gemini/settings.json: BeforeTool does not run before_tool.py")
     if not (ROOT / ".gemini" / "hooks" / "before_tool.py").is_file():
         errors.append("missing .gemini/hooks/before_tool.py")
 
