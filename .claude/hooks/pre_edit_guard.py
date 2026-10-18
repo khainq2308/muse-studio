@@ -25,9 +25,11 @@ def new_content(tool_input: dict) -> str:
 
 def main() -> None:
     event = read_event()
-    tool_input = event.get("tool_input") or {}
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, dict):
+        block("[pre_edit_guard] Missing or invalid tool_input; refusing to bypass the guard.")
     raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
-    if not isinstance(tool_input, dict) or not isinstance(raw_path, str) or not raw_path:
+    if not isinstance(raw_path, str) or not raw_path:
         block("[pre_edit_guard] Missing or invalid edit path; refusing to bypass the guard.")
     root = project_dir()
     path = Path(raw_path)
