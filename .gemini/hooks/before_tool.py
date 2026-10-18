@@ -4,7 +4,6 @@ from __future__ import annotations
 import glob
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -53,9 +52,14 @@ def pattern_targets_secret(raw: str) -> bool:
 
 def pattern_matches(relative_path: str, pattern: str) -> bool:
     normalized = pattern.replace("\\", "/")
-    return (
-        glob.fnmatch.fnmatchcase(relative_path, normalized)
-        or glob.fnmatch.fnmatchcase(Path(relative_path).name, normalized)
+    # Globstar may match zero path components: **/* must include root files too.
+    patterns = [normalized]
+    if normalized.startswith("**/"):
+        patterns.append(normalized[3:])
+    return any(
+        glob.fnmatch.fnmatchcase(relative_path, candidate)
+        or glob.fnmatch.fnmatchcase(Path(relative_path).name, candidate)
+        for candidate in patterns
     )
 
 
