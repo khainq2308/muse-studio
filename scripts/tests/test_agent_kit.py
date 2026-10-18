@@ -26,10 +26,11 @@ def load_module(name: str, path: Path):
 
 
 class GuardTests(unittest.TestCase):
-    def run_hook(self, script: Path, root: Path, payload: dict):
+    def run_hook(self, script: Path, root: Path, payload: dict, hook_root: Path | None = None):
         env = os.environ.copy()
-        env["CLAUDE_PROJECT_DIR"] = str(root)
-        env["GEMINI_PROJECT_DIR"] = str(root)
+        adapter_root = hook_root or root
+        env["CLAUDE_PROJECT_DIR"] = str(adapter_root)
+        env["GEMINI_PROJECT_DIR"] = str(adapter_root)
         return subprocess.run(
             [sys.executable, str(script)],
             input=json.dumps(payload),
@@ -84,18 +85,18 @@ class GuardTests(unittest.TestCase):
             root = Path(tmp)
             denied = self.run_hook(
                 adapter, root,
-                {"tool_name": "run_shell_command", "tool_input": {"command": "git reset --hard"}},
+                {"tool_name": "run_shell_command", "tool_input": {"command": "git reset --hard"}}, hook_root=ROOT,
             )
             self.assertEqual(denied.returncode, 2, denied.stderr)
             (root / ".env").write_text("TOKEN=placeholder")
             denied = self.run_hook(
                 adapter, root,
-                {"tool_name": "read_file", "tool_input": {"file_path": ".env"}},
+                {"tool_name": "read_file", "tool_input": {"file_path": ".env"}}, hook_root=ROOT,
             )
             self.assertEqual(denied.returncode, 2, denied.stderr)
             allowed = self.run_hook(
                 adapter, root,
-                {"tool_name": "run_shell_command", "tool_input": {"command": "pwd"}},
+                {"tool_name": "run_shell_command", "tool_input": {"command": "pwd"}}, hook_root=ROOT,
             )
             self.assertEqual(allowed.returncode, 0, allowed.stderr)
             self.assertEqual(json.loads(allowed.stdout)["decision"], "allow")
