@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: scripts/lint.sh [--fix|--all]
-# Default: lint changed Python files under apps/ and run the layering ratchet.
-# The current legacy application tree has pre-existing Ruff debt; --all reports it.
+# Default: Ruff-check changed Python files anywhere in the repo and run the layering ratchet.
+# The legacy app tree has pre-existing Ruff debt; --all reports it without reformatting.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v ruff >/dev/null || { echo "ruff not installed: pip install ruff" >&2; exit 127; }
@@ -25,13 +25,12 @@ else
     git ls-files --others --exclude-standard
   } | sort -u | while IFS= read -r file; do
     case "$file" in
-      apps/orchestrator/*.py|apps/media-engine/*.py) printf '%s\n' "$file" ;;
+      *.py) printf '%s\n' "$file" ;;
     esac
   done > "$temp_list"
   if [ -s "$temp_list" ]; then
     count="$(wc -l < "$temp_list" | tr -d ' ')"
-    echo "Ruff check on $count changed application Python file(s)."
-    # Repo-controlled paths have no spaces. Quote via one line at a time to preserve the argv.
+    echo "Ruff check on $count changed Python file(s)."
     failed=0
     while IFS= read -r file; do
       [ -n "$file" ] || continue
@@ -39,7 +38,7 @@ else
     done < "$temp_list"
     [ "$failed" -eq 0 ] || rc=1
   else
-    echo "No changed application Python files; skipping application Ruff check."
+    echo "No changed Python files; skipping Ruff check."
   fi
   rm -f "$temp_list"
 fi
