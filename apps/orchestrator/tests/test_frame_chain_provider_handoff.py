@@ -138,3 +138,19 @@ def test_video_payload_omits_optional_frame_fields_when_no_frame_is_set():
 
     assert "image" not in body
     assert "first_frame_image" not in body
+
+
+@pytest.mark.asyncio
+async def test_non_chained_shot_does_not_use_its_stored_opening_frame(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(settings, "media_root", str(tmp_path))
+    frame = _create_mock_boundary_frame_png(str(tmp_path), "shot-1", 1, "first", "test-seed")
+    asset = _asset_for_frame(frame)
+    db = FakeAssetSession({asset.id: asset})
+    shot = SimpleNamespace(
+        project_id="project-1",
+        first_frame_asset_id=asset.id,
+        continuity_mode="previous_shot",
+        previous_shot_id="shot-0",
+    )
+
+    assert await GenerationQueueService.load_first_frame_data_uri(db, shot) is None
