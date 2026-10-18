@@ -23,7 +23,12 @@ export const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [apiStatus, setApiStatus] = useState<string>('checking...');
+  const [draftAdminToken, setDraftAdminToken] = useState<string>('');
+  const [activeAdminToken, setActiveAdminToken] = useState<string>('');
   const orchestratorUrl = (import.meta as any).env?.VITE_ORCHESTRATOR_URL || 'http://localhost:8000';
+  const requestHeaders: HeadersInit = activeAdminToken
+    ? { 'X-Studio-Admin-Token': activeAdminToken }
+    : {};
 
   useEffect(() => {
     fetch(`${orchestratorUrl}/healthz`)
@@ -31,16 +36,29 @@ export const App: React.FC = () => {
       .then((data) => setApiStatus(data.status === 'ok' ? 'Online (M1 Active)' : 'Unknown'))
       .catch(() => setApiStatus('Offline (Start Orchestrator)'));
 
-    fetch(`${orchestratorUrl}/api/v1/projects`)
-      .then((res) => res.json())
+    fetch(`${orchestratorUrl}/api/v1/projects`, { headers: requestHeaders })
+      .then((res) => {
+        if (res.status === 401 || res.status === 403) throw new Error('Admin token required');
+        if (!res.ok) throw new Error(`Projects API failed (${res.status})`);
+        return res.json();
+      })
       .then((data) => setProjects(Array.isArray(data) ? data : []))
-      .catch(() => {});
+      .catch((error) => {
+        setProjects([]);
+        if (error instanceof Error && error.message === 'Admin token required') {
+          setApiStatus('Admin token required');
+        }
+      });
 
-    fetch(`${orchestratorUrl}/api/v1/connections`)
-      .then((res) => res.json())
+    fetch(`${orchestratorUrl}/api/v1/connections`, { headers: requestHeaders })
+      .then((res) => {
+        if (res.status === 401 || res.status === 403) throw new Error('Admin token required');
+        if (!res.ok) throw new Error(`Connections API failed (${res.status})`);
+        return res.json();
+      })
       .then((data) => setConnections(Array.isArray(data) ? data : []))
-      .catch(() => {});
-  }, [orchestratorUrl]);
+      .catch(() => setConnections([]));
+  }, [orchestratorUrl, activeAdminToken]);
 
   return (
     <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', padding: '2rem', backgroundColor: '#0f172a', color: '#f8fafc', minHeight: '100vh' }}>
@@ -49,9 +67,39 @@ export const App: React.FC = () => {
           <h1 style={{ fontSize: '1.875rem', fontWeight: 'bold', margin: 0, color: '#38bdf8' }}>MuseStudio</h1>
           <p style={{ margin: '0.25rem 0 0 0', color: '#94a3b8' }}>AI Video Production Orchestrator — Milestone 1 (Foundation)</p>
         </div>
-        <div style={{ background: '#1e293b', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1px solid #334155' }}>
-          <span style={{ fontSize: '0.875rem', color: '#94a3b8' }}>API Status: </span>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: apiStatus.includes('Online') ? '#4ade80' : '#f87171' }}>{apiStatus}</span>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              setActiveAdminToken(draftAdminToken.trim());
+            }}
+            style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}
+          >
+            <input
+              aria-label="Studio admin token"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Admin token (production)"
+              value={draftAdminToken}
+              onChange={(event) => setDraftAdminToken(event.target.value)}
+              style={{ width: '13rem', padding: '0.5rem', borderRadius: '0.375rem', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155' }}
+            />
+            <button
+              type="submit"
+              style={{ padding: '0.5rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #334155', background: '#1e293b', color: '#f8fafc', cursor: 'pointer' }}
+            >Connect</button>
+            {activeAdminToken && (
+              <button
+                type="button"
+                onClick={() => { setDraftAdminToken(''); setActiveAdminToken(''); }}
+                style={{ padding: '0.5rem 0.75rem', borderRadius: '0.375rem', border: '1px solid #334155', background: '#1e293b', color: '#f8fafc', cursor: 'pointer' }}
+              >Disconnect</button>
+            )}
+          </form>
+          <div style={{ background: '#1e293b', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1px solid #334155' }}>
+            <span style={{ fontSize: '0.875rem', color: '#94a3b8' }}>API Status: </span>
+            <span style={{ fontSize: '0.875rem', fontWeight: 600, color: apiStatus.includes('Online') ? '#4ade80' : '#f87171' }}>{apiStatus}</span>
+          </div>
         </div>
       </header>
 
