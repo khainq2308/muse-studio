@@ -111,7 +111,7 @@ class GuardTests(unittest.TestCase):
     def test_read_guard_blocks_real_env_and_allows_example(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in (".env", ".env.production", ".envrc", ".env.example.local"):
+            for name in (".env", ".env.production", ".envrc", ".env.example.local", ".ENV.production"):
                 result = self.run_hook(
                     HOOKS / "pre_read_guard.py", root,
                     {"tool_name": "Read", "tool_input": {"file_path": name}},
@@ -147,7 +147,7 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(denied.returncode, 2, denied.stderr)
             self.assertIn("real .env files", denied.stderr)
 
-            for secret_name in (".envrc", ".env.example.local"):
+            for secret_name in (".envrc", ".env.example.local", ".ENVrc", ".ENV.example.local"):
                 secret_command = f"python3 -c \"print(open('{secret_name}').read())\""
                 result = self.run_hook(
                     HOOKS / "guard_bash.py", root,
@@ -251,6 +251,7 @@ class GuardTests(unittest.TestCase):
             )
             self.assertEqual(adapter.check_many_file_paths({"include": [".envrc"]}), 2)
             self.assertEqual(adapter.check_many_file_paths({"include": [".env.example.local"]}), 2)
+            self.assertEqual(adapter.check_many_file_paths({"include": [".ENV.production"]}), 2)
             self.assertEqual(adapter.check_many_file_paths({"include": [".env.example"]}), 0)
             self.assertEqual(adapter.check_many_file_paths({"include": [".env"]}), 2)
 
