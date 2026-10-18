@@ -114,9 +114,9 @@ async def test_export_of_undecodable_clip_fails_and_creates_no_output(client: As
 
     # 422 when FFmpeg rejects the placeholder, 503 on a machine without FFmpeg; never 201.
     assert response.status_code in (422, 503), response.text
-    detail = response.json()["detail"]
-    assert detail["state"] == "failed"
-    assert detail["export_id"].startswith("exp_")
+    body = response.json()
+    assert body["state"] == "failed"
+    assert body["export_id"].startswith("exp_")
     exports_dir = Path(settings.media_root) / project_id / "exports"
     assert not list(exports_dir.glob("*.mp4"))
 
@@ -161,7 +161,7 @@ async def test_export_that_fails_verification_is_not_stored_as_an_asset(
     response = await client.post(f"/api/v1/projects/{project_id}/timeline/exports", json={})
 
     assert response.status_code == 422
-    assert response.json()["detail"]["state"] == "failed"
+    assert response.json()["state"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -183,3 +183,99 @@ async def test_export_error_status_code_is_passed_through(
     assert detail["message"] == "FFmpeg chưa được cài."
     # The "not rendered yet" contract also holds when the render fails.
     assert "clip_audio" in detail["unsupported_features"]
+
+@pytest.mark.asyncio
+async def test_p1_and_p3_short_source_video_rejected_and_early_422_includes_unsupported_features(client, tmp_path):
+    """
+    - P1: Video nguồn dài 1.0s nhưng clip trên timeline yêu cầu 3.0s -> từ chối export (422) và không lưu Asset xuất ra.
+    - P3: Lỗi 422 sớm khi clip trỏ tới asset_id không tồn tại vẫn trả về đầy đủ unsupported_features.
+    """
+    import shutil
+    import subprocess
+
+    # Lấy admin headers nếu file test có định nghĩa helper hoặc biến ADMIN_HEADERS
+    headers = globals().get("ADMIN_HEADERS") or {}
+    if not headers and callable(globals().get("_admin_headers")):
+        headers = globals()["_admin_headers"]()
+
+    p_res = await client.post("/api/v1/projects", json={"name": "P1 P3 Check"}, headers=headers)
+    proj_id = p_res.json()["id"]
+
+    # Kiểm tra P3: Early 422 do asset_id không tồn tại vẫn phải có unsupported_features
+    tl_p3 = (
+        await client.post(
+            f"/api/v1/projects/{proj_id}/timeline/assemble",
+            headers=headers,
+            json={
+                "name": "Missing Asset Seq",
+                "title_card": {"title": "Intro", "duration_seconds": 2.0},
+                "custom_clips": [
+                    {
+                        "asset_id": "ast_does_not_exist_999",
+                        "order_index": 1,
+                        "start_time_seconds": 0.0,
+                        "source_duration_seconds": 3.0,
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    exp_p3 = await client.post(
+        f"/api/v1/projects/{proj_id}/timeline/exports",
+        headers=headers,
+        json={"sequence_id": tl_p3["sequence_id"]},
+    )
+    assert exp_p3.status_code == 422
+    assert "unsupported_features" in exp_p3.json()
+
+    # Kiểm tra P1: Video nguồn thực tế dài 1.0s nhưng timeline yêu cầu 3.0s -> Phải bị từ chối 422
+    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+        short_mp4 = tmp_path / "source_1s.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "color=c=red:s=640x360:r=24:d=1.0",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                str(short_mp4),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        up_res = await client.post(
+            "/api/v1/assets/upload",
+            headers=headers,
+            data={"project_id": proj_id, "asset_type": "video"},
+            files={"file": ("source_1s.mp4", short_mp4.read_bytes(), "video/mp4")},
+        )
+        assert up_res.status_code == 201
+        short_asset_id = up_res.json()["id"]
+
+        tl_p1 = (
+            await client.post(
+                f"/api/v1/projects/{proj_id}/timeline/assemble",
+                headers=headers,
+                json={
+                    "name": "Short Source Clip Seq",
+                    "custom_clips": [
+                        {
+                            "asset_id": short_asset_id,
+                            "order_index": 1,
+                            "start_time_seconds": 0.0,
+                            "source_duration_seconds": 3.0,
+                            "trim_start_seconds": 0.0,
+                            "trim_end_seconds": 0.0,
+                        }
+                    ],
+                },
+            )
+        ).json()
+
+        exp_p1 = await client.post(
+            f"/api/v1/projects/{proj_id}/timeline/exports",
+            headers=headers,
+            json={"sequence_id": tl_p1["sequence_id"]},
+        )
+        assert exp_p1.status_code == 422
+        assert "unsupported_features" in exp_p1.json()
+        assert "output_asset_id" not in exp_p1.json()
