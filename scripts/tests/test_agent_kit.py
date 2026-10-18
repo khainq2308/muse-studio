@@ -111,7 +111,7 @@ class GuardTests(unittest.TestCase):
     def test_read_guard_blocks_real_env_and_allows_example(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in (".env", ".env.production"):
+            for name in (".env", ".env.production", ".envrc", ".env.example.local"):
                 result = self.run_hook(
                     HOOKS / "pre_read_guard.py", root,
                     {"tool_name": "Read", "tool_input": {"file_path": name}},
@@ -146,6 +146,14 @@ class GuardTests(unittest.TestCase):
             )
             self.assertEqual(denied.returncode, 2, denied.stderr)
             self.assertIn("real .env files", denied.stderr)
+
+            for secret_name in (".envrc", ".env.example.local"):
+                secret_command = f"python3 -c \"print(open('{secret_name}').read())\""
+                result = self.run_hook(
+                    HOOKS / "guard_bash.py", root,
+                    {"tool_name": "Bash", "tool_input": {"command": secret_command}},
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
 
             allowed = self.run_hook(
                 HOOKS / "guard_bash.py", root,
