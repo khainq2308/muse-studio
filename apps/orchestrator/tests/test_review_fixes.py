@@ -12,3 +12,10 @@ def test_secret_mask_reveals_little():
     assert SecretVault.mask("sk-abcdefghijklmnop") == "sk...op"
     assert SecretVault.mask("short") == "********"
     assert SecretVault.mask(None) == "[NOT_SET]"
+
+
+def test_dispatch_lease_model_is_registered_with_metadata():
+    from muse_orchestrator.models.domain import Base, GenerationDispatchLeaseRecord
+
+    assert GenerationDispatchLeaseRecord.__tablename__ == "generation_dispatch_leases"
+    assert "generation_dispatch_leases" in Base.metadata.tables
