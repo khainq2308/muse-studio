@@ -93,7 +93,7 @@ A missing command or dependency is **not a pass**. Use `scripts/doctor.sh`, reco
 | Hooks | `.claude/settings.json` + `.claude/hooks/` | Use the installed Codex hook interface/config if enabled | Use Gemini CLI `settings.json` hook events | Write an adapter for the host's event contract |
 | Tests/architecture commands | `scripts/` | `scripts/` | `scripts/` | `scripts/` |
 
-Subagent and hook formats are intentionally not interchangeable. The Codex reviewer/auditor profiles set sandbox_mode to read-only, but the effective isolation must be verified in the exact Codex runtime (some invocation modes may inherit parent sandbox settings). Before authoring a native adapter, verify the current host/version schema. Platform upgrades can change hooks, permission prompts, names and payloads.
+Subagent and hook formats are intentionally not interchangeable. The Codex reviewer/auditor profiles set sandbox_mode to read-only, but this declaration is not proof that the active runtime enforces it. Follow [Codex read-only sandbox validation](CODEX_SANDBOX_VALIDATION.md): run profiles only under a confirmed read-only parent sandbox, and use a disposable checkout with no credentials if enforcement is uncertain. Before authoring a native adapter, verify the current host/version schema. Platform upgrades can change hooks, permission prompts, names and payloads.
 
 ## 4. Command-equivalent workflows
 
