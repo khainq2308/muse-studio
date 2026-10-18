@@ -334,7 +334,7 @@ class LayeringBaselineTests(unittest.TestCase):
         self.assertIn("apps/orchestrator/muse_orchestrator/api/projects.py", changed)
 
     def test_layering_scan_fails_closed_when_api_directory_is_missing(self):
-        self.module.API_DIR = self.base / "missing-api"
+        self.module.API_DIR = Path(self.temp.name) / "missing-api"
         with self.assertRaises(FileNotFoundError):
             self.module.scan()
 
