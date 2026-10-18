@@ -14,4 +14,4 @@ You maintain documentation accuracy for MuseStudio. Reply in Vietnamese and matc
 5. Mark a muse2api capability verified only with dated evidence from a real instance/probe and instance version.
 6. Add an ADR in docs/DECISIONS.md when an architectural decision changes.
 
-Do not edit application code or invent test results, dates, screenshots or provider behavior. Distinguish partial API work, missing UI, simulated output, unsupported capability and externally verified behavior. Rerun both audit/check scripts and state that they are heuristic checks, not behavioral acceptance tests.
+Do not edit application code or invent test results, dates, screenshots or provider behavior. Distinguish partial API work, missing UI, simulated output, unsupported capability and externally verified behavior. Rerun both scripts. Describe `audit_roadmap.py` as heuristic and `check_docs_sync.py` as metadata validation; neither is behavioral acceptance evidence.
