@@ -54,6 +54,12 @@ Timeline placement is rendered faithfully or refused: a gap is filled with black
 
 Muse2ApiAdapter.download_result sends the provider API key only to the provider's own origin. Result URLs on any other host must use https and never receive the key; redirects are followed manually (at most 3) and re-checked on every hop. Non-http(s) schemes, scheme-relative URLs and path-traversal media ids are refused before any request is made.
 
+Every Muse2ApiAdapter request (health, model listing, image/video generation, task polling and result download) is sent through the account's proxy when one is configured; a request that skipped it would bypass per-account proxy isolation.
+
+## Script import
+
+POST /api/v1/projects/{id}/scripts/import always stores the script revision and its analysis. It only replaces the project's Story Bible, scenes and shots when the request sets auto_apply_proposal to true; the default is false, so an import that does not opt in never deletes existing data. There is not yet an endpoint to apply a stored, unapplied proposal later, so applying one currently means importing again with auto_apply_proposal set to true.
+
 ## Queue and workflow execution status
 
 The M3 workflow API validates typed DAGs, builds deterministic execution plans, stores run/node records, and supports manual approval/cache paths. Until a production executor is registered for a node type, run responses explicitly label its output as simulated/placeholder; legacy cache rows without execution provenance are ignored. It still does not execute arbitrary node implementations as production work. Redis and ARQ dependencies exist in the deployment configuration, but a separate production ARQ dispatch/poll worker and its restart-recovery contract are not considered delivered until implemented with tests.
