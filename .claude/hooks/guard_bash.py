@@ -59,6 +59,8 @@ def _unsafe_rm_target(target: str) -> bool:
         return True
     if ".." in target.split("/"):
         return True
+    if posixpath.normpath(target) in {"", ".", ".."}:
+        return True
     if target in {"/", "~", ".", "..", "./", "../"} or target.startswith("~"):
         return True
 
