@@ -1,10 +1,8 @@
 ---
-description: Run the test suites (all, or a scope) and fix failures
+description: Run test suites for a selected scope and repair failures
 argument-hint: "[orchestrator|media|web|all] [pytest args]"
 allowed-tools: Bash(scripts/test.sh:*), Bash(scripts/doctor.sh:*), Read, Grep, Edit
 ---
-Run the tests for scope: `$ARGUMENTS` (default: all).
+Run scripts/test.sh with the requested scope (default: all). Pytest arguments apply only to one selected pytest scope; all intentionally runs every suite without filters.
 
-1. Run `scripts/test.sh $ARGUMENTS`. If tools are missing, run `scripts/doctor.sh` and tell me exactly what is missing instead of guessing.
-2. If anything fails: read the failing test and the code under test, find the root cause (do not weaken assertions or skip tests to make them pass), fix the code, and re-run only the failing tests, then the whole scope.
-3. Report: command run, pass/fail counts as printed, and any failure you did NOT fix with the reason.
+If tools are missing, run scripts/doctor.sh and state what is unavailable. For failures, inspect the failing test and code, fix the root cause, then rerun the failing test and the full affected scope. Do not weaken assertions or skip tests to get green. Report actual commands, counts, and checks not run.
