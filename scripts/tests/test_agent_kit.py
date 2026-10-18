@@ -155,6 +155,12 @@ class GuardTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2, result.stderr)
 
+            glob_secret = self.run_hook(
+                HOOKS / "guard_bash.py", root,
+                {"tool_name": "Bash", "tool_input": {"command": "cat .env*"}},
+            )
+            self.assertEqual(glob_secret.returncode, 2, glob_secret.stderr)
+
             allowed = self.run_hook(
                 HOOKS / "guard_bash.py", root,
                 {"tool_name": "Bash", "tool_input": {
