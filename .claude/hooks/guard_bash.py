@@ -59,11 +59,14 @@ def rm_is_dangerous(command: str) -> str | None:
 
 def main() -> None:
     event = read_event()
+    if not event:
+        block("[guard_bash] Missing or invalid hook event; refusing to run an unvalidated shell command.")
     if event.get("tool_name") != "Bash":
         return
-    command: str = (event.get("tool_input") or {}).get("command", "") or ""
-    if not command.strip():
-        return
+    tool_input = event.get("tool_input")
+    command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+    if not isinstance(command, str) or not command.strip():
+        block("[guard_bash] Bash hook event has no command; refusing to bypass the guard.")
 
     for pattern, rule, message in RULES:
         if re.search(pattern, command, re.IGNORECASE):
