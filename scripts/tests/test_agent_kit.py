@@ -87,6 +87,32 @@ class GuardTests(unittest.TestCase):
             )
             self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
+    def test_gemini_read_many_files_uses_include_patterns_and_blocks_secrets(self):
+        adapter = load_module("test_gemini_guard", ROOT / ".gemini" / "hooks" / "before_tool.py")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            adapter.ROOT = root
+            adapter.HOOKS = HOOKS
+            (root / ".env").write_text("API_KEY=secret")
+            (root / ".env.example").write_text("API_KEY=replace-me")
+            (root / "README.md").write_text("safe content")
+
+            denied = adapter.check_many_file_paths({"include": [".env"]})
+            self.assertEqual(denied, 2)
+            denied_glob = adapter.check_many_file_paths({"include": ["**/.env*"]})
+            self.assertEqual(denied_glob, 2)
+
+            allowed_example = adapter.check_many_file_paths({"include": [".env.example"]})
+            self.assertEqual(allowed_example, 0)
+            allowed_readme = adapter.check_many_file_paths({"include": ["README.md"]})
+            self.assertEqual(allowed_readme, 0)
+
+    def test_gemini_read_many_files_fails_closed_when_patterns_missing(self):
+        adapter = load_module("test_gemini_guard_invalid", ROOT / ".gemini" / "hooks" / "before_tool.py")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(adapter.check_many_file_paths({}), 2)
+            self.assertEqual(adapter.check_many_file_paths({"include": "README.md"}), 2)
+
     def test_edit_guard_scans_env_example_for_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_hook(
