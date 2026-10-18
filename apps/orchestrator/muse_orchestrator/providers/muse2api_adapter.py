@@ -181,19 +181,32 @@ class Muse2ApiAdapter(VideoProvider):
                 raise classify_http_error(resp.status_code, SecretRedactor.redact_text(resp.text, [self.api_key or ""]))
             return _task_from_response(_json_or_fail(resp))
 
-    async def generate_video(self, request: VideoGenerationRequest) -> ProviderTask:
+    def _build_video_payload(self, request: VideoGenerationRequest) -> dict[str, object]:
+        """Build a video request compatible with known muse2api request-schema variants.
+
+        The www222fff schema consumes image and size; the czg86389-hub variant
+        documents first_frame_image and aspect_ratio. Unknown fields are ignored by
+        their request schemas, so include both aliases. Frame inputs must already be
+        URLs or data URIs, never internal Asset IDs.
+        """
         body: dict[str, object] = {
             "model": request.model_id,
             "prompt": request.prompt,
             "duration": request.duration_seconds,
+            "size": request.aspect_ratio,
             "aspect_ratio": request.aspect_ratio,
         }
         if request.negative_prompt:
             body["negative_prompt"] = request.negative_prompt
         if request.first_frame_url:
+            body["image"] = request.first_frame_url
             body["first_frame_image"] = request.first_frame_url
         if request.reference_image_urls:
             body["reference_images"] = request.reference_image_urls
+        return body
+
+    async def generate_video(self, request: VideoGenerationRequest) -> ProviderTask:
+        body = self._build_video_payload(request)
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
