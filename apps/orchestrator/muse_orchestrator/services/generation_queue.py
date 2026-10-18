@@ -247,6 +247,9 @@ class GenerationQueueService:
             task.history_log = list(task.history_log or []) + [
                 f"Terminal {phase} failure: {safe_err}"
             ]
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
         await db.commit()
         await db.refresh(task)
         return task
@@ -268,6 +271,21 @@ class GenerationQueueService:
         if task.state in (QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED, QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT):
             return task
 
+        # Claim any in-flight dispatch/poll/download before releasing the task row lock.
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        now = datetime.now(timezone.utc)
+        if lease is not None:
+            expiry = lease.expires_at
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry > now:
+                task.next_poll_delay_seconds = max(1.0, min(30.0, (expiry - now).total_seconds()))
+                await db.commit()
+                await db.refresh(task)
+                return task
+            await db.delete(lease)
+            await db.flush()
+
         # Polling an existing task does not consume a new slot. Lock only for dispatch reservation.
         if task.external_task_id:
             conn = await db.get(ProviderConnection, task.connection_id)
@@ -288,20 +306,7 @@ class GenerationQueueService:
 
         if not task.external_task_id:
             # Reserve the slot in a short transaction, then release DB locks before network I/O.
-            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
             now = datetime.now(timezone.utc)
-            if lease is not None:
-                expiry = lease.expires_at
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=timezone.utc)
-                if expiry > now:
-                    task.next_poll_delay_seconds = max(1.0, min(30.0, (expiry - now).total_seconds()))
-                    await db.commit()
-                    await db.refresh(task)
-                    return task
-                await db.delete(lease)
-                await db.flush()
-
             running_count = (
                 await db.execute(
                     select(func.count(GenerationTaskRecord.id)).where(
@@ -460,14 +465,37 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
+        # Poll/download can take seconds; reserve with a short-lived lease and commit first.
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=task.id,
+            connection_id=conn.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=max(90.0, float(conn.timeout_seconds) * 2.0 + 30.0)),
+        ))
+        await db.commit()
         try:
             p_status = await provider.get_task(task.external_task_id)
         except ProviderFailure as exc:
             return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "poll")
+        await db.refresh(task)
+        await db.refresh(shot)
+        if task.state in (
+            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+        ):
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
+            await db.commit()
+            await db.refresh(task)
+            return task
+
         if p_status.account_used:
             task.account_used = p_status.account_used
 
         if p_status.status in ("queued", "running"):
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
             delay = compute_backoff_seconds(task.poll_count)
             task.next_poll_delay_seconds = delay
             task.history_log = list(task.history_log or []) + [
@@ -478,6 +506,9 @@ class GenerationQueueService:
             return task
 
         if p_status.status == "failed":
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
             task.state = QueueTaskState.FAILED
             task.error_category = "upstream_generation_failed"
             task.retryable = False
@@ -503,6 +534,23 @@ class GenerationQueueService:
                 except OSError:
                     pass
             return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "download")
+        await db.refresh(task)
+        await db.refresh(shot)
+        if task.state in (
+            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+        ):
+            try:
+                os.unlink(stored.local_path)
+            except OSError:
+                pass
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
+            await db.commit()
+            await db.refresh(task)
+            return task
+
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"
