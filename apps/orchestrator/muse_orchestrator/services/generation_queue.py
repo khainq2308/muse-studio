@@ -122,12 +122,14 @@ class GenerationQueueService:
         ).scalar_one_or_none()
 
         if existing is not None and not force_retry:
-            if existing.state in (QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.SUCCEEDED):
-                return existing, False
+            # Strict idempotency: the same key returns the same task, whatever its
+            # state. A new generation can cost provider quota, so it requires an
+            # explicit force_retry=True instead of happening on a plain retry.
+            return existing, False
 
         if existing is not None:
-            # force_retry, or the previous task ended FAILED/CANCELED/POLL_TIMEOUT/PAUSED:
-            # idempotency_key is UNIQUE, so a fresh task needs a fresh key (was an IntegrityError).
+            # force_retry=True: idempotency_key is UNIQUE, so a fresh task needs a
+            # fresh key (was an IntegrityError).
             computed_idem = f"{computed_idem}_retry_{uuid.uuid4().hex[:6]}"
 
         task = GenerationTaskRecord(
