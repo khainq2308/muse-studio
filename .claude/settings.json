@@ -12,6 +12,7 @@
       "Bash(python3 scripts/check_agent_assets.py:*)",
       "Bash(pytest:*)",
       "Bash(python3 -m pytest:*)",
+      "Bash(python3 -m unittest:*)",
       "Bash(ruff:*)",
       "Bash(npm run build:*)",
       "Bash(npm run typecheck:*)",
