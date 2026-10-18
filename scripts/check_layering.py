@@ -42,12 +42,17 @@ def count_violations(path: Path) -> int:
 
 
 def scan() -> dict[str, int]:
-    if not API_DIR.exists():
-        return {}
+    if not API_DIR.is_dir():
+        raise FileNotFoundError(f"API route directory does not exist: {API_DIR}")
+    paths = [
+        path for path in sorted(API_DIR.rglob("*.py"))
+        if path.name not in EXEMPT
+    ]
+    if not paths:
+        raise FileNotFoundError(f"No Python route files found under: {API_DIR}")
     return {
         path.relative_to(API_DIR).as_posix(): count_violations(path)
-        for path in sorted(API_DIR.rglob("*.py"))
-        if path.name not in EXEMPT
+        for path in paths
     }
 
 
