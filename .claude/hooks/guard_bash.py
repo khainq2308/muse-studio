@@ -32,7 +32,7 @@ RULES: list[tuple[str, str, str]] = [
 ]
 
 # Reading or writing secrets via the shell.
-SECRET_PATH = re.compile(r"(^|[\s'\"=/])\.env(\.(?!example)[\w.-]*)?(\s|$|['\"])")
+SECRET_PATH = re.compile(r"(^|[\s'\"=/])\.env(?!\.example(?:[\s;|&)$]|['\"]|$))[\w.-]*(\s|$|['\";|&])")
 
 
 def rm_is_dangerous(command: str) -> str | None:
