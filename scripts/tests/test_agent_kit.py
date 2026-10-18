@@ -42,10 +42,10 @@ class GuardTests(unittest.TestCase):
 
     def test_docs_sync_checks_status_vocabulary_not_feature_signals(self):
         checker = load_module("test_docs_sync_metadata", ROOT / "scripts" / "check_docs_sync.py")
-        plan_lines = [
-            f"* **M{number} ({"Completed" if number < 2 else "Partial"}):** milestone description"
-            for number in range(8)
-        ]
+        plan_lines = []
+        for number in range(8):
+            status = "Completed" if number < 2 else "Partial"
+            plan_lines.append(f"* **M{number} ({status}):** milestone description")
         matrix = (
             "| Capability / Endpoint | Method & Path | Status | Fallback |\n"
             "| --- | --- | --- | --- |\n"
