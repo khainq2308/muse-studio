@@ -3,9 +3,8 @@
 # Pytest arguments apply only to a single pytest scope. The all scope always runs unfiltered suites.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-scope="$1"
-if [ -z "$scope" ]; then scope=all; fi
-if [ "$#" -gt 0 ]; then shift; fi
+scope=all
+if [ "$#" -gt 0 ]; then scope="$1"; shift; fi
 rc=0
 
 if [ "$scope" = "all" ] && [ "$#" -gt 0 ]; then
