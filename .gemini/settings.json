@@ -2,7 +2,7 @@
   "hooks": {
     "BeforeTool": [
       {
-        "matcher": "run_shell_command|write_file|replace|read_file|read_many_files",
+        "matcher": "run_shell_command|write_file|replace|read_file|read_many_files|grep_search|glob",
         "sequential": true,
         "hooks": [
           {
