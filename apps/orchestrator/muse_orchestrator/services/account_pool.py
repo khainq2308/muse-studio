@@ -47,6 +47,31 @@ def select_account(accounts: list[ConnectionAccount]) -> ConnectionAccount | Non
     )
 
 
+def resolve_task_account(
+    accounts: list[ConnectionAccount],
+    selected_account_id: str | None,
+    has_external_task: bool,
+) -> ConnectionAccount | None:
+    """Keep upstream tasks pinned to their submitting account.
+
+    Legacy in-flight tasks without a pin retain connection-level credentials. A task
+    awaiting dispatch may reuse its selected account only if it remains healthy; this
+    lets retries rotate away from accounts that hit auth or quota errors.
+    """
+    if has_external_task:
+        if not selected_account_id:
+            return None
+        account = next((item for item in accounts if item.id == selected_account_id), None)
+        if account is None:
+            raise LookupError("The provider account pinned to this running task no longer exists.")
+        return account
+    if selected_account_id:
+        selected = next((item for item in accounts if item.id == selected_account_id), None)
+        if selected and selected.enabled and selected.health_state in _USABLE_HEALTH_STATES:
+            return selected
+    return select_account(accounts)
+
+
 def decrypt_account_api_key(account: ConnectionAccount) -> str | None:
     return vault.decrypt(account.encrypted_api_key)
 

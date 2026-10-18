@@ -331,6 +331,8 @@ class GenerationTaskRecord(Base):
     )
     external_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     account_used: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # Stable account identity; account_used remains the human-readable display label.
+    account_id_used: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)

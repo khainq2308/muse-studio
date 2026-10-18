@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 from muse_orchestrator.api.dependencies import get_account_service
 from muse_orchestrator.application.account_service import ConnectionAccountService
-from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.models.domain import ConnectionAccount, ConnectionHealthState
 
 router = APIRouter(prefix="/api/v1/connections", tags=["Connection Accounts"])
@@ -97,12 +96,11 @@ async def update_account(
     payload: AccountUpdateIn,
     service: ConnectionAccountService = Depends(get_account_service),
 ) -> AccountOut:
+    await service.require_account_for_connection(connection_id, account_id)
     values: dict[str, Any] = {
         key: value for key, value in payload.model_dump().items() if value is not None
     }
     account = await service.update_account(account_id, values)
-    if account.connection_id != connection_id:
-        raise ApplicationError(404, "Connection account not found.")
     return _to_account_out(account)
 
 
@@ -114,7 +112,8 @@ async def delete_account(
     connection_id: str,
     account_id: str,
     service: ConnectionAccountService = Depends(get_account_service),
-) -> None:
+ ) -> None:
+    await service.require_account_for_connection(connection_id, account_id)
     await service.delete_account(account_id)
 
 
@@ -123,8 +122,7 @@ async def test_account(
     connection_id: str,
     account_id: str,
     service: ConnectionAccountService = Depends(get_account_service),
-) -> AccountOut:
+ ) -> AccountOut:
+    await service.require_account_for_connection(connection_id, account_id)
     account = await service.test_account(account_id)
-    if account.connection_id != connection_id:
-        raise ApplicationError(404, "Connection account not found.")
     return _to_account_out(account)

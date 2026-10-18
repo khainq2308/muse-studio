@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
+from sqlalchemy import select
+
 from muse_orchestrator.core.security import SecretVault, vault
 from muse_orchestrator.providers.base import ProviderFailure
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
@@ -13,7 +15,12 @@ from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.application.system_service import write_audit
 from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.infrastructure.repositories import StudioRepository
-from muse_orchestrator.models.domain import ConnectionAccount, ConnectionHealthState
+from muse_orchestrator.models.domain import (
+    ConnectionAccount,
+    ConnectionHealthState,
+    GenerationTaskRecord,
+    QueueTaskState,
+)
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 
 _PROXY_SCHEMES = ("http://", "https://", "socks5://", "socks5h://")
@@ -50,6 +57,16 @@ class ConnectionAccountService:
         if connection is None:
             raise ApplicationError(404, "Connection profile not found.")
         return connection
+
+    async def require_account_for_connection(
+        self, connection_id: str, account_id: str
+    ) -> ConnectionAccount:
+        """Validate a nested account relationship before performing side effects."""
+        await self._require_connection(connection_id)
+        account = await self.repository.get_account(account_id)
+        if account is None or account.connection_id != connection_id:
+            raise ApplicationError(404, "Connection account not found.")
+        return account
 
     async def create_account(self, connection_id: str, values: dict[str, Any]) -> ConnectionAccount:
         connection = await self._require_connection(connection_id)
@@ -133,6 +150,20 @@ class ConnectionAccountService:
         account = await self.repository.get_account(account_id)
         if account is None:
             raise ApplicationError(404, "Connection account not found.")
+        active_task = (
+            await self.repository.session.execute(
+                select(GenerationTaskRecord.id).where(
+                    GenerationTaskRecord.account_id_used == account.id,
+                    GenerationTaskRecord.state.in_([QueueTaskState.QUEUED, QueueTaskState.RUNNING]),
+                ).limit(1)
+            )
+        ).first()
+        if active_task is not None:
+            raise ApplicationError(
+                409,
+                "Cannot delete an account pinned to a queued/running generation task. "
+                "Disable it or wait for the task to finish first.",
+            )
         label, connection_id = account.label, account.connection_id
         await self.repository.delete_account(account)
         await write_audit(
