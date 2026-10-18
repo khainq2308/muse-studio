@@ -10,9 +10,10 @@ from pathlib import Path
 
 def read_event() -> dict:
     try:
-        return json.load(sys.stdin)
-    except Exception:
+        event = json.load(sys.stdin)
+    except (json.JSONDecodeError, OSError):
         return {}
+    return event if isinstance(event, dict) else {}
 
 
 def project_dir() -> Path:
