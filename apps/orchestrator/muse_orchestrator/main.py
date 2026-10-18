@@ -21,6 +21,7 @@ from muse_orchestrator.api.workflows import router as workflows_router
 from muse_orchestrator.api.queue import router as queue_router
 from muse_orchestrator.api.batch import router as batch_router
 from muse_orchestrator.api.timeline import router as timeline_router
+from muse_orchestrator.api.operations import router as operations_router
 
 
 @asynccontextmanager

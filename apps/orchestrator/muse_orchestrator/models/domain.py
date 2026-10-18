@@ -466,3 +466,65 @@ class ExportJobRecord(Base):
     error_message_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+# --- M7: ACCOUNTS, PROXIES, OBSERVABILITY, STORAGE & BACKUP MODELS ---
+
+class ProxyProfileRecord(Base):
+    """Cấu hình Proxy theo từng Connection/Instance muse2api (Mục 3.10 & M7 PRD)."""
+    __tablename__ = "proxy_profiles"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    scheme: Mapped[str] = mapped_column(String(16), default="http")  # http | https | socks5 | socks5h
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    encrypted_credentials: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credentials_masked: Mapped[str] = mapped_column(String(64), default="[NONE]")
+    assigned_connection_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    health_check_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    health_state: Mapped[ConnectionHealthState] = mapped_column(
+        Enum(ConnectionHealthState), default=ConnectionHealthState.UNKNOWN
+    )
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_error_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GatewayAccountRecord(Base):
+    """Quản lý Account Pool của muse2api qua Admin API; cookie luôn được mã hoá và che giấu (Mục 3.10 PRD)."""
+    __tablename__ = "gateway_accounts"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("provider_connections.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    encrypted_cookie: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cookie_masked: Mapped[str] = mapped_column(String(64), default="[REDACTED_COOKIE]")
+    status: Mapped[str] = mapped_column(String(32), default="active")  # active | cooldown | expired | error | disabled
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SystemSettingRecord(Base):
+    """Lưu cấu hình vận hành hệ thống: media retention, giả định chi phí, cleanup policy (Mục 3.8 & 3.11 PRD)."""
+    __tablename__ = "system_settings"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class StructuredLogRecord(Base):
+    """Structured logs có correlation_id, project_id, workflow_run_id, node_execution_id, task_id (Mục 3.11 PRD)."""
+    __tablename__ = "structured_logs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    correlation_id: Mapped[str] = mapped_column(String(64), index=True)
+    level: Mapped[str] = mapped_column(String(16), default="INFO")
+    event: Mapped[str] = mapped_column(String(128), nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    workflow_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    node_execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    payload_redacted: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
