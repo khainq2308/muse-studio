@@ -30,5 +30,5 @@ for tool in ("python3", "ruff", "pytest", "ffmpeg", "ffprobe", "node"):
     if code != 0:
         lines.append(f"- Missing tool: {tool} (run scripts/doctor.sh)")
 
-lines.append("- Read CLAUDE.md for rules. Verify with `scripts/test.sh` before claiming a task is done.")
+lines.append("- Read AGENTS.md and docs/AGENT_WORKFLOW.md. Use a relevant shared skill under .agents/skills/. A missing check is NOT RUN, not PASS.")
 print("\n".join(lines))
