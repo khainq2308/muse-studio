@@ -1,8 +1,14 @@
 from __future__ import annotations
+
 from typing import Any
+
+from arq import cron
 from muse_orchestrator.core.database import AsyncSessionLocal
+
+from muse_orchestrator.core.config import settings
 from muse_orchestrator.models.domain import QueueTaskState
 from muse_orchestrator.services.generation_queue import GenerationQueueService
+from muse_orchestrator.services.maintenance_service import cleanup_orphan_media
 
 
 async def process_generation_task_step(ctx: dict[str, Any], task_id: str) -> dict[str, Any]:
@@ -27,7 +33,30 @@ async def process_generation_task_step(ctx: dict[str, Any], task_id: str) -> dic
         }
 
 
+async def cleanup_orphan_media_job(ctx: dict[str, Any]) -> dict[str, Any]:
+    """M7 (cron): delete orphan media files older than the retention window."""
+    async with AsyncSessionLocal() as db:
+        report = await cleanup_orphan_media(
+            db,
+            settings.media_root,
+            settings.orphan_cleanup_retention_hours,
+            dry_run=False,
+        )
+        return {
+            "deleted": report["deleted"],
+            "freed_bytes": report["freed_bytes"],
+            "scanned_orphans": report["scanned_orphans"],
+            "errors": report["errors"],
+        }
+
+
 class WorkerSettings:
-    functions = [process_generation_task_step]
+    functions = [process_generation_task_step, cleanup_orphan_media_job]
+    # Daily orphan cleanup at 02:30 local worker time; disable via env.
+    cron_jobs = (
+        [cron(cleanup_orphan_media_job, hour=2, minute=30)]
+        if settings.orphan_cleanup_enabled
+        else []
+    )
     max_jobs = 20
     job_timeout = 120

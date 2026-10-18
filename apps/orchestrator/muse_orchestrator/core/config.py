@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     secret_encryption_key: str = _DEVELOPMENT_ENCRYPTION_KEY
     studio_admin_token: str | None = None
 
+    # M7: orphan media cleanup (ARQ cron) and project backups.
+    orphan_cleanup_enabled: bool = True
+    orphan_cleanup_retention_hours: float = 24.0
+    backup_retention_count: int = 10
+
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
         # Fail closed: only explicit dev/test environments may use the public default key.
