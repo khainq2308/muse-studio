@@ -343,7 +343,7 @@ class GenerationQueueService:
             task.state = QueueTaskState.RUNNING
             shot.generation_state = ShotGenerationState.RUNNING
             task.next_poll_delay_seconds = compute_backoff_seconds(1)
-            lease_seconds = max(90.0, float(conn.timeout_seconds) * 2.0 + 30.0)
+            lease_seconds = max(180.0, float(conn.timeout_seconds) * 2.0 + 90.0)
             db.add(GenerationDispatchLeaseRecord(
                 task_id=task.id,
                 connection_id=conn.id,
@@ -662,6 +662,9 @@ class GenerationQueueService:
             f"Completed! Saved asset={asset_id}, take={take_id}, last_frame={last_frame_aid}."
         ]
 
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
         await db.commit()
         if is_first_take and last_frame_aid:
             await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
