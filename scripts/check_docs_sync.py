@@ -72,6 +72,28 @@ def validate_capability_matrix(matrix_text: str) -> list[str]:
                 f"line {line_number}: capability status {status!r} is invalid; "
                 f"allowed: {', '.join(sorted(ALLOWED_CAPABILITY_STATUSES))}"
             )
+            continue
+
+        if status == "verified":
+            if len(cells) < 5:
+                errors.append(
+                    f"line {line_number}: verified capability row must include evidence and fallback columns"
+                )
+                continue
+            evidence = cells[3]
+            date_match = re.search(r"\b20\d{2}-\d{2}-\d{2}\b", evidence)
+            path_match = re.search(r"docs/evidence/[^\s|)]+", evidence)
+            if not date_match or not path_match:
+                errors.append(
+                    f"line {line_number}: verified capability needs an ISO date and a docs/evidence/ artifact path"
+                )
+                continue
+            evidence_path = ROOT / path_match.group(0).rstrip(".,;:")
+            if not evidence_path.is_file():
+                errors.append(
+                    f"line {line_number}: verified capability evidence artifact does not exist: "
+                    f"{path_match.group(0)}"
+                )
     return errors
 
 
