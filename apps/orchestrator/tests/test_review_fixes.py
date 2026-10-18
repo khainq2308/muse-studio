@@ -70,3 +70,50 @@ def test_redact_dict_descends_into_lists_and_tuples():
     # The input structure must not be mutated.
     assert data["events"][0].endswith("sk-live-abcdef123456")
     assert data["api_key"][0] == "sk-first-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proxy", ["http://user:pw@proxy.example.com:8080", None])
+async def test_muse2api_adapter_builds_every_client_with_the_configured_proxy(monkeypatch, proxy):
+    import httpx
+
+    from muse_orchestrator.providers import muse2api_adapter
+    from muse_orchestrator.providers.base import ImageGenerationRequest, VideoGenerationRequest
+
+    created: list[dict] = []
+
+    class RecordingClient:
+        """Stands in for httpx.AsyncClient and records how each client is constructed."""
+
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def get(self, url, **kwargs):
+            if url.endswith("/v1/models"):
+                return httpx.Response(200, json={"data": []})
+            if "/v1/videos/" in url:
+                return httpx.Response(200, json={"status": "running"})
+            return httpx.Response(200, json={})
+
+        async def post(self, url, **kwargs):
+            return httpx.Response(200, json={"id": "task_1", "status": "queued"})
+
+    monkeypatch.setattr(muse2api_adapter.httpx, "AsyncClient", RecordingClient)
+    adapter = muse2api_adapter.Muse2ApiAdapter("http://provider.test", api_key="key-1234", proxy=proxy)
+
+    await adapter.health()
+    await adapter.list_models()
+    await adapter.generate_image(ImageGenerationRequest(shot_id="shot_1", prompt="a rooftop"))
+    await adapter.generate_video(VideoGenerationRequest(shot_id="shot_1", prompt="a rooftop"))
+    await adapter.get_task("task_1")
+
+    # One client per request; none may be built without an explicit proxy argument, otherwise
+    # that call bypasses the per-account proxy (or leaks the server IP when a proxy is required).
+    assert len(created) == 5
+    assert all("proxy" in kwargs and kwargs["proxy"] == proxy for kwargs in created)
