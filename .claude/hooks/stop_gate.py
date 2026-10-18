@@ -1,47 +1,56 @@
 #!/usr/bin/env python3
-"""Stop: don't let the agent finish while changed backend code has failing tests or new layering violations.
-
-Disable with MUSE_STOP_GATE=0. Never loops: exits quietly if a stop-hook already ran this turn.
-"""
+"""Stop hook: block completion if required checks fail or cannot run."""
 from __future__ import annotations
-
 import os
 import sys
-
+from pathlib import Path
+from typing import Callable
 from _common import block, project_dir, read_event, run
 
-event = read_event()
-if event.get("stop_hook_active") or os.environ.get("MUSE_STOP_GATE", "1") == "0":
-    sys.exit(0)
+Runner = Callable[[list[str], Path | None, int], tuple[int, str]]
 
-root = project_dir()
-_, diff = run(["git", "status", "--porcelain"], root, 15)
-changed = [l[3:] for l in diff.splitlines() if l[3:].endswith(".py")]
-backend = [p for p in changed if p.startswith("apps/orchestrator/")]
-media = [p for p in changed if p.startswith("apps/media-engine/")]
-if not backend and not media:
-    sys.exit(0)
+def validate_changed(root: Path, backend: list[str], media: list[str], runner: Runner | None = None) -> list[str]:
+    runner = runner or run
+    problems: list[str] = []
+    code, out = runner(["python3", "scripts/check_layering.py", "--quiet"], root, 30)
+    if code != 0:
+        problems.append(f"Layering checker did not pass (exit {code}):\n{out.strip()[-1200:]}")
+    if backend:
+        cwd = root / "apps" / "orchestrator"
+        code, out = runner(["python3", "-c", "import pytest, fastapi"], cwd, 20)
+        if code != 0:
+            problems.append(f"Orchestrator tests NOT RUN: prerequisites failed (exit {code}):\n{out.strip()[-1200:]}")
+        else:
+            code, out = runner(["python3", "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"], cwd, 200)
+            if code != 0:
+                problems.append(f"Orchestrator tests did not pass (exit {code}; no tests collected is not pass):\n{out.strip()[-2000:]}")
+    if media:
+        cwd = root / "apps" / "media-engine"
+        code, out = runner(["python3", "-c", "import pytest"], cwd, 20)
+        if code != 0:
+            problems.append(f"Media-engine tests NOT RUN: pytest unavailable (exit {code}):\n{out.strip()[-1200:]}")
+        else:
+            code, out = runner(["python3", "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"], cwd, 60)
+            if code != 0:
+                problems.append(f"Media-engine tests did not pass (exit {code}; no tests collected is not pass):\n{out.strip()[-1200:]}")
+    return problems
 
-problems: list[str] = []
+def main() -> None:
+    event = read_event()
+    if event.get("stop_hook_active") or os.environ.get("MUSE_STOP_GATE", "1") == "0":
+        return
+    root = project_dir()
+    code, diff = run(["git", "status", "--porcelain"], root, 15)
+    if code != 0:
+        block("[stop_gate] Cannot inspect Git status; verify the working tree and tests before finishing.")
+    changed = [line[3:] for line in diff.splitlines() if len(line) > 3 and line[3:].endswith(".py")]
+    backend = [path for path in changed if path.startswith("apps/orchestrator/")]
+    media = [path for path in changed if path.startswith("apps/media-engine/")]
+    if not backend and not media:
+        return
+    problems = validate_changed(root, backend, media)
+    if problems:
+        block("[stop_gate] Work is not verified:\n\n" + "\n\n".join(problems) + "\n\nFix the issue or report exactly which required check could not run. Deliberate local override: MUSE_STOP_GATE=0.")
 
-code, out = run(["python3", "scripts/check_layering.py", "--quiet"], root, 30)
-if code != 0:
-    problems.append("Layering checker failed (regression or checker/tool error):\n" + out.strip()[-1200:])
-
-if backend:
-    code, _ = run(["python3", "-c", "import pytest, fastapi"], root / "apps" / "orchestrator", 20)
-    if code == 0:
-        code, out = run(["python3", "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"],
-                        root / "apps" / "orchestrator", 200)
-        if code not in (0, 5):
-            problems.append("orchestrator tests failing:\n" + out.strip()[-2000:])
-
-if media:
-    code, out = run(["python3", "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"],
-                    root / "apps" / "media-engine", 60)
-    if code not in (0, 5, 127) and "No module named pytest" not in out:
-        problems.append("media-engine tests failing:\n" + out.strip()[-1200:])
-
-if problems:
-    block("[stop_gate] Work is not finished:\n\n" + "\n\n".join(problems) +
-          "\n\nFix these, or explain to the user why they cannot be fixed. (Disable gate: MUSE_STOP_GATE=0)")
+if __name__ == "__main__":
+    main()
