@@ -107,6 +107,23 @@ class GuardTests(unittest.TestCase):
             allowed_readme = adapter.check_many_file_paths({"include": ["README.md"]})
             self.assertEqual(allowed_readme, 0)
 
+    def test_gemini_grep_search_blocks_explicit_secret_path(self):
+        adapter = ROOT / ".gemini" / "hooks" / "before_tool.py"
+        denied = self.run_hook(
+            adapter, ROOT,
+            {"tool_name": "grep_search", "tool_input": {"path": ".env", "pattern": "TOKEN"}},
+            hook_root=ROOT,
+        )
+        self.assertEqual(denied.returncode, 2, denied.stderr)
+
+        allowed = self.run_hook(
+            adapter, ROOT,
+            {"tool_name": "grep_search", "tool_input": {"path": ".", "include": "*.py", "pattern": "def main"}},
+            hook_root=ROOT,
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(json.loads(allowed.stdout)["decision"], "allow")
+
     def test_gemini_read_many_files_fails_closed_when_patterns_missing(self):
         adapter = load_module("test_gemini_guard_invalid", ROOT / ".gemini" / "hooks" / "before_tool.py")
         with contextlib.redirect_stderr(io.StringIO()):
