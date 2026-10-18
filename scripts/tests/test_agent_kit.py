@@ -47,9 +47,9 @@ class GuardTests(unittest.TestCase):
             status = "Completed" if number < 2 else "Partial"
             plan_lines.append(f"* **M{number} ({status}):** milestone description")
         matrix = (
-            "| Capability / Endpoint | Method & Path | Status | Fallback |\n"
-            "| --- | --- | --- | --- |\n"
-            "| Health | GET /healthz | " + chr(96) + "mock-only" + chr(96) + " | Mock test only |\n"
+            "| Capability / Endpoint | Method & Path | Status | Evidence / Probe Date | Fallback |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| Health | GET /healthz | " + chr(96) + "mock-only" + chr(96) + " | No real probe | Mock test only |\n"
         )
         self.assertEqual(checker.validate_documents("\n".join(plan_lines), matrix), [])
 
@@ -61,6 +61,25 @@ class GuardTests(unittest.TestCase):
         self.assertTrue(
             any("capability status" in error for error in checker.validate_documents("\n".join(plan_lines), invalid_matrix))
         )
+
+    def test_verified_capability_requires_dated_existing_evidence(self):
+        checker = load_module("test_docs_sync_evidence", ROOT / "scripts" / "check_docs_sync.py")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            checker.ROOT = root
+            matrix = (
+                "| Capability / Endpoint | Method & Path | Status | Evidence / Probe Date | Fallback |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| Health | GET /healthz | " + chr(96) + "verified" + chr(96)
+                + " | 2026-10-18 — docs/evidence/health-probe.md | Verified |\n"
+            )
+            errors = checker.validate_capability_matrix(matrix)
+            self.assertTrue(any("artifact does not exist" in error for error in errors), errors)
+
+            evidence = root / "docs" / "evidence" / "health-probe.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Instance version and dated probe response.")
+            self.assertEqual(checker.validate_capability_matrix(matrix), [])
 
     def test_inline_code_path_checker_detects_missing_script_reference(self):
         checker = load_module("test_agent_asset_paths", ROOT / "scripts" / "check_agent_assets.py")
