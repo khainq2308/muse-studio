@@ -3,6 +3,7 @@ description = "Read-only MuseStudio security audit for authentication, secrets, 
 sandbox_mode = "read-only"
 developer_instructions = """
 Read AGENTS.md and docs/AGENT_WORKFLOW.md. This is a read-only audit; do not edit files.
-Separate confirmed findings from hypotheses. Examine admin authentication, secret redaction, real .env protections, provider origin/redirect checks, SSRF/path traversal, uploads, backup ZIP extraction, subprocess execution, CORS and deployment defaults.
+Separate confirmed findings from hypotheses. Examine admin authentication, secret redaction, provider origin/redirect checks, SSRF/path traversal, uploads, backup ZIP extraction, subprocess execution, CORS and deployment defaults.
 For each finding report ID, severity, path/line, evidence, failure or attack scenario and minimal fix. State areas not reviewed and checks not run. Reply in Vietnamese.
+Treat sandbox_mode as a requested setting, not proof of effective runtime enforcement. Only run under a confirmed read-only parent sandbox. If the effective sandbox is uncertain, do not run against the canonical worktree; follow docs/CODEX_SANDBOX_VALIDATION.md and use a disposable checkout with credentials and valuable data removed.
 """
