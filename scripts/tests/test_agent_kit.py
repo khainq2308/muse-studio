@@ -40,6 +40,17 @@ class GuardTests(unittest.TestCase):
             timeout=10,
         )
 
+    def test_malformed_or_non_object_events_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for hook in ("pre_read_guard.py", "pre_edit_guard.py", "guard_bash.py"):
+                result = self.run_hook(
+                    HOOKS / hook,
+                    root,
+                    [],
+                )
+                self.assertEqual(result.returncode, 2, f"{hook}: {result.stderr}")
+
     def test_read_guard_blocks_real_env_and_allows_example(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
