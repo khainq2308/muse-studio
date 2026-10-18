@@ -12,18 +12,22 @@ BASELINE = Path(__file__).resolve().parent / "layering_baseline.json"
 EXEMPT = {"__init__.py", "dependencies.py"}
 DB_OBJECTS = {"db", "session"}
 DB_METHODS = {
-    "execute",
-    "add",
-    "add_all",
-    "commit",
-    "rollback",
-    "delete",
-    "refresh",
-    "get",
-    "flush",
-    "scalar",
-    "scalars",
+    "execute", "query", "add", "add_all", "commit", "rollback", "delete",
+    "refresh", "get", "flush", "scalar", "scalars",
 }
+
+
+def attribute_path(node: ast.AST) -> tuple[str | None, list[str]]:
+    """Resolve a dotted AST expression to its root name and attribute components."""
+    attributes: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        attributes.append(current.attr)
+        current = current.value
+    if not isinstance(current, ast.Name):
+        return None, []
+    attributes.reverse()
+    return current.id, attributes
 
 
 def count_violations(path: Path) -> int:
@@ -33,8 +37,10 @@ def count_violations(path: Path) -> int:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in DB_METHODS:
-            if isinstance(func.value, ast.Name) and func.value.id in DB_OBJECTS:
+        if isinstance(func, ast.Attribute):
+            root, attributes = attribute_path(func)
+            # Detect direct and nested forms: db.execute, session.query, db.session.execute.
+            if root in DB_OBJECTS and attributes and attributes[-1] in DB_METHODS:
                 total += 1
         elif isinstance(func, ast.Name) and func.id == "select":
             total += 1
@@ -68,7 +74,6 @@ def load_baseline() -> dict[str, int]:
 
 
 def baseline_count(name: str, baseline: dict[str, int]) -> int:
-    # Support the original flat-name baseline while recursively scanning API subpackages.
     return baseline.get(name, baseline.get(Path(name).name, 0))
 
 

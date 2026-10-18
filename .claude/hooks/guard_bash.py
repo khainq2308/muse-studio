@@ -2,6 +2,7 @@
 """PreToolUse(Bash): block destructive or policy-violating shell commands."""
 from __future__ import annotations
 
+import posixpath
 import re
 import shlex
 
@@ -31,29 +32,86 @@ RULES: list[tuple[str, str, str]] = [
     (r"\bchmod\s+-R\s+777\b", "chmod-777", "chmod -R 777 is not allowed."),
 ]
 
-# Reading or writing secrets via the shell.
 SECRET_PATH = re.compile(r"""(?<![A-Za-z0-9_.-])\.env(?!\.example(?:$|[\s/'";|&)]))[\w.*?{}-]*(?=$|[\s/'";|&)])""", re.IGNORECASE)
+_SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")"}
+_GLOB_OR_EXPANSION = re.compile(r"""[*?\[\]{}$\x60]""")
+
+
+def _recursive_flags(tokens: list[str]) -> bool:
+    options = True
+    for token in tokens:
+        if options and token == "--":
+            options = False
+            continue
+        if not options:
+            continue
+        if token == "--recursive":
+            return True
+        if token.startswith("-") and token != "-" and not token.startswith("--"):
+            if "r" in token[1:] or "R" in token[1:]:
+                return True
+    return False
+
+
+def _unsafe_rm_target(target: str) -> bool:
+    """Conservatively reject targets whose expansion or normalization is ambiguous."""
+    if not target or _GLOB_OR_EXPANSION.search(target):
+        return True
+    if ".." in target.split("/"):
+        return True
+    if posixpath.normpath(target) in {"", ".", ".."}:
+        return True
+    if target in {"/", "~", ".", "..", "./", "../"} or target.startswith("~"):
+        return True
+
+    # Explicit descendants of OS temp dirs are exempt only after traversal/expansion checks.
+    if target.startswith("/tmp/") or target.startswith("/var/tmp/"):
+        normalized = posixpath.normpath(target)
+        return not (normalized.startswith("/tmp/") or normalized.startswith("/var/tmp/"))
+    if target.startswith("/"):
+        return True
+
+    normalized_parts = [part for part in posixpath.normpath(target).split("/") if part not in {"", "."}]
+    return any(part in {"storage", ".git", "media"} for part in normalized_parts)
 
 
 def rm_is_dangerous(command: str) -> str | None:
+    """Return a reason to block recursive rm, failing closed on ambiguous parsing."""
     try:
-        tokens = shlex.split(command)
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
     except ValueError:
+        if re.search(r"\brm\b[^;\n]*(?:--recursive|(?:^|\s)-[^\s]*[rR])", command):
+            return "<unparseable recursive rm command>"
         return None
-    for i, tok in enumerate(tokens):
-        if tok != "rm":
+
+    index = 0
+    while index < len(tokens):
+        if posixpath.basename(tokens[index]) != "rm":
+            index += 1
             continue
-        flags = [t for t in tokens[i + 1:] if t.startswith("-")]
-        if not any("r" in f.lstrip("-") or "R" in f for f in flags):
-            continue
-        targets = [t for t in tokens[i + 1:] if not t.startswith("-")]
-        for t in targets:
-            if t in {"/", "~", "$HOME", ".", "..", "*", "./", "../"} or t.startswith(("/", "~")):
-                if t.startswith(("/tmp/", "/var/tmp/")):
+
+        segment: list[str] = []
+        cursor = index + 1
+        while cursor < len(tokens) and tokens[cursor] not in _SHELL_SEPARATORS:
+            segment.append(tokens[cursor])
+            cursor += 1
+
+        if _recursive_flags(segment):
+            options = True
+            targets: list[str] = []
+            for token in segment:
+                if options and token == "--":
+                    options = False
+                elif options and token.startswith("-") and token != "-":
                     continue
-                return t
-            if t.rstrip("/").split("/")[-1] in {"storage", ".git", "media"}:
-                return t
+                else:
+                    targets.append(token)
+            for target in targets:
+                if _unsafe_rm_target(target):
+                    return target or "<empty recursive rm target>"
+        index = max(index + 1, cursor)
     return None
 
 
@@ -76,8 +134,6 @@ def main() -> None:
     if bad:
         block(f"[guard_bash:rm] Refusing recursive delete of '{bad}'. Delete specific files inside the project instead.")
 
-    # Block any shell command that references a real .env file, regardless of the interpreter
-    # or utility used. Restricting this to cat/grep/cp misses python, node, perl and wrappers.
     if SECRET_PATH.search(command):
         block("[guard_bash:secrets] Do not access real .env files from the shell. Use .env.example for variable names/placeholders.")
 
