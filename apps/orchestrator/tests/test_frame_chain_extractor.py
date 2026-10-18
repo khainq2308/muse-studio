@@ -117,10 +117,8 @@ async def test_mock_path_uses_valid_placeholder_pngs_without_calling_ffmpeg(tmp_
 
 @pytest.mark.asyncio
 async def test_bad_extractor_output_fails_closed_and_cleans_partial_frames(tmp_path: Path):
-    from pathlib import Path as PathType
-
     def broken_extractor(_source, output_dir):
-        out = PathType(output_dir)
+        out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         first = out / "first_frame.png"
         last = out / "last_frame.png"
