@@ -39,13 +39,14 @@ def is_secret_path(path: Path) -> bool:
         parts = (*path.parts, *path.resolve().parts)
     except (OSError, RuntimeError):
         return True
-    return any(part.startswith(".env") and part != ".env.example" for part in parts)
+    return any(part.casefold().startswith(".env") and part.casefold() != ".env.example" for part in parts)
 
 def pattern_targets_secret(raw: str) -> bool:
     name = raw.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    folded = name.casefold()
     return (
-        name.startswith(".env") and name != ".env.example"
-        or name in {".env*", ".env.*"}
+        folded.startswith(".env") and folded != ".env.example"
+        or folded in {".env*", ".env.*"}
     )
 
 
@@ -146,7 +147,7 @@ def check_many_file_paths(args: dict) -> int:
         base_path = Path(base)
         for name in names:
             candidate = base_path / name
-            if not (name.startswith(".env") or candidate.is_symlink()):
+            if not (name.casefold().startswith(".env") or candidate.is_symlink()):
                 continue
             if not is_secret_path(candidate):
                 continue
