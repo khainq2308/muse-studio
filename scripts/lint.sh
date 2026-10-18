@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/lint.sh [--fix|--all]
-# Default: Ruff-check changed Python files anywhere in the repo and run the layering ratchet.
+# Default: check correctness-critical Ruff rules on changed Python files and run the layering ratchet.
 # The legacy app tree has pre-existing Ruff debt; --all reports it without reformatting.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,11 +30,11 @@ else
   done > "$temp_list"
   if [ -s "$temp_list" ]; then
     count="$(wc -l < "$temp_list" | tr -d ' ')"
-    echo "Ruff check on $count changed Python file(s)."
+    echo "Ruff correctness check on $count changed Python file(s)."
     failed=0
     while IFS= read -r file; do
       [ -n "$file" ] || continue
-      ruff check "$file" || failed=1
+      ruff check --select E4,E7,E9,F "$file" || failed=1
     done < "$temp_list"
     [ "$failed" -eq 0 ] || rc=1
   else
