@@ -132,6 +132,12 @@ def main() -> int:
         mapped = dict(args)
         mapped["file_path"] = mapped.get("file_path") or mapped.get("path") or mapped.get("absolute_path") or ""
         result = run_guard("pre_read_guard.py", {"tool_name": "Read", "tool_input": mapped})
+    elif tool_name in {"grep_search", "glob"}:
+        mapped = dict(args)
+        mapped["path"] = mapped.get("path") or mapped.get("dir_path") or ""
+        mapped["glob"] = mapped.get("glob") or mapped.get("include") or ""
+        mapped["pattern"] = mapped.get("pattern") or ""
+        result = run_guard("pre_read_guard.py", {"tool_name": "Grep" if tool_name == "grep_search" else "Glob", "tool_input": mapped})
     elif tool_name == "read_many_files":
         result = check_many_file_paths(args)
     else:
