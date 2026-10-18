@@ -31,6 +31,12 @@ for m in fastapi sqlalchemy arq pytest pytest_asyncio aiosqlite httpx cryptograp
     ok=1
   fi
 done
+if python3 -c "import muse_media" 2>/dev/null; then
+  echo "  [ok]   muse_media (boundary-frame extractor)"
+else
+  echo "  [MISS] muse_media -> cd apps/orchestrator && pip install -e \"../media-engine\""
+  ok=1
+fi
 echo "Repo state:"
 [ -f "$ROOT/.env" ] && echo "  .env present (never commit it)" || echo "  .env absent (ok for dev defaults)"
 exit "$ok"

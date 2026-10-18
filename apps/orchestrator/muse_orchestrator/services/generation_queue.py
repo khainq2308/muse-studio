@@ -1,14 +1,22 @@
 from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
 import os
 import random
+import shutil
+import struct
 import uuid
+import zlib
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from muse_media.boundary_frames import BoundaryFrames, extract_boundary_frames
+from muse_media.probe import MediaProcessingError
 from muse_orchestrator.core.config import settings, SecretRedactor
 from muse_orchestrator.core.security import vault
 from muse_orchestrator.models.domain import (
@@ -20,8 +28,6 @@ from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
     ProviderFailure, ErrorCategory
 )
-from muse_orchestrator.providers.mock_provider import MockVideoProvider
-from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 from muse_orchestrator.services.account_pool import (
     build_provider_for_account,
     mark_account_used,
@@ -49,19 +55,95 @@ def build_provider(
     return build_provider_for_account(conn, account)
 
 
-def _create_boundary_frame_png(dest_dir: str, shot_id: str, take_num: int, position: str, seed_hash: str) -> tuple[str, int, str]:
-    """Tạo file ảnh PNG boundary frame (first_frame / last_frame) phục vụ Frame Chaining."""
+@dataclass(frozen=True)
+class _BoundaryFrameArtifact:
+    position: str
+    path: str
+    size_bytes: int
+    sha256: str
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(payload))
+        + kind
+        + payload
+        + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+    )
+
+
+def _create_mock_boundary_frame_png(
+    dest_dir: str, shot_id: str, take_num: int, position: str, seed_hash: str
+) -> _BoundaryFrameArtifact:
+    """Create a valid 1x1 placeholder frame for the explicitly mock-only provider path."""
     os.makedirs(dest_dir, exist_ok=True)
+    rgb = hashlib.sha256(
+        f"{seed_hash}:{shot_id}:{take_num}:{position}".encode("utf-8")
+    ).digest()[:3]
     png_bytes = (
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-        + f"BOUNDARY_FRAME:{shot_id}:take_{take_num}:{position}:{seed_hash}".encode("utf-8")
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(b"\x00" + rgb))
+        + _png_chunk(b"IEND", b"")
     )
     digest = hashlib.sha256(png_bytes).hexdigest()
     filename = f"{shot_id}_take{take_num}_{position}_{digest[:10]}.png"
     full_path = os.path.join(dest_dir, filename)
-    with open(full_path, "wb") as f:
-        f.write(png_bytes)
-    return full_path, len(png_bytes), digest
+    with open(full_path, "wb") as stream:
+        stream.write(png_bytes)
+    return _BoundaryFrameArtifact(position, full_path, len(png_bytes), digest)
+
+
+async def _extract_video_boundary_frames(
+    video_path: str,
+    dest_dir: str,
+    shot_id: str,
+    take_num: int,
+    provider_type: str,
+    *,
+    extractor=None,
+) -> list[_BoundaryFrameArtifact]:
+    """Extract real boundary frames for production providers; mock uses valid demo PNGs."""
+    if provider_type == "mock":
+        return [
+            _create_mock_boundary_frame_png(dest_dir, shot_id, take_num, position, seed)
+            for position, seed in (
+                ("first", hashlib.sha256(f"{video_path}:first".encode()).hexdigest()),
+                ("last", hashlib.sha256(f"{video_path}:last".encode()).hexdigest()),
+            )
+        ]
+
+    output_dir = os.path.join(
+        dest_dir, "boundary_frames", shot_id, f"take_{take_num}_{uuid.uuid4().hex[:8]}"
+    )
+    try:
+        extract = extractor or extract_boundary_frames
+        frames: BoundaryFrames = await asyncio.to_thread(extract, video_path, output_dir)
+        artifacts: list[_BoundaryFrameArtifact] = []
+        for position, path, digest in (
+            ("first", frames.first_frame_path, frames.first_frame_sha256),
+            ("last", frames.last_frame_path, frames.last_frame_sha256),
+        ):
+            if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+                raise MediaProcessingError("Boundary-frame extractor returned a missing or empty frame.")
+            with open(path, "rb") as stream:
+                content = stream.read()
+            if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise MediaProcessingError("Boundary-frame extractor returned a non-PNG artifact.")
+            actual_digest = hashlib.sha256(content).hexdigest()
+            if digest != actual_digest:
+                raise MediaProcessingError("Boundary-frame extractor returned an incorrect SHA-256 digest.")
+            artifacts.append(_BoundaryFrameArtifact(position, path, len(content), actual_digest))
+        return artifacts
+    except Exception as exc:
+        shutil.rmtree(output_dir, ignore_errors=True)
+        if isinstance(exc, ProviderFailure):
+            raise
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST,
+            "Boundary-frame extraction failed; provider video was not accepted.",
+            retryable=False,
+        ) from exc
 
 
 
@@ -646,6 +728,50 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
+        existing_takes_count = (
+            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
+        ).scalar_one()
+        take_num = existing_takes_count + 1
+        is_first_take = existing_takes_count == 0
+
+        boundary_artifacts: list[_BoundaryFrameArtifact] = []
+        if task.task_type == "video":
+            try:
+                boundary_artifacts = await _extract_video_boundary_frames(
+                    stored.local_path,
+                    dest_dir,
+                    shot.id,
+                    take_num,
+                    conn.provider_type,
+                )
+            except ProviderFailure as exc:
+                try:
+                    os.unlink(stored.local_path)
+                except OSError:
+                    pass
+                return await GenerationQueueService._handle_poll_failure(
+                    db, task, shot, conn, exc, raw_secret, "boundary-frame extraction"
+                )
+
+        # Extraction runs outside the event loop; re-check cancellation before persisting artifacts.
+        await db.refresh(task)
+        await db.refresh(shot)
+        if task.state in (
+            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
+            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
+        ):
+            for path in [stored.local_path, *(frame.path for frame in boundary_artifacts)]:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
+            await db.commit()
+            await db.refresh(task)
+            return task
+
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"
@@ -666,52 +792,36 @@ class GenerationQueueService:
         )
         db.add(asset)
 
-        existing_takes_count = (
-            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
-        ).scalar_one()
-        take_num = existing_takes_count + 1
-        is_first_take = existing_takes_count == 0
-
-        # Trích xuất First Frame & Last Frame cho Video Take để phục vụ Frame Chaining (M5)
         first_frame_aid: str | None = None
         last_frame_aid: str | None = None
-        if task.task_type == "video":
-            ff_path, ff_size, ff_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "first", stored.sha256)
-            lf_path, lf_size, lf_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "last", stored.sha256)
-            first_frame_aid = f"ast_ff_{uuid.uuid4().hex[:8]}"
-            last_frame_aid = f"ast_lf_{uuid.uuid4().hex[:8]}"
-            db.add_all([
-                Asset(
-                    id=first_frame_aid,
-                    project_id=task.project_id,
-                    scene_id=task.scene_id,
-                    shot_id=shot.id,
-                    asset_type="reference",
-                    filename=os.path.basename(ff_path),
-                    storage_rel_path=os.path.relpath(ff_path, settings.media_root),
-                    mime_type="image/png",
-                    size_bytes=ff_size,
-                    sha256=ff_sha,
-                    provider_id=conn.id,
-                    model_id=task.model_id,
-                    is_locked_reference=True,
-                ),
-                Asset(
-                    id=last_frame_aid,
-                    project_id=task.project_id,
-                    scene_id=task.scene_id,
-                    shot_id=shot.id,
-                    asset_type="reference",
-                    filename=os.path.basename(lf_path),
-                    storage_rel_path=os.path.relpath(lf_path, settings.media_root),
-                    mime_type="image/png",
-                    size_bytes=lf_size,
-                    sha256=lf_sha,
-                    provider_id=conn.id,
-                    model_id=task.model_id,
-                    is_locked_reference=True,
-                ),
-            ])
+        frame_assets: list[Asset] = []
+        for frame in boundary_artifacts:
+            asset_id_for_frame = (
+                f"ast_ff_{uuid.uuid4().hex[:8]}"
+                if frame.position == "first"
+                else f"ast_lf_{uuid.uuid4().hex[:8]}"
+            )
+            if frame.position == "first":
+                first_frame_aid = asset_id_for_frame
+            elif frame.position == "last":
+                last_frame_aid = asset_id_for_frame
+            frame_assets.append(Asset(
+                id=asset_id_for_frame,
+                project_id=task.project_id,
+                scene_id=task.scene_id,
+                shot_id=shot.id,
+                asset_type="reference",
+                filename=os.path.basename(frame.path),
+                storage_rel_path=os.path.relpath(frame.path, settings.media_root),
+                mime_type="image/png",
+                size_bytes=frame.size_bytes,
+                sha256=frame.sha256,
+                provider_id=conn.id,
+                model_id=task.model_id,
+                is_locked_reference=True,
+            ))
+        if frame_assets:
+            db.add_all(frame_assets)
 
         take_id = f"tke_{uuid.uuid4().hex[:10]}"
         take = ShotTakeRecord(

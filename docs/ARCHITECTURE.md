@@ -36,9 +36,11 @@ All product API routers are mounted with the shared verify_single_admin dependen
 
 Before public deployment, also configure TLS, restrictive CORS origins, rate limits and operational monitoring. An admin token is a single-admin gate, not multi-user authentication.
 
-## Media engine boundary
+## Media engine and frame chaining
 
-muse_media.probe.probe_video invokes FFprobe using a fixed argv list, requires a valid video stream and positive dimensions/duration, and records an exact decoded-frame count. muse_media.boundary_frames.extract_boundary_frames uses FFmpeg to extract frame index zero and the last decoded frame, validates PNG output, and records SHA-256 hashes. These utilities do not yet run as queued jobs or write MediaAsset records; wiring them into the orchestrator is a later milestone.
+The reusable `muse_media` package lives in `apps/media-engine` and is installed as an editable local dependency of the orchestrator in local test setup and Docker. Production video-task completion now invokes `extract_boundary_frames` through `asyncio.to_thread`: FFprobe validates metadata and exact decoded frame count, FFmpeg extracts frame index zero and the last decoded frame, and the queue verifies nonempty PNG outputs before recording SHA-256-backed Asset rows for the first/last frames. Extraction errors fail the media acceptance path rather than persisting fake PNG artifacts.
+
+The mock provider remains a demo/test seam and writes tiny valid PNG placeholders so queue/continuity tests can run without interpreting synthetic mock MP4 bytes as real video. Those mock frames are not evidence of real visual continuity. Passing an actual extracted frame to a provider still depends on that provider's accepted reference-image contract; the queue's local asset ID is not itself a publicly fetchable image URL.
 
 ## Timeline export
 
@@ -60,4 +62,4 @@ The M3 workflow API validates typed DAGs, builds deterministic execution plans, 
 
 ## Continuous integration
 
-.github/workflows/ci.yml runs agent-kit metadata/link checks and guard tests, orchestrator pytest, media-engine unit tests and the frontend TypeScript build on pull requests. The orchestrator job installs FFmpeg/FFprobe because export integration tests exercise real media rendering; the media-engine unit-test job mocks subprocess calls. CI does not contact a real muse2api provider, and passing mocks do not verify external provider capabilities.
+.github/workflows/ci.yml runs agent-kit metadata/link checks and guard tests, orchestrator pytest, media-engine unit tests and the frontend TypeScript build on pull requests. The orchestrator test job installs FFmpeg/FFprobe and the local media-engine package; it includes a generated-video integration test for boundary-frame extraction. Media-engine unit tests mock subprocess calls. CI does not contact a real muse2api provider, and passing mocks do not verify external provider capabilities.

@@ -33,8 +33,8 @@ services:
 
   orchestrator-api:
     build:
-      context: ./apps/orchestrator
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
     container_name: muse-orchestrator-api
     restart: unless-stopped
     command: uvicorn muse_orchestrator.main:app --host 0.0.0.0 --port 8000 --reload
@@ -49,6 +49,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./apps/orchestrator:/workspace/apps/orchestrator
+      - ./apps/media-engine:/workspace/apps/media-engine
       - media_storage:/data/media
     depends_on:
       postgres:
