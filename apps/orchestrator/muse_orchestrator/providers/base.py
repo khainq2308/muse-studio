@@ -11,6 +11,7 @@ class ErrorCategory(str, enum.Enum):
     AUTH_FAILED = "auth_failed"
     QUOTA_EXHAUSTED = "quota_exhausted"
     INVALID_REQUEST = "invalid_request"
+    INVALID_MEDIA = "invalid_media"
     UPSTREAM_POLL_TIMEOUT = "upstream_poll_timeout"
 
 
@@ -61,6 +62,7 @@ class VideoGenerationRequest:
     model_id: str = "muse-video-v1"
     duration_seconds: float = 5.0
     aspect_ratio: str = "16:9"
+    # An http(s) URL or a ``data:`` URI of the first frame. Never an internal asset id.
     first_frame_url: str | None = None
     reference_image_urls: list[str] = field(default_factory=list)
     idempotency_key: str = ""

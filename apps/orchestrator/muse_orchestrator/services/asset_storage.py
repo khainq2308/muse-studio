@@ -9,6 +9,34 @@ from pathlib import Path
 MAX_UPLOAD_SIZE_BYTES = 150 * 1024 * 1024
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]")
 
+# Smallest prefix sniff_media_mime needs to tell the supported formats apart.
+MIN_SNIFF_BYTES = 12
+MEDIA_EXTENSIONS: dict[str, str] = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "video/mp4": "mp4",
+}
+
+
+def sniff_media_mime(head: bytes) -> str | None:
+    """Detect a supported media type from its leading bytes, ignoring any declared type.
+
+    Returns None when the bytes are not one of the supported formats (for example an HTML or JSON
+    error page served with a 200 status).
+    """
+    if len(head) < MIN_SNIFF_BYTES:
+        return None
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[4:8] == b"ftyp":
+        return "video/mp4"
+    return None
+
 
 @dataclass
 class SavedAssetFile:

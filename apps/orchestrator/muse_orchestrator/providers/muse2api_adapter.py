@@ -1,6 +1,8 @@
 from __future__ import annotations
+import asyncio
 import hashlib
 import os
+import tempfile
 import time
 from urllib.parse import quote, urljoin, urlsplit
 import httpx
@@ -11,10 +13,15 @@ from muse_orchestrator.providers.base import (
     ProviderTask, ProviderTaskStatus, StoredMedia, ProviderFailure,
     ErrorCategory, classify_http_error
 )
+from muse_orchestrator.services.asset_storage import (
+    MAX_UPLOAD_SIZE_BYTES, MEDIA_EXTENSIONS, MIN_SNIFF_BYTES, sniff_media_mime
+)
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _MAX_DOWNLOAD_REDIRECTS = 3
+_ERROR_BODY_LIMIT = 64 * 1024
+_SNIFF_PREFIX_BYTES = 32
 
 Origin = tuple[str, str, int]
 
@@ -39,11 +46,13 @@ class Muse2ApiAdapter(VideoProvider):
         api_key: str | None = None,
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        max_download_bytes: int = MAX_UPLOAD_SIZE_BYTES,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self._transport = transport
+        self.max_download_bytes = max_download_bytes
 
     def _headers(self, idempotency_key: str = "") -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -192,39 +201,94 @@ class Muse2ApiAdapter(VideoProvider):
         return f"{self.base_url}/v1/media/{quote('/'.join(segments), safe='/')}"
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
+        """Download a generated image or video into dest_dir.
+
+        The body is streamed to disk and never held in memory. Downloads over max_download_bytes,
+        and bodies whose leading bytes are not a supported image/video format (for example an HTML
+        error page served with 200), are rejected and leave nothing behind. The media type is taken
+        from the file signature, never from the Content-Type header.
+        """
         os.makedirs(dest_dir, exist_ok=True)
         url = self._resolve_download_url(result_ref)
-        async with httpx.AsyncClient(
-            timeout=60.0, follow_redirects=False, transport=self._transport
-        ) as client:
-            for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
-                # The API key is only ever sent to the provider's own origin, never to a
-                # host named in an upstream response or in a redirect.
-                headers = {"Accept": "*/*"}
-                if self._is_provider_origin(url) and self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
-                resp = await client.get(url, headers=headers)
-                if resp.status_code in _REDIRECT_STATUSES:
-                    location = resp.headers.get("location")
-                    if not location:
-                        raise ProviderFailure(
-                            ErrorCategory.INVALID_REQUEST, "Result download redirected without a location."
-                        )
-                    url = self._validate_download_url(urljoin(url, location))
-                    continue
-                break
-            else:
+        try:
+            async with httpx.AsyncClient(
+                timeout=60.0, follow_redirects=False, transport=self._transport
+            ) as client:
+                for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
+                    # The API key is only ever sent to the provider's own origin, never to a
+                    # host named in an upstream response or in a redirect.
+                    headers = {"Accept": "*/*"}
+                    if self._is_provider_origin(url) and self.api_key:
+                        headers["Authorization"] = f"Bearer {self.api_key}"
+                    async with client.stream("GET", url, headers=headers) as resp:
+                        if resp.status_code in _REDIRECT_STATUSES:
+                            location = resp.headers.get("location")
+                            if not location:
+                                raise ProviderFailure(
+                                    ErrorCategory.INVALID_REQUEST, "Result download redirected without a location."
+                                )
+                            url = self._validate_download_url(urljoin(url, location))
+                            continue
+                        return await self._store_download(resp, dest_dir)
                 raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result download redirected too many times.")
-            if resp.status_code >= 400:
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(resp.text, [self.api_key or ""]))
-            if resp.status_code != 200:
+        except httpx.RequestError as exc:
+            safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
+            raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
+
+    @staticmethod
+    async def _read_capped(resp: httpx.Response, limit: int) -> bytes:
+        buffer = bytearray()
+        async for chunk in resp.aiter_bytes():
+            buffer.extend(chunk[: limit - len(buffer)])
+            if len(buffer) >= limit:
+                break
+        return bytes(buffer)
+
+    async def _store_download(self, resp: httpx.Response, dest_dir: str) -> StoredMedia:
+        if resp.status_code >= 400:
+            body = await self._read_capped(resp, _ERROR_BODY_LIMIT)
+            safe_body = SecretRedactor.redact_text(body.decode("utf-8", "replace"), [self.api_key or ""])
+            raise classify_http_error(resp.status_code, safe_body)
+        if resp.status_code != 200:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST, f"Unexpected status {resp.status_code} while downloading result."
+            )
+
+        too_large = ProviderFailure(
+            ErrorCategory.INVALID_MEDIA,
+            f"Result is larger than the {self.max_download_bytes} byte download limit.",
+        )
+        declared = resp.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > self.max_download_bytes:
+            raise too_large
+
+        digest = hashlib.sha256()
+        size = 0
+        head = bytearray()
+        fd, temp_path = tempfile.mkstemp(prefix=".download_", suffix=".part", dir=dest_dir)
+        try:
+            with os.fdopen(fd, "wb") as out:
+                async for chunk in resp.aiter_bytes():
+                    size += len(chunk)
+                    if size > self.max_download_bytes:
+                        raise too_large
+                    digest.update(chunk)
+                    if len(head) < _SNIFF_PREFIX_BYTES:
+                        head.extend(chunk[: _SNIFF_PREFIX_BYTES - len(head)])
+                    await asyncio.to_thread(out.write, chunk)
+            mime = sniff_media_mime(bytes(head))
+            if mime is None:
+                reason = "too short" if size < MIN_SNIFF_BYTES else "unrecognised file signature"
                 raise ProviderFailure(
-                    ErrorCategory.INVALID_REQUEST, f"Unexpected status {resp.status_code} while downloading result."
+                    ErrorCategory.INVALID_MEDIA, f"Result is not a supported image or video ({reason})."
                 )
-            content = resp.content
-            digest = hashlib.sha256(content).hexdigest()
-            ext = "png" if "png" in resp.headers.get("content-type", "") else "mp4"
-            file_path = os.path.join(dest_dir, f"{digest[:16]}.{ext}")
-            with open(file_path, "wb") as f:
-                f.write(content)
-            return StoredMedia(local_path=file_path, mime_type=resp.headers.get("content-type", "video/mp4"), size_bytes=len(content), sha256=digest)
+            sha256_hex = digest.hexdigest()
+            final_path = os.path.join(dest_dir, f"{sha256_hex[:16]}.{MEDIA_EXTENSIONS[mime]}")
+            os.replace(temp_path, final_path)
+            return StoredMedia(local_path=final_path, mime_type=mime, size_bytes=size, sha256=sha256_hex)
+        except BaseException:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise

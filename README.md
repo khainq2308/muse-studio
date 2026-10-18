@@ -20,8 +20,10 @@ Từ repo root, khởi chạy Docker Compose:
 Hoặc chạy bộ kiểm thử orchestrator:
 
     cd apps/orchestrator
-    pip install -e ".[dev]"
+    pip install -e ../media-engine -e ".[dev]"
     pytest -q
+
+Orchestrator cần FFmpeg và FFprobe cài trên máy (export timeline và tách frame đầu/cuối); image Docker đã có sẵn. Các test dùng video thật sẽ tự bỏ qua khi thiếu FFmpeg, trừ khi đặt `REQUIRE_FFMPEG=1` (CI đặt biến này).
 
 ## Security configuration
 

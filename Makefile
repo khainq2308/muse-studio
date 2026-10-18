@@ -7,6 +7,7 @@ down:
 	docker compose down
 
 test:
+	cd apps/media-engine && pytest -v
 	cd apps/orchestrator && pytest -v
 
 probe:

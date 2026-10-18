@@ -1,4 +1,6 @@
 from __future__ import annotations
+import asyncio
+import base64
 import hashlib
 import os
 import uuid
@@ -18,6 +20,17 @@ from muse_orchestrator.providers.base import (
 )
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
+from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage
+from muse_orchestrator.services.boundary_frames import (
+    ExtractedBoundaryFrames, FrameExtractionError, build_frame_extractor
+)
+
+# What a finished task may deliver: an image task must return an image, a video task a video.
+_ALLOWED_RESULT_MIMES: dict[str, frozenset[str]] = {
+    "image": frozenset({"image/png", "image/jpeg", "image/webp"}),
+    "video": frozenset({"video/mp4"}),
+}
+_FIRST_FRAME_MAX_BYTES = 20 * 1024 * 1024
 
 
 def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float = 60.0) -> float:
@@ -33,19 +46,44 @@ def build_provider(conn: ProviderConnection) -> VideoProvider:
     return Muse2ApiAdapter(base_url=conn.base_url, api_key=raw_key, timeout=conn.timeout_seconds)
 
 
-def _create_boundary_frame_png(dest_dir: str, shot_id: str, take_num: int, position: str, seed_hash: str) -> tuple[str, int, str]:
-    """Tạo file ảnh PNG boundary frame (first_frame / last_frame) phục vụ Frame Chaining."""
-    os.makedirs(dest_dir, exist_ok=True)
-    png_bytes = (
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-        + f"BOUNDARY_FRAME:{shot_id}:take_{take_num}:{position}:{seed_hash}".encode("utf-8")
+async def _discard_unreferenced_file(db: AsyncSession, path: str) -> None:
+    """Delete a rejected download, unless an asset already uses that very file.
+
+    Downloads are stored under their content hash, so a rejected result can be byte-identical to
+    a file that an earlier, valid asset of the same project points at; deleting it would break
+    that asset.
+    """
+    rel_path = os.path.relpath(path, settings.media_root)
+    in_use = (
+        await db.execute(select(Asset.id).where(Asset.storage_rel_path == rel_path).limit(1))
+    ).first()
+    if in_use is not None:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _frame_asset(
+    asset_id: str, task: GenerationTaskRecord, shot: ShotRecord, conn: ProviderConnection, frame_path: str,
+    size_bytes: int, sha256_hex: str,
+) -> Asset:
+    return Asset(
+        id=asset_id,
+        project_id=task.project_id,
+        scene_id=task.scene_id,
+        shot_id=shot.id,
+        asset_type="reference",
+        filename=os.path.basename(frame_path),
+        storage_rel_path=os.path.relpath(frame_path, settings.media_root),
+        mime_type="image/png",
+        size_bytes=size_bytes,
+        sha256=sha256_hex,
+        provider_id=conn.id,
+        model_id=task.model_id,
+        is_locked_reference=True,
     )
-    digest = hashlib.sha256(png_bytes).hexdigest()
-    filename = f"{shot_id}_take{take_num}_{position}_{digest[:10]}.png"
-    full_path = os.path.join(dest_dir, filename)
-    with open(full_path, "wb") as f:
-        f.write(png_bytes)
-    return full_path, len(png_bytes), digest
 
 
 class GenerationQueueService:
@@ -83,6 +121,32 @@ class GenerationQueueService:
         if unlocked_ids:
             await db.commit()
         return unlocked_ids
+
+    @staticmethod
+    async def load_first_frame_data_uri(db: AsyncSession, shot: ShotRecord) -> str | None:
+        """The first-frame input for a frame-chained shot as a ``data:`` URI, or None.
+
+        Only shots in frame_chain mode send a first frame. The provider cannot resolve an internal
+        asset id, so the image itself is sent. A chained shot whose frame is gone fails with a clear
+        reason instead of being rendered without its first frame.
+        """
+        if shot.continuity_mode != "frame_chain" or not shot.first_frame_asset_id:
+            return None
+        asset = await db.get(Asset, shot.first_frame_asset_id)
+        if asset is None or asset.project_id != shot.project_id:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST, "The first-frame asset of this shot no longer exists."
+            )
+        if not asset.mime_type.startswith("image/") or asset.size_bytes > _FIRST_FRAME_MAX_BYTES:
+            raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "The first-frame asset is not a usable image.")
+        try:
+            path = LocalAssetStorage(settings.media_root).resolve_safe_path(asset.storage_rel_path)
+        except AssetStorageError as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST, "The first-frame file is missing from storage."
+            ) from exc
+        data = await asyncio.to_thread(path.read_bytes)
+        return f"data:{asset.mime_type};base64,{base64.b64encode(data).decode('ascii')}"
 
     @staticmethod
     async def enqueue_shot_generation(
@@ -197,6 +261,7 @@ class GenerationQueueService:
                         )
                     )
                 else:
+                    first_frame = await GenerationQueueService.load_first_frame_data_uri(db, shot)
                     p_task = await provider.generate_video(
                         VideoGenerationRequest(
                             shot_id=shot.id,
@@ -205,7 +270,7 @@ class GenerationQueueService:
                             model_id=task.model_id,
                             duration_seconds=shot.duration_seconds,
                             aspect_ratio=shot.aspect_ratio,
-                            first_frame_url=shot.first_frame_asset_id,
+                            first_frame_url=first_frame,
                             idempotency_key=task.idempotency_key,
                         )
                     )
@@ -290,7 +355,18 @@ class GenerationQueueService:
             return task
 
         dest_dir = os.path.join(settings.media_root, task.project_id, "generated")
-        stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
+        try:
+            stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
+            allowed_mimes = _ALLOWED_RESULT_MIMES.get(task.task_type, frozenset())
+            if stored.mime_type not in allowed_mimes:
+                await _discard_unreferenced_file(db, stored.local_path)
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_MEDIA,
+                    f"Provider returned {stored.mime_type} for a {task.task_type} task "
+                    f"(expected one of: {', '.join(sorted(allowed_mimes))}).",
+                )
+        except ProviderFailure as exc:
+            return await GenerationQueueService._record_download_failure(db, task, shot, exc, raw_secret)
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"
@@ -317,46 +393,27 @@ class GenerationQueueService:
         take_num = existing_takes_count + 1
         is_first_take = existing_takes_count == 0
 
-        # Trích xuất First Frame & Last Frame cho Video Take để phục vụ Frame Chaining (M5)
+        # First and last frame of a video take, for frame chaining. Real providers get real decoded
+        # frames from media-engine; a failed extraction keeps the take but leaves it without frames.
         first_frame_aid: str | None = None
         last_frame_aid: str | None = None
+        frame_warning: str | None = None
         if task.task_type == "video":
-            ff_path, ff_size, ff_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "first", stored.sha256)
-            lf_path, lf_size, lf_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "last", stored.sha256)
-            first_frame_aid = f"ast_ff_{uuid.uuid4().hex[:8]}"
-            last_frame_aid = f"ast_lf_{uuid.uuid4().hex[:8]}"
-            db.add_all([
-                Asset(
-                    id=first_frame_aid,
-                    project_id=task.project_id,
-                    scene_id=task.scene_id,
-                    shot_id=shot.id,
-                    asset_type="reference",
-                    filename=os.path.basename(ff_path),
-                    storage_rel_path=os.path.relpath(ff_path, settings.media_root),
-                    mime_type="image/png",
-                    size_bytes=ff_size,
-                    sha256=ff_sha,
-                    provider_id=conn.id,
-                    model_id=task.model_id,
-                    is_locked_reference=True,
-                ),
-                Asset(
-                    id=last_frame_aid,
-                    project_id=task.project_id,
-                    scene_id=task.scene_id,
-                    shot_id=shot.id,
-                    asset_type="reference",
-                    filename=os.path.basename(lf_path),
-                    storage_rel_path=os.path.relpath(lf_path, settings.media_root),
-                    mime_type="image/png",
-                    size_bytes=lf_size,
-                    sha256=lf_sha,
-                    provider_id=conn.id,
-                    model_id=task.model_id,
-                    is_locked_reference=True,
-                ),
-            ])
+            extractor = build_frame_extractor(conn.provider_type)
+            frames: ExtractedBoundaryFrames | None = None
+            try:
+                frames = await asyncio.to_thread(extractor.extract, stored.local_path, dest_dir, shot.id, take_num)
+            except FrameExtractionError as exc:
+                frame_warning = SecretRedactor.redact_text(str(exc))
+            if frames is not None:
+                first_frame_aid = f"ast_ff_{uuid.uuid4().hex[:8]}"
+                last_frame_aid = f"ast_lf_{uuid.uuid4().hex[:8]}"
+                db.add_all([
+                    _frame_asset(first_frame_aid, task, shot, conn, frames.first.path,
+                                 frames.first.size_bytes, frames.first.sha256),
+                    _frame_asset(last_frame_aid, task, shot, conn, frames.last.path,
+                                 frames.last.size_bytes, frames.last.sha256),
+                ])
 
         take_id = f"tke_{uuid.uuid4().hex[:10]}"
         take = ShotTakeRecord(
@@ -377,21 +434,61 @@ class GenerationQueueService:
 
         if is_first_take:
             shot.selected_take_id = take_id
-            if not shot.first_frame_asset_id:
+            if first_frame_aid and not shot.first_frame_asset_id:
                 shot.first_frame_asset_id = first_frame_aid
-            shot.last_frame_asset_id = last_frame_aid
+            if last_frame_aid:
+                shot.last_frame_asset_id = last_frame_aid
 
         shot.generation_state = ShotGenerationState.SUCCEEDED
         task.result_asset_id = asset_id
         task.take_id = take_id
         task.state = QueueTaskState.SUCCEEDED
         task.finished_at = datetime.now(timezone.utc)
+        # Clear errors left by earlier transient download failures of this same task.
+        task.error_category = None
+        task.retryable = False
+        task.error_message_redacted = None
         task.history_log = list(task.history_log or []) + [
             f"Completed! Saved asset={asset_id}, take={take_id}, last_frame={last_frame_aid}."
         ]
+        if frame_warning:
+            task.error_category = "frame_extraction_failed"
+            task.error_message_redacted = frame_warning
+            task.history_log = list(task.history_log or []) + [
+                f"Warning: boundary frames were not extracted ({frame_warning}). "
+                "The take is saved, but frame chaining from this shot stays blocked."
+            ]
 
         await db.commit()
         if is_first_take and last_frame_aid:
             await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def _record_download_failure(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        exc: ProviderFailure,
+        raw_secret: str,
+    ) -> GenerationTaskRecord:
+        """A retryable failure keeps the task polling; anything else ends it as FAILED."""
+        safe_err = SecretRedactor.redact_text(str(exc), [raw_secret])
+        task.error_category = exc.category.value
+        task.retryable = exc.retryable
+        task.error_message_redacted = safe_err
+        if exc.retryable:
+            delay = compute_backoff_seconds(task.poll_count)
+            task.next_poll_delay_seconds = delay
+            task.history_log = list(task.history_log or []) + [
+                f"Result download failed (will retry on the next poll in {delay}s): {safe_err}"
+            ]
+        else:
+            task.state = QueueTaskState.FAILED
+            task.finished_at = datetime.now(timezone.utc)
+            shot.generation_state = ShotGenerationState.FAILED
+            task.history_log = list(task.history_log or []) + [f"Result rejected: {safe_err}"]
+        await db.commit()
         await db.refresh(task)
         return task

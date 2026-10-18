@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muse-media"
+version = "0.1.0"
+description = "MuseStudio media engine: FFprobe validation and FFmpeg boundary-frame extraction"
+requires-python = ">=3.11"
+# Standard library only. FFmpeg and FFprobe must be installed as system binaries.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["muse_media*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
