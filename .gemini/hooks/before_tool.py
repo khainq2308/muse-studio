@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gemini CLI BeforeTool adapter for the repository's safety guards."""
+"""Gemini CLI BeforeTool adapter for MuseStudio's shared safety guards."""
 from __future__ import annotations
 import glob
 import json
@@ -9,8 +9,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(os.environ.get("GEMINI_PROJECT_DIR") or Path.cwd()).resolve()
+# Resolve from this script, not from an undocumented host environment variable or current cwd.
+ROOT = Path(__file__).resolve().parents[2]
 HOOKS = ROOT / ".claude" / "hooks"
+PRUNED_DIRS = {".git", "node_modules", ".venv", "venv", "storage", "__pycache__"}
 
 def run_guard(script: str, payload: dict) -> int:
     env = os.environ.copy()
@@ -18,7 +20,12 @@ def run_guard(script: str, payload: dict) -> int:
     try:
         proc = subprocess.run(
             [sys.executable, str(HOOKS / script)],
-            input=json.dumps(payload), text=True, capture_output=True, timeout=10, env=env
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            env=env,
+            cwd=ROOT,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         print(f"[gemini safety guard] Cannot run {script}: {exc}", file=sys.stderr)
@@ -36,12 +43,22 @@ def is_secret_path(path: Path) -> bool:
     return any(part == ".env" or (part.startswith(".env.") and part != ".env.example") for part in parts)
 
 def check_many_file_paths(args: dict) -> int:
-    raw_paths = args.get("paths")
-    if not isinstance(raw_paths, list) or not raw_paths or any(not isinstance(item, str) or not item.strip() for item in raw_paths):
-        print("[gemini safety guard] read_many_files has missing/invalid paths; refusing to bypass secret validation.", file=sys.stderr)
+    # Current Gemini CLI schema uses include/exclude arrays. Accept paths as a legacy alias,
+    # but fail closed when neither schema is present.
+    patterns = args.get("include")
+    if patterns is None:
+        patterns = args.get("paths")
+    if not isinstance(patterns, list) or not patterns or any(not isinstance(p, str) or not p.strip() for p in patterns):
+        print("[gemini safety guard] read_many_files has missing/invalid include patterns; refusing to bypass secret validation.", file=sys.stderr)
         return 2
-    for raw in raw_paths:
-        # Expand globs with hidden entries included, so .env files are not skipped by the guard.
+
+    exclusions = args.get("exclude") or []
+    if not isinstance(exclusions, list) or any(not isinstance(p, str) for p in exclusions):
+        print("[gemini safety guard] read_many_files has invalid exclude patterns; refusing to bypass secret validation.", file=sys.stderr)
+        return 2
+    explicit_exclusions = [Path(p).as_posix() for p in exclusions]
+
+    for raw in patterns:
         pattern_path = Path(raw).expanduser()
         if not pattern_path.is_absolute():
             pattern_path = ROOT / pattern_path
@@ -54,18 +71,32 @@ def check_many_file_paths(args: dict) -> int:
             if pattern_path.exists():
                 matches = [str(pattern_path)]
             else:
-                # Non-matching literal paths are passed to the native tool for its normal error handling.
+                # Non-matching literals are passed to the native tool for normal error handling.
                 continue
+
         for match in matches:
             path = Path(match)
+            try:
+                rel = path.resolve().relative_to(ROOT)
+            except (OSError, RuntimeError, ValueError):
+                print("[gemini safety guard] read_many_files pattern resolves outside the repo; refusing to read it.", file=sys.stderr)
+                return 2
+            # Avoid rejecting broad repo reads because they contain locally ignored secrets that
+            # the default tool filter would exclude. A direct/matched secret file still blocks.
+            relative = rel.as_posix()
+            excluded = any(
+                glob.fnmatch.fnmatch(relative, pattern) or glob.fnmatch.fnmatch(path.name, pattern)
+                for pattern in explicit_exclusions
+            )
+            if excluded:
+                continue
             if path.is_dir():
-                # A directory path is broad: search it for secret-style names, pruning generated trees.
                 for base, dirs, names in os.walk(path, followlinks=False):
-                    dirs[:] = [d for d in dirs if d not in {".git", "node_modules", ".venv", "venv", "storage"}]
+                    dirs[:] = [d for d in dirs if d not in PRUNED_DIRS]
                     for name in names:
                         candidate = Path(base) / name
                         if is_secret_path(candidate):
-                            print("[gemini safety guard] read_many_files pattern includes a real .env secret file.", file=sys.stderr)
+                            print("[gemini safety guard] read_many_files path includes a real .env secret file.", file=sys.stderr)
                             return 2
             elif is_secret_path(path):
                 print("[gemini safety guard] read_many_files pattern includes a real .env secret file.", file=sys.stderr)
@@ -83,6 +114,7 @@ def main() -> int:
     if not isinstance(args, dict):
         print("[gemini safety guard] Invalid tool_input; refusing tool call.", file=sys.stderr)
         return 2
+
     if tool_name == "run_shell_command":
         result = run_guard("guard_bash.py", {
             "tool_name": "Bash",
@@ -102,6 +134,7 @@ def main() -> int:
         result = check_many_file_paths(args)
     else:
         result = 0
+
     if result != 0:
         return 2
     print(json.dumps({"decision": "allow"}))
