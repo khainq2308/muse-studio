@@ -87,7 +87,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_edit.py\"",
-            "timeout": 60
+            "timeout": 120
           }
         ]
       }
@@ -98,7 +98,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_gate.py\"",
-            "timeout": 240
+            "timeout": 480
           }
         ]
       }
