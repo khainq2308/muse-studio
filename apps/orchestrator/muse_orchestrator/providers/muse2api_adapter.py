@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+import uuid
 from urllib.parse import quote, urljoin, urlsplit
 import httpx
 from muse_orchestrator.core.config import SecretRedactor
@@ -36,6 +37,38 @@ _MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024
 _EXT_BY_CONTENT_TYPE = {
     "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "video/mp4": "mp4",
 }
+_MIME_BY_EXTENSION = {extension: mime for mime, extension in _EXT_BY_CONTENT_TYPE.items()}
+_GENERIC_CONTENT_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
+
+
+def _detect_media_format(content_type: str, header: bytes) -> tuple[str, str]:
+    """Infer a supported media format from its signature and reject MIME/body mismatches."""
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        extension = "png"
+    elif header.startswith(b"\xff\xd8\xff"):
+        extension = "jpg"
+    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        extension = "webp"
+    elif len(header) >= 12 and header[4:8] == b"ftyp":
+        extension = "mp4"
+    else:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST,
+            "Provider result does not have a supported image/video signature.",
+            retryable=False,
+        )
+
+    normalized_type = content_type.split(";", 1)[0].strip().lower()
+    declared_extension = _EXT_BY_CONTENT_TYPE.get(normalized_type)
+    if normalized_type not in _GENERIC_CONTENT_TYPES and declared_extension is None:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "Provider returned an unsupported media content type.", retryable=False
+        )
+    if declared_extension is not None and declared_extension != extension:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "Provider media content type does not match its file signature.", retryable=False
+        )
+    return extension, _MIME_BY_EXTENSION[extension]
 
 
 def _json_or_fail(resp: httpx.Response) -> dict:
@@ -244,7 +277,10 @@ class Muse2ApiAdapter(VideoProvider):
         tmp_path = os.path.join(dest_dir, f".download_{os.urandom(8).hex()}.tmp")
         hasher = hashlib.sha256()
         total = 0
-        content_type = "video/mp4"
+        prefix = bytearray()
+        content_type = ""
+        ext = ""
+        mime = ""
         try:
             async with httpx.AsyncClient(
                 timeout=60.0, follow_redirects=False, transport=self._transport
@@ -287,6 +323,8 @@ class Muse2ApiAdapter(VideoProvider):
                                     if total > _MAX_DOWNLOAD_BYTES:
                                         raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result file exceeds the size limit.")
                                     hasher.update(chunk)
+                                    if len(prefix) < 32:
+                                        prefix.extend(chunk[: 32 - len(prefix)])
                                     try:
                                         f.write(chunk)
                                     except OSError as exc:
@@ -295,7 +333,12 @@ class Muse2ApiAdapter(VideoProvider):
                                         ) from exc
                             finally:
                                 f.close()
+                            if total == 0:
+                                raise ProviderFailure(
+                                    ErrorCategory.INVALID_REQUEST, "Provider returned an empty media file.", retryable=False
+                                )
                             content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                            ext, mime = _detect_media_format(content_type, bytes(prefix))
                             break
                     except httpx.RequestError as exc:
                         # Timeouts, connection resets, DNS failures: transient, safe to retry.
@@ -311,9 +354,7 @@ class Muse2ApiAdapter(VideoProvider):
                 pass
             raise
         digest = hasher.hexdigest()
-        ext = _EXT_BY_CONTENT_TYPE.get(content_type, "mp4")
-        mime = content_type if content_type in _EXT_BY_CONTENT_TYPE else "video/mp4"
-        file_path = os.path.join(dest_dir, f"{digest[:16]}.{ext}")
+        file_path = os.path.join(dest_dir, f"{digest[:16]}_{uuid.uuid4().hex[:8]}.{ext}")
         try:
             os.replace(tmp_path, file_path)
         except OSError as exc:
