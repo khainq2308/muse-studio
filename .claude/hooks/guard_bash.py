@@ -65,9 +65,7 @@ def _unsafe_rm_target(target: str) -> bool:
     # Explicit descendants of OS temp dirs are exempt only after traversal/expansion checks.
     if target.startswith("/tmp/") or target.startswith("/var/tmp/"):
         normalized = posixpath.normpath(target)
-        return normalized not in {"/tmp", "/var/tmp"} and (
-            normalized.startswith("/tmp/") or normalized.startswith("/var/tmp/")
-        )
+        return not (normalized.startswith("/tmp/") or normalized.startswith("/var/tmp/"))
     if target.startswith("/"):
         return True
 
