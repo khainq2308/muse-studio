@@ -21,21 +21,43 @@ def collect_changed_paths(root: Path, runner: Runner | None = None) -> set[str]:
         raise RuntimeError(f"git status failed (exit {status_code}): {status[-1000:]}")
     for line in status.splitlines():
         if len(line) > 3:
-            # Handles ordinary, staged, untracked and rename-style porcelain entries.
             path = line[3:].split(" -> ")[-1].strip().strip('"')
             changed.add(path.replace("\\", "/"))
 
-    # The branch comparison catches changes already committed in this task/session.
+    # Never use HEAD^-HEAD as a silent fallback: it misses older commits in this branch.
     branch_code, branch_diff = runner(
         ["git", "diff", "--name-only", "origin/main...HEAD"], root, 15
     )
     if branch_code == 0:
         changed.update(p.replace("\\", "/") for p in branch_diff.splitlines() if p.strip())
     else:
-        # Shallow/non-standard clones may not have origin/main. At minimum check the last commit.
-        last_code, last_diff = runner(["git", "diff", "--name-only", "HEAD^", "HEAD"], root, 15)
-        if last_code == 0:
-            changed.update(p.replace("\\", "/") for p in last_diff.splitlines() if p.strip())
+        merge_base = ""
+        baseline_errors: list[str] = []
+        for candidate in ("origin/main", "main", "master"):
+            base_code, base_output = runner(
+                ["git", "merge-base", candidate, "HEAD"], root, 15
+            )
+            if base_code == 0 and base_output.strip():
+                merge_base = base_output.strip().splitlines()[0]
+                break
+            baseline_errors.append(f"{candidate}: exit {base_code} {base_output[-300:]}")
+
+        if not merge_base:
+            raise RuntimeError(
+                "No reliable branch baseline is available; refusing to check only HEAD^..HEAD. "
+                "Fetch origin/main or create a local main branch, then retry. Details: "
+                + "; ".join(baseline_errors)
+            )
+
+        diff_code, baseline_diff = runner(
+            ["git", "diff", "--name-only", f"{merge_base}..HEAD"], root, 15
+        )
+        if diff_code != 0:
+            raise RuntimeError(
+                f"Branch diff against merge-base failed (exit {diff_code}): "
+                f"{baseline_diff[-1000:]}"
+            )
+        changed.update(p.replace("\\", "/") for p in baseline_diff.splitlines() if p.strip())
 
     staged_code, staged = runner(["git", "diff", "--cached", "--name-only"], root, 15)
     if staged_code != 0:
