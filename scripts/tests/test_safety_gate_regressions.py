@@ -29,6 +29,7 @@ class RecursiveDeleteGuardRegressionTests(unittest.TestCase):
     def test_recursive_delete_rejects_globs_traversal_and_expansion(self):
         commands = [
             "rm -rf apps/../*",
+            "rm -rf ././",
             "rm -rf /tmp/../*",
             "rm -rf apps/**",
             "rm -rf $HOME/project",
