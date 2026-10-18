@@ -13,7 +13,11 @@ REQUIRED_DOCS = ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "docs/AGENT_WORKFLOW.md"
 SKILL_ROOT = ROOT / ".agents" / "skills"
 CLAUDE_SKILLS = ROOT / ".claude" / "skills"
 FRONT = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
-LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+LINK = re.compile(r"!?\\[[^\\]]*\\]\\(([^)]+)\\)")
+INLINE_CODE = re.compile(r"(?<!\\x60)\\x60([^\\x60\\n]+)\\x60(?!\\x60)")
+CODE_PATH = re.compile(
+    r"(?<![A-Za-z0-9_])(?:\\./)?(?:scripts|docs|\\.agents|\\.claude|\\.codex|\\.gemini)/[^\\s\\x60'\\"<>]+"
+)
 
 
 def frontmatter(path: Path) -> str | None:
@@ -72,6 +76,40 @@ def check_links(paths: list[Path]) -> list[str]:
                 continue
             if not candidate.exists():
                 errors.append(f"{source.relative_to(ROOT)}: broken local link: {raw}")
+    return errors
+
+
+def check_code_paths(paths: list[Path]) -> list[str]:
+    """Check path-like references inside inline code, not just Markdown links."""
+    errors: list[str] = []
+    for source in paths:
+        text = source.read_text(encoding="utf-8")
+        for code in INLINE_CODE.findall(text):
+            for raw_path in CODE_PATH.findall(code):
+                path_ref = raw_path.removeprefix("./").rstrip(".,;:!?)")
+                path_ref = path_ref.split("#", 1)[0].split("?", 1)[0]
+                if not path_ref:
+                    continue
+                # Per-user overrides are created on demand, so their absence is expected.
+                if path_ref in {".claude/settings.local.json", ".gemini/settings.local.json"}:
+                    continue
+
+                candidate = ROOT / path_ref
+                if any(char in path_ref for char in "*?["):
+                    # For patterns like .gemini/agents/*.md, verify the literal parent directory.
+                    prefix = path_ref.split("*", 1)[0].split("?", 1)[0].split("[", 1)[0]
+                    candidate = ROOT / prefix.rstrip("/")
+                try:
+                    candidate.relative_to(ROOT)
+                except ValueError:
+                    errors.append(
+                        f"{source.relative_to(ROOT)}: code path escapes repository: {raw_path}"
+                    )
+                    continue
+                if not candidate.exists():
+                    errors.append(
+                        f"{source.relative_to(ROOT)}: broken inline code path reference: {raw_path}"
+                    )
     return errors
 
 
@@ -246,6 +284,7 @@ def main() -> int:
 
     markdown = markdown_files()
     errors.extend(check_links(markdown))
+    errors.extend(check_code_paths(markdown))
     errors.extend(check_configs())
     errors.extend(check_syntax())
 
