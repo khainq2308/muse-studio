@@ -67,7 +67,8 @@ Run the smallest relevant check first. Then select the wider checks based on ris
 | Frontend / contracts | `scripts/test.sh web`; verify API fields against Pydantic schemas; browser behavior remains unverified unless browser testing actually ran |
 | Schema / migrations | Migration-specific upgrade/downgrade tests on throwaway databases; orchestrator tests; never use a production database |
 | Security-sensitive behavior | Negative tests for malicious input, secret leakage and path/origin validation; read-only security review when available |
-| Roadmap signals | `python3 scripts/audit_roadmap.py`; use output only as a heuristic inventory, then inspect implementation/tests |\n| Docs status metadata | `python3 scripts/check_docs_sync.py`; validates explicit milestone status labels and capability status vocabulary, not feature behavior |
+| Roadmap signals | `python3 scripts/audit_roadmap.py`; use output only as a heuristic inventory, then inspect implementation/tests |
+| Docs status metadata | `python3 scripts/check_docs_sync.py`; validates explicit milestone status labels and capability status vocabulary, not feature behavior |
 | Shared agent-kit files | `python3 scripts/check_agent_assets.py`; validate front matter, cross-platform entrypoint links and skill mirror consistency |
 | Broad refactor / pre-PR | `scripts/test.sh all`, `scripts/lint.sh`, `python3 scripts/audit_roadmap.py`, `python3 scripts/check_docs_sync.py`, `python3 scripts/check_agent_assets.py`, then a read-only diff review |
 
