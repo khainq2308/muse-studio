@@ -23,6 +23,7 @@ from muse_orchestrator.models.domain import (
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 from muse_orchestrator.services.account_pool import (
     build_provider_for_account,
+    resolve_task_account,
     select_account,
 )
 
@@ -225,3 +226,37 @@ async def test_account_probe_with_mock_provider(client: AsyncClient):
     probed = await client.post(f"/api/v1/connections/{conn['id']}/accounts/{account_id}/test")
     assert probed.status_code == 200, probed.text
     assert probed.json()["health_state"] in ("healthy", "unknown", "degraded", "unavailable")
+
+
+async def test_task_account_is_pinned_during_poll_and_retry(client: AsyncClient):
+    never_used = _account("new-account")
+    pinned = _account("pinned-account", last_used=datetime.now(UTC))
+    assert select_account([never_used, pinned]) is never_used
+    assert resolve_task_account([never_used, pinned], pinned.id, has_external_task=False) is pinned
+    pinned.health_state = ConnectionHealthState.DEGRADED
+    assert resolve_task_account([never_used, pinned], pinned.id, has_external_task=True) is pinned
+    assert resolve_task_account([never_used, pinned], None, has_external_task=True) is None
+    with pytest.raises(LookupError):
+        resolve_task_account([never_used], "acct_missing", has_external_task=True)
+
+
+async def test_nested_account_routes_validate_parent_before_side_effects(client: AsyncClient):
+    owner = await _create_connection(client, name="account-owner")
+    other = await _create_connection(client, name="other-connection")
+    created = await client.post(
+        f"/api/v1/connections/{owner['id']}/accounts", json={"label": "owned", "api_key": "key"}
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+    wrong_patch = await client.patch(
+        f"/api/v1/connections/{other['id']}/accounts/{account_id}", json={"enabled": False}
+    )
+    assert wrong_patch.status_code == 404
+    owner_list = await client.get(f"/api/v1/connections/{owner['id']}/accounts")
+    assert owner_list.json()[0]["enabled"] is True
+    wrong_test = await client.post(f"/api/v1/connections/{other['id']}/accounts/{account_id}/test")
+    assert wrong_test.status_code == 404
+    wrong_delete = await client.delete(f"/api/v1/connections/{other['id']}/accounts/{account_id}")
+    assert wrong_delete.status_code == 404
+    owner_list = await client.get(f"/api/v1/connections/{owner['id']}/accounts")
+    assert len(owner_list.json()) == 1

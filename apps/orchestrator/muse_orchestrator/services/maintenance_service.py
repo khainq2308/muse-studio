@@ -88,11 +88,13 @@ async def cleanup_orphan_media(
     errors: list[str] = []
     if not dry_run:
         for orphan in orphans:
-            candidate = (root / orphan.rel_path).resolve()
+            # Unlink the lexical path rather than resolving the file itself: if it is
+            # a symlink, resolving first could delete its target instead of the link.
+            candidate = root / orphan.rel_path
             try:
-                candidate.relative_to(root)
+                candidate.parent.resolve().relative_to(root)
             except ValueError:
-                errors.append(f"{orphan.rel_path}: escaped media root, skipped")
+                errors.append(f"{orphan.rel_path}: parent escaped media root, skipped")
                 continue
             try:
                 candidate.unlink(missing_ok=True)

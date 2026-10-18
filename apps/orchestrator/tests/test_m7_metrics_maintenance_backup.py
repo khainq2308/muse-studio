@@ -21,6 +21,9 @@ from muse_orchestrator.main import app
 from muse_orchestrator.models.domain import (
     Asset,
     Base,
+    GenerationTaskRecord,
+    ProviderConnection,
+    QueueTaskState,
     SceneRecord,
     ShotRecord,
 )
@@ -227,3 +230,79 @@ async def test_restore_rejects_bad_archive(client: AsyncClient):
         files={"file": ("x.zip", buf.getvalue(), "application/zip")},
     )
     assert wrong_version.status_code == 422
+
+
+async def test_orphan_cleanup_unlinks_symlink_without_deleting_target(client: AsyncClient):
+    project = await _create_project(client, name="Symlink Cleanup Project")
+    asset = await _upload_png(client, project["id"])
+    assert _SESSION_MAKER is not None
+    async with _SESSION_MAKER() as db:
+        stored = await db.get(Asset, asset["id"])
+        assert stored is not None
+        referenced_path = Path(_TEMP_MEDIA_DIR, stored.storage_rel_path)
+    alias = Path(_TEMP_MEDIA_DIR, "orphan-alias.png")
+    try:
+        alias.symlink_to(referenced_path)
+    except (NotImplementedError, OSError):
+        pytest.skip("Symlinks are not supported in this test environment")
+    response = await client.post(
+        "/api/v1/maintenance/orphans/cleanup", json={"retention_hours": 0, "dry_run": False}
+    )
+    assert response.status_code == 200, response.text
+    assert not alias.is_symlink()
+    assert referenced_path.is_file(), "cleanup must not unlink the symlink target"
+
+
+async def test_restore_skips_generation_task_when_source_connection_is_missing(client: AsyncClient):
+    project = await _create_project(client, name="Backup With External Connection")
+    project_id = project["id"]
+    assert _SESSION_MAKER is not None
+    async with _SESSION_MAKER() as db:
+        db.add(ProviderConnection(
+            id="conn_restore_external", name="temporary-restore-connection",
+            provider_type="mock", base_url="http://localhost:8080",
+        ))
+        db.add(SceneRecord(id="scn_restore_external", project_id=project_id, scene_index=0, title="Scene"))
+        db.add(ShotRecord(
+            id="sht_restore_external", project_id=project_id, scene_id="scn_restore_external",
+            sequence_index=0, title="Shot", location_code="loc_default",
+        ))
+        db.add(GenerationTaskRecord(
+            id="tsk_restore_external", project_id=project_id, scene_id="scn_restore_external",
+            shot_id="sht_restore_external", connection_id="conn_restore_external", task_type="video",
+            model_id="test-model", idempotency_key="idem_restore_external",
+            state=QueueTaskState.QUEUED, prompt_snapshot="test prompt",
+        ))
+        await db.commit()
+    backup_response = await client.post(f"/api/v1/projects/{project_id}/backup")
+    assert backup_response.status_code == 201, backup_response.text
+    downloaded = await client.get(f"/api/v1/backups/{backup_response.json()['id']}/download")
+    assert downloaded.status_code == 200
+    async with _SESSION_MAKER() as db:
+        task = await db.get(GenerationTaskRecord, "tsk_restore_external")
+        connection = await db.get(ProviderConnection, "conn_restore_external")
+        if task is not None:
+            await db.delete(task)
+        assert connection is not None
+        await db.delete(connection)
+        await db.commit()
+    restored = await client.post(
+        "/api/v1/backups/restore", files={"file": ("backup.zip", downloaded.content, "application/zip")}
+    )
+    assert restored.status_code == 201, restored.text
+    report = restored.json()["report"]
+    assert report["rows_skipped"]["generation_tasks"] == 1
+    assert report["tables_restored"]["generation_tasks"] == 0
+
+
+async def test_restore_rejects_archive_with_excessive_uncompressed_size(client: AsyncClient, monkeypatch):
+    import muse_orchestrator.services.backup_service as backup_module
+    monkeypatch.setattr(backup_module, "BACKUP_MAX_UNCOMPRESSED_BYTES", 128)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", '{"format_version":"m7-backup-1","project_id":"p"}')
+        archive.writestr("data/projects.json", "[" + (" " * 256) + "]")
+    response = await client.post(
+        "/api/v1/backups/restore", files={"file": ("oversized.zip", buf.getvalue(), "application/zip")}
+    )
+    assert response.status_code == 413, response.text

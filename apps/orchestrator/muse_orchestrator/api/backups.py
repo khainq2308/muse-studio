@@ -92,10 +92,18 @@ async def restore_backup(
     service: BackupService = Depends(get_backup_service),
 ) -> dict[str, Any]:
     """M7: restore a project from an uploaded backup ZIP (IDs are remapped)."""
-    content = await file.read()
-    if len(content) > BACKUP_MAX_BYTES:
-        raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
-    project, report = await service.restore_backup(content, project_name=project_name)
+    content = bytearray()
+    try:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            if len(content) + len(chunk) > BACKUP_MAX_BYTES:
+                raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
+            content.extend(chunk)
+    finally:
+        await file.close()
+    project, report = await service.restore_backup(bytes(content), project_name=project_name)
     return {
         "project_id": project.id,
         "project_name": project.name,

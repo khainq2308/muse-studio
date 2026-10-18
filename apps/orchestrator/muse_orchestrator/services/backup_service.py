@@ -24,6 +24,8 @@ from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import (
     Asset,
     BackupRecord,
+    ConnectionAccount,
+    ProviderConnection,
     ExportJobRecord,
     GenerationTaskRecord,
     Project,
@@ -42,6 +44,8 @@ from muse_orchestrator.models.domain import (
 
 BACKUP_FORMAT_VERSION = "m7-backup-1"
 BACKUP_MAX_BYTES = 500 * 1024 * 1024
+BACKUP_MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+BACKUP_MAX_ENTRIES = 10_000
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
@@ -76,7 +80,12 @@ _TABLES: list[_TableSpec] = [
         "generation_tasks",
         GenerationTaskRecord,
         "tsk",
-        {"project_id": "projects", "shot_id": "shots", "connection_id": "__keep__"},
+        {
+            "project_id": "projects",
+            "shot_id": "shots",
+            "connection_id": "__keep__",
+            "account_id_used": "__keep__",
+        },
     ),
     _TableSpec(
         "assets",
@@ -329,10 +338,29 @@ class BackupService:
             raise ApplicationError(422, "Uploaded file is not a valid ZIP archive.") from exc
 
         with archive:
+            infos = archive.infolist()
+            if len(infos) > BACKUP_MAX_ENTRIES:
+                raise ApplicationError(413, "Backup ZIP contains too many entries.")
+            names = [info.filename for info in infos]
+            if len(names) != len(set(names)):
+                raise ApplicationError(422, "Backup ZIP contains duplicate entry names.")
+            if sum(info.file_size for info in infos) > BACKUP_MAX_UNCOMPRESSED_BYTES:
+                raise ApplicationError(413, "Backup ZIP exceeds the uncompressed size limit.")
+            for info in infos:
+                if info.filename.startswith("/") or any(part == ".." for part in info.filename.split("/")):
+                    raise ApplicationError(422, "Backup ZIP contains an unsafe entry path.")
+                if info.flag_bits & 0x1:
+                    raise ApplicationError(422, "Encrypted backup ZIP entries are not supported.")
+                if info.file_size > BACKUP_MAX_BYTES:
+                    raise ApplicationError(413, "A backup ZIP entry exceeds the size limit.")
             try:
                 manifest = json.loads(archive.read("manifest.json"))
             except KeyError as exc:
                 raise ApplicationError(422, "Backup ZIP has no manifest.json.") from exc
+            except (json.JSONDecodeError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
+                raise ApplicationError(422, "Backup ZIP manifest is invalid or corrupted.") from exc
+            if not isinstance(manifest, dict):
+                raise ApplicationError(422, "Backup ZIP manifest must be a JSON object.")
             if manifest.get("format_version") != BACKUP_FORMAT_VERSION:
                 raise ApplicationError(
                     422,
@@ -341,9 +369,13 @@ class BackupService:
                 )
 
             db = self.repository.session
+            available_connection_ids = set((await db.execute(select(ProviderConnection.id))).scalars().all())
+            available_account_ids = set((await db.execute(select(ConnectionAccount.id))).scalars().all())
             id_maps: dict[str, dict[str, str]] = {}
+            restored_rows: dict[str, list[tuple[dict[str, Any], Any]]] = {}
             report: dict[str, Any] = {
                 "tables_restored": {},
+                "rows_skipped": {},
                 "media_restored": 0,
                 "media_missing": [],
             }
@@ -352,31 +384,87 @@ class BackupService:
                     rows = json.loads(archive.read(f"data/{spec.key}.json"))
                 except KeyError:
                     rows = []
+                except (json.JSONDecodeError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
+                    raise ApplicationError(422, f"Backup table data is invalid: {spec.key}.") from exc
+                if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                    raise ApplicationError(422, f"Backup table data has an invalid shape: {spec.key}.")
+
+                original_count = len(rows)
+                if spec.key == "generation_tasks":
+                    accepted = []
+                    for item in rows:
+                        # Provider connections and credentials are environment-scoped, not project data.
+                        if item.get("connection_id") not in available_connection_ids:
+                            continue
+                        account_id = item.get("account_id_used")
+                        if item.get("external_task_id") and account_id and account_id not in available_account_ids:
+                            # Cannot poll an in-flight upstream task safely without the exact account.
+                            continue
+                        clean_item = dict(item)
+                        if account_id and account_id not in available_account_ids:
+                            clean_item["account_id_used"] = None
+                            clean_item["account_used"] = None
+                        accepted.append(clean_item)
+                    rows = accepted
+                report["rows_skipped"][spec.key] = original_count - len(rows)
+
                 id_map: dict[str, str] = {}
                 new_objects: list[Any] = []
-                for row in rows:
+                accepted_original_rows: list[dict[str, Any]] = []
+                for original_row in rows:
+                    row = dict(original_row)
+                    # If a referenced row was skipped, null nullable references or skip
+                    # the row when a required FK cannot be mapped safely.
+                    skip_row = False
+                    for attr, target_key in spec.fks.items():
+                        value = row.get(attr)
+                        if target_key == "__keep__" or value is None or target_key not in id_maps:
+                            continue
+                        mapped = id_maps[target_key].get(value)
+                        if mapped is None:
+                            column = next((c for c in spec.model.__table__.columns if c.key == attr), None)
+                            if column is not None and column.nullable:
+                                row[attr] = None
+                            else:
+                                skip_row = True
+                                break
+                        else:
+                            row[attr] = mapped
+                    if skip_row:
+                        report["rows_skipped"][spec.key] += 1
+                        continue
                     old_id = row.get("id")
                     new_id = f"{spec.id_prefix}_{uuid.uuid4().hex[:10]}"
                     if old_id:
                         id_map[old_id] = new_id
-                    row = dict(row)
                     row["id"] = new_id
-                    for attr, target_key in spec.fks.items():
-                        if target_key == "__keep__" or row.get(attr) is None:
-                            continue
-                        mapped = id_maps.get(target_key, {}).get(row[attr])
-                        if mapped is not None:
-                            row[attr] = mapped
-                    new_objects.append(_dict_to_row(spec.model, row))
+                    obj = _dict_to_row(spec.model, row)
+                    new_objects.append(obj)
+                    accepted_original_rows.append(dict(original_row))
+                    restored_rows.setdefault(spec.key, []).append((dict(original_row), obj))
                 id_maps[spec.key] = id_map
                 report["tables_restored"][spec.key] = len(new_objects)
                 db.add_all(new_objects)
 
                 if spec.key == "assets":
-                    for archived_row, obj in zip(rows, new_objects):
+                    for archived_row, obj in zip(accepted_original_rows, new_objects):
                         await self._restore_asset_media(
                             archive, obj, archived_row.get("storage_rel_path"), report
                         )
+
+            # Fix references to tables that appear later in the restore dependency order.
+            for original_row, obj in restored_rows.get("shots", []):
+                obj.selected_take_id = id_maps.get("shot_takes", {}).get(original_row.get("selected_take_id"))
+                obj.first_frame_asset_id = id_maps.get("assets", {}).get(original_row.get("first_frame_asset_id"))
+                obj.last_frame_asset_id = id_maps.get("assets", {}).get(original_row.get("last_frame_asset_id"))
+                obj.previous_shot_id = id_maps.get("shots", {}).get(original_row.get("previous_shot_id"))
+                obj.next_shot_id = id_maps.get("shots", {}).get(original_row.get("next_shot_id"))
+                obj.reference_asset_ids = [id_maps["assets"][value] for value in (original_row.get("reference_asset_ids") or []) if value in id_maps.get("assets", {})]
+            for original_row, obj in restored_rows.get("story_bible_entries", []):
+                obj.reference_asset_ids = [id_maps["assets"][value] for value in (original_row.get("reference_asset_ids") or []) if value in id_maps.get("assets", {})]
+            for original_row, obj in restored_rows.get("generation_tasks", []):
+                obj.result_asset_id = id_maps.get("assets", {}).get(original_row.get("result_asset_id"))
+                obj.take_id = id_maps.get("shot_takes", {}).get(original_row.get("take_id"))
 
             await db.commit()
 
