@@ -12,6 +12,12 @@ class ErrorCategory(str, enum.Enum):
     QUOTA_EXHAUSTED = "quota_exhausted"
     INVALID_REQUEST = "invalid_request"
     UPSTREAM_POLL_TIMEOUT = "upstream_poll_timeout"
+    # The provider said "succeeded" but handed back something that is not usable media.
+    INVALID_UPSTREAM_MEDIA = "invalid_upstream_media"
+
+
+# Hard cap for one downloaded result; larger bodies are aborted while streaming.
+MAX_MEDIA_DOWNLOAD_BYTES = 150 * 1024 * 1024
 
 
 @dataclass

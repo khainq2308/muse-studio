@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .probe import MediaProcessingError, probe_video
+from .probe import MediaProcessingError, MediaToolError, probe_video
 
 
 @dataclass(frozen=True)
@@ -58,9 +58,9 @@ def _extract_frame(
             timeout=timeout_seconds,
         )
     except FileNotFoundError as exc:
-        raise MediaProcessingError("ffmpeg executable was not found.") from exc
+        raise MediaToolError("ffmpeg executable was not found.") from exc
     except subprocess.TimeoutExpired as exc:
-        raise MediaProcessingError("ffmpeg timed out while extracting a boundary frame.") from exc
+        raise MediaToolError("ffmpeg timed out while extracting a boundary frame.") from exc
 
     if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
         output.unlink(missing_ok=True)

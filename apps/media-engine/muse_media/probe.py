@@ -12,6 +12,13 @@ class MediaProcessingError(RuntimeError):
     """A media probe or transform failed with a safe, actionable error."""
 
 
+class MediaToolError(MediaProcessingError):
+    """FFmpeg/FFprobe could not run or finish (missing binary, timeout).
+
+    This says nothing about the media itself, so callers must not treat the file as corrupt.
+    """
+
+
 @dataclass(frozen=True)
 class VideoProbe:
     path: str
@@ -67,9 +74,9 @@ def probe_video(
             timeout=timeout_seconds,
         )
     except FileNotFoundError as exc:
-        raise MediaProcessingError("ffprobe executable was not found.") from exc
+        raise MediaToolError("ffprobe executable was not found.") from exc
     except subprocess.TimeoutExpired as exc:
-        raise MediaProcessingError("ffprobe timed out while inspecting the video.") from exc
+        raise MediaToolError("ffprobe timed out while inspecting the video.") from exc
 
     if result.returncode != 0:
         raise MediaProcessingError("ffprobe could not inspect the video.")

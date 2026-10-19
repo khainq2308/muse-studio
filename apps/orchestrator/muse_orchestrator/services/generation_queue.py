@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib
 import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import select, func
@@ -18,6 +19,11 @@ from muse_orchestrator.providers.base import (
 )
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
+from muse_orchestrator.services.asset_storage import LocalAssetStorage
+from muse_orchestrator.services.frame_chain import (
+    FrameExtractionError, FrameInputError, FramePair, InvalidVideoError,
+    extract_frames, load_frame_data_uri, write_placeholder_frames,
+)
 
 
 def compute_backoff_seconds(step_count: int, base: float = 5.0, max_delay: float = 60.0) -> float:
@@ -31,21 +37,6 @@ def build_provider(conn: ProviderConnection) -> VideoProvider:
         return MockVideoProvider()
     raw_key = vault.decrypt(conn.encrypted_api_key)
     return Muse2ApiAdapter(base_url=conn.base_url, api_key=raw_key, timeout=conn.timeout_seconds)
-
-
-def _create_boundary_frame_png(dest_dir: str, shot_id: str, take_num: int, position: str, seed_hash: str) -> tuple[str, int, str]:
-    """Tạo file ảnh PNG boundary frame (first_frame / last_frame) phục vụ Frame Chaining."""
-    os.makedirs(dest_dir, exist_ok=True)
-    png_bytes = (
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-        + f"BOUNDARY_FRAME:{shot_id}:take_{take_num}:{position}:{seed_hash}".encode("utf-8")
-    )
-    digest = hashlib.sha256(png_bytes).hexdigest()
-    filename = f"{shot_id}_take{take_num}_{position}_{digest[:10]}.png"
-    full_path = os.path.join(dest_dir, filename)
-    with open(full_path, "wb") as f:
-        f.write(png_bytes)
-    return full_path, len(png_bytes), digest
 
 
 class GenerationQueueService:
@@ -197,6 +188,8 @@ class GenerationQueueService:
                         )
                     )
                 else:
+                    # A remote provider cannot resolve our asset ids, so send the frame's pixels.
+                    first_frame_input = await GenerationQueueService._first_frame_input(db, shot)
                     p_task = await provider.generate_video(
                         VideoGenerationRequest(
                             shot_id=shot.id,
@@ -205,7 +198,7 @@ class GenerationQueueService:
                             model_id=task.model_id,
                             duration_seconds=shot.duration_seconds,
                             aspect_ratio=shot.aspect_ratio,
-                            first_frame_url=shot.first_frame_asset_id,
+                            first_frame_url=first_frame_input,
                             idempotency_key=task.idempotency_key,
                         )
                     )
@@ -290,11 +283,56 @@ class GenerationQueueService:
             return task
 
         dest_dir = os.path.join(settings.media_root, task.project_id, "generated")
-        stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
+        try:
+            stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
+        except ProviderFailure as exc:
+            return await GenerationQueueService._handle_download_failure(db, task, shot, conn, exc, raw_secret)
+
+        # The downloader names the type from the file's own bytes; it must be what this task asked for.
+        expected_kind = "video/" if task.task_type == "video" else "image/"
+        if not stored.mime_type.startswith(expected_kind):
+            await GenerationQueueService._discard_download(db, stored.local_path)
+            return await GenerationQueueService._fail_task(
+                db, task, shot, ErrorCategory.INVALID_UPSTREAM_MEDIA.value,
+                f"Provider returned {stored.mime_type} for a {task.task_type} task.",
+                "Result rejected",
+            )
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
+        existing_takes_count = (
+            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
+        ).scalar_one()
+        take_num = existing_takes_count + 1
+        is_first_take = existing_takes_count == 0
+        take_id = f"tke_{uuid.uuid4().hex[:10]}"
+
+        # First/last frame of a video take, for frame chaining. Real providers get real frames from
+        # FFmpeg; only the mock provider (whose "videos" are not decodable) gets placeholder frames.
+        frames: FramePair | None = None
+        frame_warning: str | None = None
+        if task.task_type == "video":
+            frames_dir = os.path.join(dest_dir, "frames", take_id)
+            try:
+                if conn.provider_type == "mock":
+                    frames = write_placeholder_frames(frames_dir, f"{stored.sha256}:{shot.id}:{take_num}")
+                else:
+                    frames = await extract_frames(stored.local_path, frames_dir)
+            except InvalidVideoError as exc:
+                shutil.rmtree(frames_dir, ignore_errors=True)
+                await GenerationQueueService._discard_download(db, stored.local_path)
+                return await GenerationQueueService._fail_task(
+                    db, task, shot, ErrorCategory.INVALID_UPSTREAM_MEDIA.value,
+                    "Provider returned a video that cannot be decoded: "
+                    + SecretRedactor.redact_text(str(exc), [raw_secret]),
+                    "Result rejected",
+                )
+            except FrameExtractionError as exc:
+                # FFmpeg itself is unavailable: keep the (paid for) video, but say frames are missing.
+                shutil.rmtree(frames_dir, ignore_errors=True)
+                frame_warning = SecretRedactor.redact_text(str(exc), [raw_secret])
+
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"
-        asset = Asset(
+        db.add(Asset(
             id=asset_id,
             project_id=task.project_id,
             scene_id=task.scene_id,
@@ -308,58 +346,34 @@ class GenerationQueueService:
             provider_id=conn.id,
             model_id=task.model_id,
             is_locked_reference=(task.task_type == "image"),
-        )
-        db.add(asset)
+        ))
 
-        existing_takes_count = (
-            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
-        ).scalar_one()
-        take_num = existing_takes_count + 1
-        is_first_take = existing_takes_count == 0
-
-        # Trích xuất First Frame & Last Frame cho Video Take để phục vụ Frame Chaining (M5)
         first_frame_aid: str | None = None
         last_frame_aid: str | None = None
-        if task.task_type == "video":
-            ff_path, ff_size, ff_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "first", stored.sha256)
-            lf_path, lf_size, lf_sha = _create_boundary_frame_png(dest_dir, shot.id, take_num, "last", stored.sha256)
+        if frames is not None:
             first_frame_aid = f"ast_ff_{uuid.uuid4().hex[:8]}"
             last_frame_aid = f"ast_lf_{uuid.uuid4().hex[:8]}"
-            db.add_all([
-                Asset(
-                    id=first_frame_aid,
+            for frame_aid, label, frame_path, frame_sha in (
+                (first_frame_aid, "first", frames.first_path, frames.first_sha256),
+                (last_frame_aid, "last", frames.last_path, frames.last_sha256),
+            ):
+                db.add(Asset(
+                    id=frame_aid,
                     project_id=task.project_id,
                     scene_id=task.scene_id,
                     shot_id=shot.id,
                     asset_type="reference",
-                    filename=os.path.basename(ff_path),
-                    storage_rel_path=os.path.relpath(ff_path, settings.media_root),
+                    filename=f"{shot.id}_take{take_num}_{label}.png",
+                    storage_rel_path=os.path.relpath(frame_path, settings.media_root),
                     mime_type="image/png",
-                    size_bytes=ff_size,
-                    sha256=ff_sha,
+                    size_bytes=os.path.getsize(frame_path),
+                    sha256=frame_sha,
                     provider_id=conn.id,
                     model_id=task.model_id,
                     is_locked_reference=True,
-                ),
-                Asset(
-                    id=last_frame_aid,
-                    project_id=task.project_id,
-                    scene_id=task.scene_id,
-                    shot_id=shot.id,
-                    asset_type="reference",
-                    filename=os.path.basename(lf_path),
-                    storage_rel_path=os.path.relpath(lf_path, settings.media_root),
-                    mime_type="image/png",
-                    size_bytes=lf_size,
-                    sha256=lf_sha,
-                    provider_id=conn.id,
-                    model_id=task.model_id,
-                    is_locked_reference=True,
-                ),
-            ])
+                ))
 
-        take_id = f"tke_{uuid.uuid4().hex[:10]}"
-        take = ShotTakeRecord(
+        db.add(ShotTakeRecord(
             id=take_id,
             project_id=task.project_id,
             shot_id=shot.id,
@@ -372,14 +386,14 @@ class GenerationQueueService:
             prompt_hash=task.prompt_hash,
             account_used=task.account_used,
             is_selected=is_first_take,
-        )
-        db.add(take)
+        ))
 
         if is_first_take:
             shot.selected_take_id = take_id
-            if not shot.first_frame_asset_id:
-                shot.first_frame_asset_id = first_frame_aid
-            shot.last_frame_asset_id = last_frame_aid
+            # shot.first_frame_asset_id is an *input* (the previous shot's last frame, or one the
+            # operator set); it is deliberately not overwritten with this take's own first frame.
+            if last_frame_aid:
+                shot.last_frame_asset_id = last_frame_aid
 
         shot.generation_state = ShotGenerationState.SUCCEEDED
         task.result_asset_id = asset_id
@@ -389,9 +403,92 @@ class GenerationQueueService:
         task.history_log = list(task.history_log or []) + [
             f"Completed! Saved asset={asset_id}, take={take_id}, last_frame={last_frame_aid}."
         ]
+        if frame_warning:
+            task.error_category = "frame_extraction_unavailable"
+            task.error_message_redacted = frame_warning
+            task.history_log = task.history_log + [
+                f"WARNING: boundary frames were not extracted, frame chaining from this take is blocked: {frame_warning}"
+            ]
 
         await db.commit()
         if is_first_take and last_frame_aid:
             await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
         await db.refresh(task)
         return task
+
+    @staticmethod
+    async def _first_frame_input(db: AsyncSession, shot: ShotRecord) -> str | None:
+        """The shot's input first frame as a data: URI, or None when it has none."""
+        if not shot.first_frame_asset_id:
+            return None
+        asset = await db.get(Asset, shot.first_frame_asset_id)
+        if asset is None or asset.project_id != shot.project_id:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                f"First frame asset '{shot.first_frame_asset_id}' does not exist in this project.",
+            )
+        try:
+            return load_frame_data_uri(LocalAssetStorage(settings.media_root), asset.storage_rel_path)
+        except FrameInputError as exc:
+            raise ProviderFailure(ErrorCategory.INVALID_REQUEST, str(exc)) from exc
+
+    @staticmethod
+    async def _discard_download(db: AsyncSession, local_path: str) -> None:
+        """Delete a rejected download, unless an existing asset already stores the same file."""
+        rel_path = os.path.relpath(local_path, settings.media_root)
+        references = (
+            await db.execute(select(func.count(Asset.id)).where(Asset.storage_rel_path == rel_path))
+        ).scalar_one()
+        if references == 0:
+            try:
+                os.unlink(local_path)
+            except OSError:
+                pass
+
+    @staticmethod
+    async def _fail_task(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        category: str,
+        message: str,
+        label: str,
+    ) -> GenerationTaskRecord:
+        task.state = QueueTaskState.FAILED
+        task.error_category = category
+        task.retryable = False
+        task.error_message_redacted = message
+        task.finished_at = datetime.now(timezone.utc)
+        shot.generation_state = ShotGenerationState.FAILED
+        task.history_log = list(task.history_log or []) + [f"{label}: {message}"]
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def _handle_download_failure(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+        exc: ProviderFailure,
+        raw_secret: str,
+    ) -> GenerationTaskRecord:
+        safe_err = SecretRedactor.redact_text(str(exc), [raw_secret])
+        if exc.retryable:
+            # Stay RUNNING: the next step polls and downloads again (bounded by max_polls).
+            delay = compute_backoff_seconds(task.poll_count)
+            task.next_poll_delay_seconds = delay
+            task.history_log = list(task.history_log or []) + [
+                f"Result download failed (will retry in {delay}s): {safe_err}"
+            ]
+            await db.commit()
+            await db.refresh(task)
+            return task
+        if exc.category == ErrorCategory.AUTH_FAILED:
+            conn.health_state = ConnectionHealthState.AUTH_ERROR
+        elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
+            conn.health_state = ConnectionHealthState.DEGRADED
+        return await GenerationQueueService._fail_task(
+            db, task, shot, exc.category.value, safe_err, "Result download failed"
+        )

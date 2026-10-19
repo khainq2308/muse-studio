@@ -6,6 +6,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from muse_orchestrator.core.media_types import (
+    ALLOWED_MEDIA_TYPES,
+    SIGNATURE_BYTES,
+    detect_media_type,
+)
+
 MAX_UPLOAD_SIZE_BYTES = 150 * 1024 * 1024
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]")
 
@@ -37,22 +43,11 @@ class LocalAssetStorage:
 
     @staticmethod
     def verify_mime_signature(content: bytes, declared_mime: str) -> str:
-        if len(content) < 12:
+        if len(content) < SIGNATURE_BYTES:
             raise AssetStorageError("Chữ ký binary hoặc MIME không hợp lệ.")
-
-        valid = False
-        if declared_mime == "image/png":
-            valid = content.startswith(b"\x89PNG\r\n\x1a\n")
-        elif declared_mime == "image/jpeg":
-            valid = content.startswith(b"\xff\xd8\xff")
-        elif declared_mime == "image/webp":
-            valid = content.startswith(b"RIFF") and content[8:12] == b"WEBP"
-        elif declared_mime == "video/mp4":
-            valid = content[4:8] == b"ftyp"
-        else:
+        if declared_mime not in ALLOWED_MEDIA_TYPES:
             raise AssetStorageError(f"MIME '{declared_mime}' không nằm trong danh sách cho phép.")
-
-        if not valid:
+        if detect_media_type(content) != declared_mime:
             raise AssetStorageError(f"Chữ ký binary của file không khớp với '{declared_mime}'.")
         return declared_mime
 

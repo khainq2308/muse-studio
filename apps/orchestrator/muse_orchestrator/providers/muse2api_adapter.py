@@ -2,14 +2,16 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+import uuid
 from urllib.parse import quote, urljoin, urlsplit
 import httpx
 from muse_orchestrator.core.config import SecretRedactor
+from muse_orchestrator.core.media_types import MEDIA_EXTENSIONS, SIGNATURE_BYTES, detect_media_type
 from muse_orchestrator.providers.base import (
     VideoProvider, ProviderHealth, ModelCapability,
     ImageGenerationRequest, VideoGenerationRequest,
     ProviderTask, ProviderTaskStatus, StoredMedia, ProviderFailure,
-    ErrorCategory, classify_http_error
+    ErrorCategory, MAX_MEDIA_DOWNLOAD_BYTES, classify_http_error
 )
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -192,39 +194,92 @@ class Muse2ApiAdapter(VideoProvider):
         return f"{self.base_url}/v1/media/{quote('/'.join(segments), safe='/')}"
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
+        """
+        Download a finished result into dest_dir.
+
+        The body is streamed to disk: it is capped at MAX_MEDIA_DOWNLOAD_BYTES, it must start with a
+        known media signature (the upstream Content-Type is ignored), and a partial file is never
+        left behind. The returned mime_type is what the bytes are, not what the server claimed.
+        """
         os.makedirs(dest_dir, exist_ok=True)
         url = self._resolve_download_url(result_ref)
-        async with httpx.AsyncClient(
-            timeout=60.0, follow_redirects=False, transport=self._transport
-        ) as client:
-            for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
-                # The API key is only ever sent to the provider's own origin, never to a
-                # host named in an upstream response or in a redirect.
-                headers = {"Accept": "*/*"}
-                if self._is_provider_origin(url) and self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
-                resp = await client.get(url, headers=headers)
-                if resp.status_code in _REDIRECT_STATUSES:
-                    location = resp.headers.get("location")
-                    if not location:
-                        raise ProviderFailure(
-                            ErrorCategory.INVALID_REQUEST, "Result download redirected without a location."
-                        )
-                    url = self._validate_download_url(urljoin(url, location))
-                    continue
-                break
-            else:
+        try:
+            async with httpx.AsyncClient(
+                timeout=60.0, follow_redirects=False, transport=self._transport
+            ) as client:
+                for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
+                    # The API key is only ever sent to the provider's own origin, never to a
+                    # host named in an upstream response or in a redirect.
+                    # identity: media is already compressed, and a compressed body could expand far
+                    # past the size cap inside a single chunk.
+                    headers = {"Accept": "*/*", "Accept-Encoding": "identity"}
+                    if self._is_provider_origin(url) and self.api_key:
+                        headers["Authorization"] = f"Bearer {self.api_key}"
+                    async with client.stream("GET", url, headers=headers) as resp:
+                        if resp.status_code in _REDIRECT_STATUSES:
+                            location = resp.headers.get("location")
+                            if not location:
+                                raise ProviderFailure(
+                                    ErrorCategory.INVALID_REQUEST, "Result download redirected without a location."
+                                )
+                            url = self._validate_download_url(urljoin(url, location))
+                            continue
+                        if resp.status_code >= 400:
+                            await resp.aread()
+                            raise classify_http_error(
+                                resp.status_code,
+                                SecretRedactor.redact_text(resp.text[:2000], [self.api_key or ""]),
+                            )
+                        if resp.status_code != 200:
+                            raise ProviderFailure(
+                                ErrorCategory.INVALID_REQUEST,
+                                f"Unexpected status {resp.status_code} while downloading result.",
+                            )
+                        return await self._store_response(resp, dest_dir)
                 raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result download redirected too many times.")
-            if resp.status_code >= 400:
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(resp.text, [self.api_key or ""]))
-            if resp.status_code != 200:
-                raise ProviderFailure(
-                    ErrorCategory.INVALID_REQUEST, f"Unexpected status {resp.status_code} while downloading result."
-                )
-            content = resp.content
-            digest = hashlib.sha256(content).hexdigest()
-            ext = "png" if "png" in resp.headers.get("content-type", "") else "mp4"
-            file_path = os.path.join(dest_dir, f"{digest[:16]}.{ext}")
-            with open(file_path, "wb") as f:
-                f.write(content)
-            return StoredMedia(local_path=file_path, mime_type=resp.headers.get("content-type", "video/mp4"), size_bytes=len(content), sha256=digest)
+        except httpx.RequestError as exc:
+            safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
+            raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
+
+    @staticmethod
+    def _reject_media(reason: str) -> ProviderFailure:
+        return ProviderFailure(ErrorCategory.INVALID_UPSTREAM_MEDIA, reason, retryable=False)
+
+    async def _store_response(self, resp: httpx.Response, dest_dir: str) -> StoredMedia:
+        limit_mb = MAX_MEDIA_DOWNLOAD_BYTES // (1024 * 1024)
+        declared_length = resp.headers.get("content-length", "")
+        if declared_length.isdigit() and int(declared_length) > MAX_MEDIA_DOWNLOAD_BYTES:
+            raise self._reject_media(f"Result is larger than the {limit_mb} MB download limit.")
+
+        part_path = os.path.join(dest_dir, f".download-{uuid.uuid4().hex}.part")
+        digest = hashlib.sha256()
+        size = 0
+        head = b""
+        try:
+            with open(part_path, "wb") as out:
+                # No chunk_size: httpx would buffer a full chunk before yielding, which defeats the
+                # early rejection below (a server that sends a few bytes and stalls would be waited on).
+                async for chunk in resp.aiter_bytes():
+                    if len(head) < SIGNATURE_BYTES:
+                        head = (head + chunk)[:SIGNATURE_BYTES]
+                        # Stop at the first bytes instead of downloading an HTML error page in full.
+                        if len(head) == SIGNATURE_BYTES and detect_media_type(head) is None:
+                            raise self._reject_media("Result is not a supported image or video file.")
+                    size += len(chunk)
+                    if size > MAX_MEDIA_DOWNLOAD_BYTES:
+                        raise self._reject_media(f"Result is larger than the {limit_mb} MB download limit.")
+                    digest.update(chunk)
+                    out.write(chunk)
+            media_type = detect_media_type(head)
+            if media_type is None:
+                raise self._reject_media("Result is empty, truncated or not a supported image or video file.")
+            sha256_hex = digest.hexdigest()
+            final_path = os.path.join(dest_dir, f"{sha256_hex[:16]}.{MEDIA_EXTENSIONS[media_type]}")
+            os.replace(part_path, final_path)
+        except BaseException:
+            try:
+                os.unlink(part_path)
+            except OSError:
+                pass
+            raise
+        return StoredMedia(local_path=final_path, mime_type=media_type, size_bytes=size, sha256=sha256_hex)

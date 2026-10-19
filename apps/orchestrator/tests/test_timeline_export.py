@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -15,23 +13,7 @@ from muse_orchestrator.services.timeline_service import (
     TimelineValidationService,
 )
 
-_HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
-
-
-@pytest.fixture
-def real_ffmpeg() -> None:
-    """Real-render tests skip on a dev machine without FFmpeg, but must never skip in CI.
-
-    CI installs FFmpeg and sets REQUIRE_FFMPEG=1; if the binaries are missing there, a silently
-    skipped render test would hide a broken exporter, so the test fails instead.
-    """
-    if _HAVE_FFMPEG:
-        return
-    if os.environ.get("REQUIRE_FFMPEG") == "1":
-        pytest.fail("REQUIRE_FFMPEG=1 but ffmpeg/ffprobe are not installed; CI must install them.")
-    pytest.skip("ffmpeg and ffprobe are not installed")
-
-
+# The real_ffmpeg fixture lives in conftest.py (skips locally, fails in CI when FFmpeg is missing).
 needs_ffmpeg = pytest.mark.usefixtures("real_ffmpeg")
 
 
