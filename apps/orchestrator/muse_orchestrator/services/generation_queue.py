@@ -869,8 +869,24 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
-        rel_path = os.path.relpath(stored.local_path, settings.media_root)
+        # Serialize final take-number allocation for databases that support row locks.
+        # SQLite ignores SELECT FOR UPDATE, so the unique constraint below is the final
+        # guard and an IntegrityError retry handles a concurrent insert there.
+        shot = (
+            await db.execute(
+                select(ShotRecord)
+                .where(ShotRecord.id == shot.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+        latest_take_number = (
+            await db.execute(select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id))
+        ).scalar_one()
+        take_num = (latest_take_number or 0) + 1
+        is_first_take = latest_take_number is None
 
+        rel_path = os.path.relpath(stored.local_path, settings.media_root)
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"
         asset = Asset(
             id=asset_id,
@@ -887,7 +903,6 @@ class GenerationQueueService:
             model_id=task.model_id,
             is_locked_reference=(task.task_type == "image"),
         )
-        db.add(asset)
 
         first_frame_aid: str | None = None
         last_frame_aid: str | None = None
@@ -917,8 +932,6 @@ class GenerationQueueService:
                 model_id=task.model_id,
                 is_locked_reference=True,
             ))
-        if frame_assets:
-            db.add_all(frame_assets)
 
         take_id = f"tke_{uuid.uuid4().hex[:10]}"
         take = ShotTakeRecord(
@@ -935,27 +948,89 @@ class GenerationQueueService:
             account_used=task.account_used,
             is_selected=is_first_take,
         )
-        db.add(take)
 
-        if is_first_take:
-            shot.selected_take_id = take_id
-            if not shot.first_frame_asset_id:
-                shot.first_frame_asset_id = first_frame_aid
-            shot.last_frame_asset_id = last_frame_aid
+        def mark_task_succeeded() -> None:
+            take.take_number = take_num
+            take.is_selected = is_first_take
+            if is_first_take:
+                shot.selected_take_id = take_id
+                if not shot.first_frame_asset_id:
+                    shot.first_frame_asset_id = first_frame_aid
+                shot.last_frame_asset_id = last_frame_aid
 
-        shot.generation_state = ShotGenerationState.SUCCEEDED
-        task.result_asset_id = asset_id
-        task.take_id = take_id
-        task.state = QueueTaskState.SUCCEEDED
-        task.finished_at = datetime.now(timezone.utc)
-        task.history_log = list(task.history_log or []) + [
-            f"Completed! Saved asset={asset_id}, take={take_id}, last_frame={last_frame_aid}."
-        ]
+            shot.generation_state = ShotGenerationState.SUCCEEDED
+            task.result_asset_id = asset_id
+            task.take_id = take_id
+            task.state = QueueTaskState.SUCCEEDED
+            task.finished_at = datetime.now(timezone.utc)
+            task.history_log = list(task.history_log or []) + [
+                f"Completed! Saved asset={asset_id}, take={take_id}, last_frame={last_frame_aid}."
+            ]
 
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
-        await db.commit()
+        for commit_attempt in range(3):
+            db.add(asset)
+            if frame_assets:
+                db.add_all(frame_assets)
+            db.add(take)
+            mark_task_succeeded()
+
+            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+            if lease is not None:
+                await db.delete(lease)
+
+            try:
+                await db.commit()
+                break
+            except IntegrityError:
+                await db.rollback()
+                await db.refresh(task)
+                await db.refresh(shot)
+
+                # Only a collision on (shot_id, take_number) is recoverable by retrying
+                # with a fresh number. Other integrity failures must fail closed.
+                duplicate_id = (
+                    await db.execute(
+                        select(ShotTakeRecord.id)
+                        .where(
+                            ShotTakeRecord.shot_id == shot.id,
+                            ShotTakeRecord.take_number == take_num,
+                        )
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if duplicate_id is None or commit_attempt == 2:
+                    for path in [stored.local_path, *(frame.path for frame in boundary_artifacts)]:
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+                    failure = ProviderFailure(
+                        ErrorCategory.INVALID_REQUEST,
+                        "Generated media could not be persisted because of a database integrity conflict.",
+                        retryable=False,
+                    )
+                    return await GenerationQueueService._handle_poll_failure(
+                        db, task, shot, conn, failure, raw_secret, "persistence"
+                    )
+
+                # The conflicting writer committed. Lock the shot row, pick max+1, and
+                # retry the same asset transaction with the new take number.
+                shot = (
+                    await db.execute(
+                        select(ShotRecord)
+                        .where(ShotRecord.id == shot.id)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                ).scalar_one()
+                latest_take_number = (
+                    await db.execute(
+                        select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id)
+                    )
+                ).scalar_one()
+                take_num = (latest_take_number or 0) + 1
+                is_first_take = latest_take_number is None
+
         if is_first_take and last_frame_aid:
             await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
         await db.refresh(task)
