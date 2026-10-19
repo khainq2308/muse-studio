@@ -374,6 +374,10 @@ class GenerationDispatchLeaseRecord(Base):
 
 class ShotTakeRecord(Base):
     __tablename__ = "shot_takes"
+    __table_args__ = (
+        UniqueConstraint("shot_id", "take_number", name="uq_shot_takes_shot_take_number"),
+    )
+
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     shot_id: Mapped[str] = mapped_column(ForeignKey("shots.id", ondelete="CASCADE"), index=True)
