@@ -108,7 +108,7 @@ async def assemble_or_update_timeline(
             if not s.selected_take_id:
                 missing_shot_ids.append(s.id)
                 continue
-            take = await repository.get_shot_take(s.selected_take_id)
+            take = await repository.get_timeline_shot_take(s.selected_take_id)
             if not take:
                 missing_shot_ids.append(s.id)
                 continue
@@ -270,7 +270,7 @@ async def _resolve_export_clips(
     for row in rows:
         asset_id = row.asset_id
         if not asset_id and row.take_id:
-            take = await repository.get_shot_take(row.take_id)
+            take = await repository.get_timeline_shot_take(row.take_id)
             if take is not None and take.project_id == project_id:
                 asset_id = take.asset_id
         asset = await repository.get_asset(asset_id) if asset_id else None
