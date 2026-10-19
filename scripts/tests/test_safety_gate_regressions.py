@@ -69,6 +69,8 @@ class DynamicShellExpansionGuardRegressionTests(unittest.TestCase):
             "g${IFS}it push origin main",
             "cmd=git; $cmd push origin main",
             'git push origin feature `echo --force`',
+            'eval "$COMMAND"',
+            'bash -c "$COMMAND"',
         ]
         for command in commands:
             with self.subTest(command=command):
