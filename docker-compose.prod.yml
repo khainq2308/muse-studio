@@ -77,8 +77,10 @@ services:
 
   studio-web:
     build:
-      context: ./apps/studio-web
-      dockerfile: Dockerfile.prod
+      # The Studio Web imports shared DTO types from packages/contracts.
+      # Use the monorepo root as build context so production images include them.
+      context: .
+      dockerfile: apps/studio-web/Dockerfile.prod
       args:
         VITE_ORCHESTRATOR_URL: "."
     restart: unless-stopped
