@@ -35,7 +35,11 @@ async def _schedule_generation_task(request: Request, task: GenerationTaskRecord
             },
         )
     try:
-        await enqueue_generation_step(redis, task)
+        await enqueue_generation_step(
+            redis,
+            task,
+            immediate=(task.state == QueueTaskState.QUEUED and not task.external_task_id),
+        )
     except Exception as exc:
         logger.exception("Could not schedule generation task %s in ARQ", task.id)
         raise HTTPException(
