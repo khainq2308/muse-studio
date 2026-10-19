@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import ipaddress
+import socket
 
 import httpx
 import pytest
@@ -51,19 +53,45 @@ async def test_error_body_reader_stops_at_configured_limit() -> None:
 
 
 class Upstream:
-    """Scripted upstream that records every request and the Authorization header it carried."""
+    """Scripted upstream that records request host/auth and provides deterministic DNS."""
 
     def __init__(self, routes: dict[str, httpx.Response]) -> None:
         self.routes = routes
         self.requests: list[tuple[str, str | None]] = []
+        self.request_targets: list[str] = []
+        self.dns_overrides: dict[str, list[str]] = {}
+        self.dns_calls: list[tuple[str, int]] = []
+
+    async def resolve(self, host: str, port: int) -> list[tuple[object, ...]]:
+        self.dns_calls.append((host, port))
+        addresses = self.dns_overrides.get(host, ["93.184.215.14"])
+        records: list[tuple[object, ...]] = []
+        for value in addresses:
+            ip = ipaddress.ip_address(value)
+            if ip.version == 6:
+                sockaddr = (value, port, 0, 0)
+                family = socket.AF_INET6
+            else:
+                sockaddr = (value, port)
+                family = socket.AF_INET
+            records.append((family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr))
+        return records
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        url = str(request.url)
+        self.request_targets.append(str(request.url))
+        host_header = request.headers["host"]
+        raw_path = request.url.raw_path.decode("ascii")
+        url = f"{request.url.scheme}://{host_header}{raw_path}"
         self.requests.append((url, request.headers.get("authorization")))
         return self.routes[url]
 
     def adapter(self) -> Muse2ApiAdapter:
-        return Muse2ApiAdapter(BASE, API_KEY, transport=httpx.MockTransport(self))
+        return Muse2ApiAdapter(
+            BASE,
+            API_KEY,
+            transport=httpx.MockTransport(self),
+            dns_resolver=self.resolve,
+        )
 
 
 BEARER = f"Bearer {API_KEY}"
@@ -139,6 +167,8 @@ async def test_url_on_another_host_never_receives_the_api_key(tmp_path: Path) ->
     await upstream.adapter().download_result("https://cdn.other.com/a.mp4", str(tmp_path))
 
     assert upstream.requests == [("https://cdn.other.com/a.mp4", None)]
+    # The socket destination is the validated DNS answer, not a second lookup of the hostname.
+    assert upstream.request_targets == ["https://93.184.215.14/a.mp4"]
 
 
 @pytest.mark.asyncio
@@ -206,6 +236,82 @@ async def test_redirect_loops_and_missing_locations_stop(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_dns_failure_is_blocked_instead_of_failing_open(tmp_path: Path) -> None:
+    async def resolver(host: str, port: int) -> list[tuple[object, ...]]:
+        raise socket.gaierror("simulated DNS failure")
+
+    adapter = Muse2ApiAdapter(BASE, API_KEY, dns_resolver=resolver)
+    with pytest.raises(ProviderFailure, match="SSRF blocked"):
+        await adapter.download_result("https://cdn.unresolvable.example/file.mp4", str(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_external_hostname_is_pinned_and_preserves_host_and_tls_sni() -> None:
+    upstream = Upstream({})
+    adapter = upstream.adapter()
+
+    pinned_url, headers, extensions = await adapter._pin_download_url("https://cdn.other.com/a.mp4")
+
+    assert pinned_url == "https://93.184.215.14/a.mp4"
+    assert headers["Host"] == "cdn.other.com"
+    assert extensions["sni_hostname"] == "cdn.other.com"
+    assert upstream.dns_calls == [("cdn.other.com", 443)]
+
+
+@pytest.mark.asyncio
+async def test_mixed_public_and_private_dns_answers_are_blocked(tmp_path: Path) -> None:
+    upstream = Upstream({})
+    upstream.dns_overrides["mixed.example.com"] = ["93.184.215.14", "10.10.0.7"]
+
+    with pytest.raises(ProviderFailure, match="SSRF"):
+        await upstream.adapter().download_result("https://mixed.example.com/file.mp4", str(tmp_path))
+
+    assert upstream.requests == []
+    assert upstream.request_targets == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[::1]/media.mp4",
+        "https://[::ffff:127.0.0.1]/media.mp4",
+        "https://[fd00::1]/media.mp4",
+        "https://[fe80::1%25eth0]/media.mp4",
+    ],
+)
+async def test_ipv6_and_mapped_ipv4_literals_are_checked_consistently(url: str) -> None:
+    adapter = Muse2ApiAdapter(BASE, API_KEY)
+
+    with pytest.raises(ProviderFailure, match="SSRF"):
+        await adapter._pin_download_url(url)
+
+
+@pytest.mark.asyncio
+async def test_unicode_hostname_uses_idna_for_dns_host_and_sni() -> None:
+    upstream = Upstream({})
+    adapter = upstream.adapter()
+
+    pinned_url, headers, extensions = await adapter._pin_download_url("https://münich.example/a.mp4")
+
+    assert pinned_url == "https://93.184.215.14/a.mp4"
+    assert headers["Host"] == "xn--mnich-kva.example"
+    assert extensions["sni_hostname"] == "xn--mnich-kva.example"
+    assert upstream.dns_calls == [("xn--mnich-kva.example", 443)]
+
+
+@pytest.mark.asyncio
+async def test_public_ipv6_literal_is_allowed_but_private_ipv6_is_blocked() -> None:
+    adapter = Muse2ApiAdapter(BASE, API_KEY)
+
+    public_url, _, _ = await adapter._pin_download_url("https://[2606:4700:4700::1111]/a.mp4")
+    assert public_url == "https://[2606:4700:4700::1111]/a.mp4"
+
+    with pytest.raises(ProviderFailure, match="SSRF"):
+        await adapter._pin_download_url("https://[fd00::1]/a.mp4")
+
+
+@pytest.mark.asyncio
 async def test_upstream_errors_are_still_classified(tmp_path: Path) -> None:
     upstream = Upstream({f"{BASE}/v1/media/bad": httpx.Response(500, text="boom")})
 
@@ -217,13 +323,20 @@ async def test_upstream_errors_are_still_classified(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(monkeypatch, tmp_path):
-    """P2 Regression: Chặn URL IP nội bộ/loopback/link-local và chặn redirect phân giải ra IP nội bộ."""
-    import socket
+    """Block private literals and fail closed when an external redirect resolves internally."""
     import httpx
-    from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
-    from muse_orchestrator.providers.base import ProviderFailure
 
-    adapter = Muse2ApiAdapter(base_url="https://api.muse.example.com", api_key="sk-live-secret-token")
+    async def resolver(host: str, port: int) -> list[tuple[object, ...]]:
+        address = "10.10.1.5" if host in {
+            "rebind.attacker.example.org", "internal-service.local", "localhost"
+        } else "93.184.215.14"
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))]
+
+    adapter = Muse2ApiAdapter(
+        base_url="https://api.muse.example.com",
+        api_key="sk-live-secret-token",
+        dns_resolver=resolver,
+    )
 
     for forbidden_url in [
         "https://127.0.0.1/media/video.mp4",
@@ -235,13 +348,6 @@ async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(mo
     ]:
         with pytest.raises(ProviderFailure, match="SSRF"):
             await adapter.download_result(forbidden_url, str(tmp_path))
-
-    def fake_getaddrinfo(host, port, *args, **kwargs):
-        if host == "rebind.attacker.example.org":
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.10.1.5", port or 443))]
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port or 443))]
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url) == "https://api.muse.example.com/v1/media/clip.mp4":
