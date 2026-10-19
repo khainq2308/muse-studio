@@ -3,34 +3,72 @@ from __future__ import annotations
 from typing import Any
 
 from arq import cron
-from muse_orchestrator.core.database import AsyncSessionLocal
+from arq.connections import RedisSettings
+from sqlalchemy import select
 
+from muse_orchestrator.core.database import AsyncSessionLocal
 from muse_orchestrator.core.config import settings
-from muse_orchestrator.models.domain import QueueTaskState
+from muse_orchestrator.models.domain import GenerationTaskRecord, QueueTaskState
 from muse_orchestrator.services.generation_queue import GenerationQueueService
 from muse_orchestrator.services.maintenance_service import cleanup_orphan_media
 
 
+def generation_step_job_id(task: GenerationTaskRecord) -> str:
+    """Stable id for one persisted queue state; concurrent enqueues are deduplicated."""
+    updated_at = task.updated_at or task.created_at
+    updated_token = updated_at.isoformat() if updated_at else "unknown"
+    return f"generation-step:{task.id}:{task.state.value}:{task.poll_count}:{updated_token}"
+
+
+async def enqueue_generation_step(redis: Any, task: GenerationTaskRecord) -> bool:
+    """Schedule an active task once per persisted state, returning whether ARQ accepted it."""
+    if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
+        return False
+    delay = 0 if task.state == QueueTaskState.QUEUED else max(0.0, float(task.next_poll_delay_seconds))
+    job = await redis.enqueue_job(
+        "process_generation_task_step",
+        task.id,
+        _job_id=generation_step_job_id(task),
+        _defer_by=delay,
+    )
+    return job is not None
+
+
 async def process_generation_task_step(ctx: dict[str, Any], task_id: str) -> dict[str, Any]:
     """
-    ARQ Worker Job: chạy 1 bước non-blocking và tự hẹn giờ (defer_by) bước poll tiếp theo
-    nếu task vẫn đang ở trạng thái QUEUED hoặc RUNNING.
+    ARQ Worker Job: chạy một bước của task và lên lịch poll tiếp theo theo backoff.
     """
     async with AsyncSessionLocal() as db:
         task = await GenerationQueueService.step_task(db, task_id)
         redis = ctx.get("redis")
-        if redis and task.state in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
-            await redis.enqueue_job(
-                "process_generation_task_step",
-                task.id,
-                _defer_by=task.next_poll_delay_seconds,
-            )
+        if redis:
+            await enqueue_generation_step(redis, task)
         return {
             "task_id": task.id,
             "state": task.state.value,
             "external_task_id": task.external_task_id,
             "next_poll_delay_seconds": task.next_poll_delay_seconds,
         }
+
+
+async def recover_pending_generation_tasks_job(ctx: dict[str, Any]) -> dict[str, int]:
+    """Recover queued/running DB tasks after a worker restart or a failed enqueue."""
+    redis = ctx.get("redis")
+    if redis is None:
+        return {"found": 0, "scheduled": 0}
+
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            select(GenerationTaskRecord)
+            .where(GenerationTaskRecord.state.in_((QueueTaskState.QUEUED, QueueTaskState.RUNNING)))
+            .order_by(GenerationTaskRecord.priority.desc(), GenerationTaskRecord.created_at.asc())
+        )
+        tasks = rows.scalars().all()
+        scheduled = 0
+        for task in tasks:
+            if await enqueue_generation_step(redis, task):
+                scheduled += 1
+        return {"found": len(tasks), "scheduled": scheduled}
 
 
 async def cleanup_orphan_media_job(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -51,12 +89,20 @@ async def cleanup_orphan_media_job(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 class WorkerSettings:
-    functions = [process_generation_task_step, cleanup_orphan_media_job]
-    # Daily orphan cleanup at 02:30 local worker time; disable via env.
-    cron_jobs = (
-        [cron(cleanup_orphan_media_job, hour=2, minute=30)]
-        if settings.orphan_cleanup_enabled
-        else []
-    )
+    functions = [
+        process_generation_task_step,
+        recover_pending_generation_tasks_job,
+        cleanup_orphan_media_job,
+    ]
+    redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    cron_jobs = [
+        # Re-enqueue DB tasks once per minute. Stable job IDs prevent duplicate queue entries.
+        cron(recover_pending_generation_tasks_job, second=0),
+        *(
+            [cron(cleanup_orphan_media_job, hour=2, minute=30)]
+            if settings.orphan_cleanup_enabled
+            else []
+        ),
+    ]
     max_jobs = 20
     job_timeout = 120
