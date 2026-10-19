@@ -12,6 +12,8 @@ from muse_orchestrator.models.domain import (
     BackupRecord,
     ConnectionAccount,
     StructuredLogRecord,
+)
+from muse_orchestrator.models.domain import (
     WorkflowDefinition,
     WorkflowVersion,
     WorkflowRun,
