@@ -58,6 +58,7 @@ class Upstream:
     def __init__(self, routes: dict[str, httpx.Response]) -> None:
         self.routes = routes
         self.requests: list[tuple[str, str | None]] = []
+        self.request_targets: list[str] = []
         self.dns_overrides: dict[str, list[str]] = {}
         self.dns_calls: list[tuple[str, int]] = []
 
@@ -77,6 +78,7 @@ class Upstream:
         return records
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.request_targets.append(str(request.url))
         host_header = request.headers["host"]
         raw_path = request.url.raw_path.decode("ascii")
         url = f"{request.url.scheme}://{host_header}{raw_path}"
@@ -165,6 +167,8 @@ async def test_url_on_another_host_never_receives_the_api_key(tmp_path: Path) ->
     await upstream.adapter().download_result("https://cdn.other.com/a.mp4", str(tmp_path))
 
     assert upstream.requests == [("https://cdn.other.com/a.mp4", None)]
+    # The socket destination is the validated DNS answer, not a second lookup of the hostname.
+    assert upstream.request_targets == ["https://93.184.215.14/a.mp4"]
 
 
 @pytest.mark.asyncio
@@ -252,6 +256,35 @@ async def test_external_hostname_is_pinned_and_preserves_host_and_tls_sni() -> N
     assert headers["Host"] == "cdn.other.com"
     assert extensions["sni_hostname"] == "cdn.other.com"
     assert upstream.dns_calls == [("cdn.other.com", 443)]
+
+
+@pytest.mark.asyncio
+async def test_mixed_public_and_private_dns_answers_are_blocked(tmp_path: Path) -> None:
+    upstream = Upstream({})
+    upstream.dns_overrides["mixed.example.com"] = ["93.184.215.14", "10.10.0.7"]
+
+    with pytest.raises(ProviderFailure, match="SSRF"):
+        await upstream.adapter().download_result("https://mixed.example.com/file.mp4", str(tmp_path))
+
+    assert upstream.requests == []
+    assert upstream.request_targets == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[::1]/media.mp4",
+        "https://[::ffff:127.0.0.1]/media.mp4",
+        "https://[fd00::1]/media.mp4",
+        "https://[fe80::1%25eth0]/media.mp4",
+    ],
+)
+async def test_ipv6_and_mapped_ipv4_literals_are_checked_consistently(url: str) -> None:
+    adapter = Muse2ApiAdapter(BASE, API_KEY)
+
+    with pytest.raises(ProviderFailure, match="SSRF"):
+        await adapter._pin_download_url(url)
 
 
 @pytest.mark.asyncio
