@@ -10,9 +10,9 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m4_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.main import app
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.models.domain import Base
+from muse_orchestrator.main import app  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.models.domain import Base  # noqa: E402 -- environment must be configured before app/database import
 
 
 class _FakeArqPool:
@@ -186,7 +186,6 @@ SHOT 3: Stuck Poll Timeout Shot
 @pytest.mark.asyncio
 async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monkeypatch):
     """A duplicate worker invocation must not dispatch the same unclaimed task twice."""
-    from sqlalchemy import select
     from muse_orchestrator.models.domain import (
         GenerationDispatchLeaseRecord, GenerationTaskRecord, Project,
         ProviderConnection, SceneRecord, ShotRecord, QueueTaskState,
