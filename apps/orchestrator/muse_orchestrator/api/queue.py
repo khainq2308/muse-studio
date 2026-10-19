@@ -136,6 +136,7 @@ async def list_queue_tasks(
 @router.post("/tasks/{task_id}/step")
 async def step_generation_task(
     task_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
@@ -143,6 +144,7 @@ async def step_generation_task(
         task = await GenerationQueueService.step_task(db, task_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await schedule_generation_task(request, task)
     return _serialize_task(task)
 
 
@@ -159,7 +161,7 @@ async def pause_task(task_id: str, db: AsyncSession = Depends(get_db), actor: st
 
 
 @router.post("/tasks/{task_id}/resume")
-async def resume_task(task_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+async def resume_task(task_id: str, request: Request, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
     task = await db.get(GenerationTaskRecord, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -167,6 +169,8 @@ async def resume_task(task_id: str, db: AsyncSession = Depends(get_db), actor: s
         task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
         task.history_log = list(task.history_log or []) + ["Resumed by operator."]
         await db.commit()
+        await db.refresh(task)
+    await schedule_generation_task(request, task)
     return _serialize_task(task)
 
 
