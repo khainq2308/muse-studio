@@ -94,6 +94,6 @@ def test_legacy_duplicate_take_numbers_are_repaired_before_unique_index_creation
                 connection.execute(text(
                     "INSERT INTO shot_takes (id, shot_id, take_number, created_at) "
                     "VALUES ('take_duplicate', 'shot_a', 1, '2026-01-05')"
-                )
+                ))
     finally:
         engine.dispose()
