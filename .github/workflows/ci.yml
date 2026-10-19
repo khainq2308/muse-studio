@@ -37,6 +37,12 @@ jobs:
           SECRET_ENCRYPTION_KEY: ci-only-encryption-key-0123456789abcdef0123456789abcdef
           STUDIO_ADMIN_TOKEN: ci-only-admin-token
         run: docker compose -f docker-compose.prod.yml config --quiet
+      - name: Build production images
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          SECRET_ENCRYPTION_KEY: ci-only-encryption-key-0123456789abcdef0123456789abcdef
+          STUDIO_ADMIN_TOKEN: ci-only-admin-token
+        run: docker compose -f docker-compose.prod.yml build
 
   python-tests:
     name: Python tests
