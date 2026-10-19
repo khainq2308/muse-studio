@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
     ProviderFailure, ErrorCategory
 )
+from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage
 from muse_orchestrator.services.account_pool import (
     build_provider_for_account,
     mark_account_used,
@@ -209,11 +211,101 @@ async def _verify_downloaded_artifact(path: str, task_type: str, provider_type: 
         raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Downloaded MP4 contains no valid video stream.")
 
 
+_FIRST_FRAME_MAX_BYTES = 20 * 1024 * 1024
+_FIRST_FRAME_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+
+
 class GenerationQueueService:
     """
     Điều phối vòng đời sinh Ảnh/Video qua muse2api + Tự động tách Boundary Frames
     và lan truyền Frame Chaining giữa các Shot liên tiếp (M4 & M5).
     """
+
+    @staticmethod
+    async def load_first_frame_data_uri(db: AsyncSession, shot: ShotRecord) -> str | None:
+        """Load a validated local frame as a data URI; never pass an internal Asset ID upstream."""
+        # A shot's stored opening frame is also retained for review/take history. Only
+        # frame_chain mode means it should be sent as the conditioning input on dispatch.
+        if shot.continuity_mode != "frame_chain":
+            return None
+        if not shot.first_frame_asset_id:
+            if shot.previous_shot_id:
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    "Frame-chained shot has no first-frame asset; refusing to dispatch without continuity.",
+                    retryable=False,
+                )
+            return None
+
+        asset = await db.get(Asset, shot.first_frame_asset_id)
+        if asset is None or asset.project_id != shot.project_id:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset is missing or belongs to a different project.",
+                retryable=False,
+            )
+        if asset.mime_type not in _FIRST_FRAME_MIME_TYPES:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset must be a PNG, JPEG, or WebP image.",
+                retryable=False,
+            )
+        if asset.size_bytes <= 0 or asset.size_bytes > _FIRST_FRAME_MAX_BYTES:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset is empty or exceeds the 20 MiB provider handoff limit.",
+                retryable=False,
+            )
+
+        storage = LocalAssetStorage(settings.media_root)
+        try:
+            path = storage.resolve_safe_path(asset.storage_rel_path)
+
+            def read_limited() -> bytes:
+                with path.open("rb") as stream:
+                    data = stream.read(_FIRST_FRAME_MAX_BYTES + 1)
+                if len(data) > _FIRST_FRAME_MAX_BYTES:
+                    raise AssetStorageError("First-frame asset exceeds the provider handoff limit.")
+                return data
+
+            content = await asyncio.to_thread(read_limited)
+        except AssetStorageError as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset is missing or has an unsafe storage path.",
+                retryable=False,
+            ) from exc
+        except OSError as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset could not be read from storage.",
+                retryable=False,
+            ) from exc
+
+        if len(content) != asset.size_bytes:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset size does not match its stored metadata.",
+                retryable=False,
+            )
+        try:
+            LocalAssetStorage.verify_mime_signature(content, asset.mime_type)
+        except AssetStorageError as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset signature does not match its declared MIME type.",
+                retryable=False,
+            ) from exc
+
+        digest = hashlib.sha256(content).hexdigest()
+        if digest != asset.sha256:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "First-frame asset SHA-256 does not match its stored metadata.",
+                retryable=False,
+            )
+        encoded = base64.b64encode(content).decode("ascii")
+        return f"data:{asset.mime_type};base64,{encoded}"
 
     @staticmethod
     async def propagate_frame_chain_downstream(db: AsyncSession, upstream_shot: ShotRecord) -> list[str]:
@@ -519,6 +611,7 @@ class GenerationQueueService:
                         )
                     )
                 else:
+                    first_frame_data_uri = await GenerationQueueService.load_first_frame_data_uri(db, shot)
                     p_task = await provider.generate_video(
                         VideoGenerationRequest(
                             shot_id=shot.id,
@@ -527,7 +620,7 @@ class GenerationQueueService:
                             model_id=task.model_id,
                             duration_seconds=shot.duration_seconds,
                             aspect_ratio=shot.aspect_ratio,
-                            first_frame_url=shot.first_frame_asset_id,
+                            first_frame_url=first_frame_data_uri,
                             idempotency_key=task.idempotency_key,
                         )
                     )
