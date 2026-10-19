@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_media.boundary_frames import BoundaryFrames, extract_boundary_frames
@@ -89,7 +90,7 @@ def _create_mock_boundary_frame_png(
         + _png_chunk(b"IEND", b"")
     )
     digest = hashlib.sha256(png_bytes).hexdigest()
-    filename = f"{shot_id}_take{take_num}_{position}_{digest[:10]}.png"
+    filename = f"{shot_id}_{position}_{digest[:10]}.png"
     full_path = os.path.join(dest_dir, filename)
     with open(full_path, "wb") as stream:
         stream.write(png_bytes)
@@ -115,8 +116,10 @@ async def _extract_video_boundary_frames(
             )
         ]
 
+    # Keep run paths independent of the provisional take number. The persisted take
+    # number is allocated again under a row lock when concurrent workers finish.
     output_dir = os.path.join(
-        dest_dir, "boundary_frames", shot_id, f"take_{take_num}_{uuid.uuid4().hex[:8]}"
+        dest_dir, "boundary_frames", shot_id, f"run_{uuid.uuid4().hex[:12]}"
     )
     try:
         extract = extractor or extract_boundary_frames
@@ -821,11 +824,12 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
-        existing_takes_count = (
-            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
+        latest_take_number = (
+            await db.execute(select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id))
         ).scalar_one()
-        take_num = existing_takes_count + 1
-        is_first_take = existing_takes_count == 0
+        # Provisional number for mock-frame generation. The final number is allocated
+        # again under a parent-shot row lock immediately before persistence.
+        take_num = (latest_take_number or 0) + 1
 
         boundary_artifacts: list[_BoundaryFrameArtifact] = []
         if task.task_type == "video":
