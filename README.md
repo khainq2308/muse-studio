@@ -38,9 +38,9 @@ cp .env.prod.example .env.prod
 # và STUDIO_ADMIN_TOKEN bằng các secret riêng, không dùng giá trị mặc định/dev.
 docker compose --env-file .env.prod -f docker-compose.prod.yml config --quiet
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
 
 Before starting production, set `MUSE2API_VIDEO_PAYLOAD_PROFILE` in `.env.prod` to a provider-specific profile that has been verified against the deployed gateway: `czg86389-hub`, or `www222fff` with the corresponding confirmed `MUSE2API_VIDEO_SIZE`. Production intentionally refuses the legacy `compat` profile because it sends first-frame data in two JSON fields and emits unverified `size`/`aspect_ratio` aliases. Do not guess the profile from unit tests; verify the actual gateway contract first.
-```
 
 Tạo secret ngẫu nhiên, ví dụ bằng `openssl rand -hex 32` cho encryption key và database password, và `openssl rand -hex 24` cho admin token. Nếu database password có ký tự đặc biệt trong URL, hãy percent-encode giá trị trước khi dùng trong `DATABASE_URL`. Frontend được bind vào `127.0.0.1:8080` mặc định; đặt reverse proxy HTTPS ở trước nó nếu cần truy cập từ mạng. Không expose cổng HTTP này trực tiếp ra Internet.
 
