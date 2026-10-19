@@ -35,7 +35,8 @@ async def test_artifact_verifier_rejects_mislabeled_or_undecodable_media(tmp_pat
     bad_video = tmp_path / "bad.mp4"
     bad_video.write_bytes(b"\x00\x00\x00\x18ftypmp42not a decodable video")
     with pytest.raises(ProviderFailure):
-        await _verify_downloaded_artifact(str(bad_video), "video", "muse2api", "video/mp4")\n
+        await _verify_downloaded_artifact(str(bad_video), "video", "muse2api", "video/mp4")
+
 def test_secret_redactor_descends_into_nested_mappings_lists_and_tuples():
     from muse_orchestrator.core.config import SecretRedactor
 
