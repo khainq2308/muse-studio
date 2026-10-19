@@ -123,7 +123,7 @@ export default function Timeline({ api, project, refreshToken, notify }: ModuleP
         {!exportResult ? <EmptyState title="Chưa có export trong phiên này" detail="Render sequence để xem trạng thái job và link tải MP4." /> : (
           <div className="module-stack">
             <div className="export-result-head"><div><strong>Export {exportResult.export_id}</strong><small>Output asset {exportResult.output_asset_id ?? "—"}</small></div><StatusBadge status={exportResult.state} /></div>
-            {unsupported.length > 0 && <div className="callout callout-warning"><strong>Các feature chưa được render bởi exporter</strong><p>{unsupported.map((feature) => feature.replaceAll("_", " ")).join(" · ")}</p><small>Exporter hiện chưa mix clip audio, title cards, subtitles hoặc extra audio tracks nếu các feature đó được dùng. UI báo rõ để không nhầm với kết quả đã render.</small></div>}
+            {unsupported.length > 0 && <div className="callout callout-warning"><strong>Các feature chưa được render bởi exporter</strong><p>{unsupported.map((feature) => feature.replace(/_/g, " ")).join(" · ")}</p><small>Exporter hiện chưa mix clip audio, title cards, subtitles hoặc extra audio tracks nếu các feature đó được dùng. UI báo rõ để không nhầm với kết quả đã render.</small></div>}
             {exportResult.output_asset_id && <a className="button button-secondary" href={api.assetDownloadUrl(exportResult.output_asset_id)} target="_blank" rel="noreferrer">↓ Tải file MP4</a>}
             {exportResult.ffprobe_verification && <details className="json-details"><summary>FFprobe verification details</summary><pre>{JSON.stringify(exportResult.ffprobe_verification, null, 2)}</pre></details>}
           </div>
