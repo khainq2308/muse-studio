@@ -6,15 +6,13 @@ from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from muse_orchestrator.api.dependencies import get_studio_repository
 from muse_orchestrator.core.config import SecretRedactor, settings
-from muse_orchestrator.core.database import get_db
 from muse_orchestrator.core.security import verify_single_admin
+from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import (
-    Project, ShotRecord, ShotTakeRecord, Asset,
-    TimelineSequenceRecord, TimelineTrackRecord, TimelineClipRecord,
+    Asset, TimelineSequenceRecord, TimelineTrackRecord, TimelineClipRecord,
     ExportJobRecord, ExportJobState
 )
 from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage
@@ -76,24 +74,20 @@ class ExportLaunchIn(BaseModel):
 async def assemble_or_update_timeline(
     project_id: str,
     payload: TimelineAssembleIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """
     Sắp xếp các Shot Takes lên Timeline, hỗ trợ Trim, Reorder, Cross Dissolve,
     Audio/Music/Voice-over tracks, Subtitle SRT/VTT và Title Card (Mục 3.9 & M6 PRD).
     """
-    proj = await db.get(Project, project_id)
+    proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
-    shots = (
-        await db.execute(
-            select(ShotRecord)
-            .where(ShotRecord.project_id == project_id)
-            .order_by(ShotRecord.sequence_index.asc())
-        )
-    ).scalars().all()
+    shots = await repository.list_project_shots(project_id)
+    if shots is None:
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
     missing_shot_ids: list[str] = []
     clip_dicts: list[dict[str, Any]] = []
@@ -110,7 +104,7 @@ async def assemble_or_update_timeline(
             if not s.selected_take_id:
                 missing_shot_ids.append(s.id)
                 continue
-            take = await db.get(ShotTakeRecord, s.selected_take_id)
+            take = await repository.get_shot_take(s.selected_take_id)
             if not take:
                 missing_shot_ids.append(s.id)
                 continue
@@ -179,8 +173,6 @@ async def assemble_or_update_timeline(
         warnings_json=warnings,
         manifest_json=manifest,
     )
-    db.add(seq)
-
     v_track = TimelineTrackRecord(
         id=v_track_id,
         sequence_id=seq_id,
@@ -189,10 +181,9 @@ async def assemble_or_update_timeline(
         name="V1 - Main Shot Sequence",
         clips_json=clip_dicts,
     )
-    db.add(v_track)
 
-    for idx, aud in enumerate(payload.audio_tracks, start=2):
-        db.add(TimelineTrackRecord(
+    audio_track_rows = [
+        TimelineTrackRecord(
             id=f"trk_a_{uuid.uuid4().hex[:8]}",
             sequence_id=seq_id,
             track_index=idx,
@@ -201,10 +192,11 @@ async def assemble_or_update_timeline(
             muted=aud.muted,
             volume=aud.volume,
             clips_json=[aud.model_dump()],
-        ))
-
-    for c in clip_dicts:
-        db.add(TimelineClipRecord(
+        )
+        for idx, aud in enumerate(payload.audio_tracks, start=2)
+    ]
+    clip_rows = [
+        TimelineClipRecord(
             id=f"clp_{uuid.uuid4().hex[:8]}",
             sequence_id=seq_id,
             track_id=v_track_id,
@@ -222,9 +214,10 @@ async def assemble_or_update_timeline(
             volume=float(c["volume"]),
             fade_in_seconds=float(c["fade_in_seconds"]),
             fade_out_seconds=float(c["fade_out_seconds"]),
-        ))
-
-    await db.commit()
+        )
+        for c in clip_dicts
+    ]
+    await repository.create_timeline_bundle(seq, [v_track, *audio_track_rows], clip_rows)
 
     return {
         "sequence_id": seq.id,
@@ -244,15 +237,9 @@ async def assemble_or_update_timeline(
 @router.get("")
 async def get_latest_project_timeline(
     project_id: str,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
 ) -> dict[str, Any]:
-    seq = (
-        await db.execute(
-            select(TimelineSequenceRecord)
-            .where(TimelineSequenceRecord.project_id == project_id)
-            .order_by(TimelineSequenceRecord.created_at.desc())
-        )
-    ).scalars().first()
+    seq = await repository.get_latest_timeline_sequence(project_id)
     if not seq:
         raise HTTPException(status_code=404, detail="Project chưa có Timeline Sequence nào.")
 
@@ -269,26 +256,20 @@ async def get_latest_project_timeline(
 
 
 async def _resolve_export_clips(
-    db: AsyncSession, project_id: str, sequence_id: str
+    repository: StudioRepository, project_id: str, sequence_id: str
 ) -> tuple[list[ExportClip], list[str]]:
     """Map the sequence's clip rows to real video files that belong to this project."""
-    rows = (
-        await db.execute(
-            select(TimelineClipRecord)
-            .where(TimelineClipRecord.sequence_id == sequence_id)
-            .order_by(TimelineClipRecord.order_index.asc())
-        )
-    ).scalars().all()
+    rows = await repository.list_timeline_clips(sequence_id)
     storage = LocalAssetStorage(settings.media_root)
     clips: list[ExportClip] = []
     unresolved: list[str] = []
     for row in rows:
         asset_id = row.asset_id
         if not asset_id and row.take_id:
-            take = await db.get(ShotTakeRecord, row.take_id)
+            take = await repository.get_shot_take(row.take_id)
             if take is not None and take.project_id == project_id:
                 asset_id = take.asset_id
-        asset = await db.get(Asset, asset_id) if asset_id else None
+        asset = await repository.get_asset(asset_id) if asset_id else None
         if asset is None or asset.project_id != project_id or not asset.mime_type.startswith("video/"):
             unresolved.append(f"clip #{row.order_index}: không có asset video thuộc project này")
             continue
@@ -327,7 +308,7 @@ def _unsupported_export_features(seq: TimelineSequenceRecord) -> list[str]:
 async def launch_ffmpeg_export(
     project_id: str,
     payload: ExportLaunchIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """
@@ -336,15 +317,9 @@ async def launch_ffmpeg_export(
     FAILED export job and returned as an error; no asset is created for it.
     """
     if payload.sequence_id:
-        seq = await db.get(TimelineSequenceRecord, payload.sequence_id)
+        seq = await repository.get_timeline_sequence(payload.sequence_id)
     else:
-        seq = (
-            await db.execute(
-                select(TimelineSequenceRecord)
-                .where(TimelineSequenceRecord.project_id == project_id)
-                .order_by(TimelineSequenceRecord.created_at.desc())
-            )
-        ).scalars().first()
+        seq = await repository.get_latest_timeline_sequence(project_id)
 
     if not seq or seq.project_id != project_id:
         raise HTTPException(status_code=404, detail="Không tìm thấy Timeline Sequence để Export.")
@@ -353,7 +328,7 @@ async def launch_ffmpeg_export(
     fps = payload.fps or seq.fps
     res = TimelineValidationService.resolve_resolution(aspect, payload.resolution)
 
-    clips, unresolved = await _resolve_export_clips(db, project_id, seq.id)
+    clips, unresolved = await _resolve_export_clips(repository, project_id, seq.id)
     if unresolved:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -382,7 +357,7 @@ async def launch_ffmpeg_export(
             )
     except ExportError as exc:
         message = SecretRedactor.redact_text(exc.message)
-        db.add(ExportJobRecord(
+        failed_job = ExportJobRecord(
             id=export_id,
             project_id=project_id,
             sequence_id=seq.id,
@@ -397,8 +372,8 @@ async def launch_ffmpeg_export(
             ffprobe_verification_json=exc.probe_meta,
             error_message_redacted=message,
             finished_at=datetime.now(timezone.utc),
-        ))
-        await db.commit()
+        )
+        await repository.create_export_job(failed_job)
         raise HTTPException(
             status_code=exc.status_code,
             detail={
@@ -412,7 +387,7 @@ async def launch_ffmpeg_export(
     probe_meta["unsupported_features"] = unsupported
     asset_id = f"ast_exp_{uuid.uuid4().hex[:8]}"
     rel_path = os.path.relpath(out_path, settings.media_root)
-    db.add(Asset(
+    asset = Asset(
         id=asset_id,
         project_id=project_id,
         asset_type="video",
@@ -422,7 +397,7 @@ async def launch_ffmpeg_export(
         size_bytes=size_bytes,
         sha256=sha256_hex,
         is_locked_reference=False,
-    ))
+    )
     job = ExportJobRecord(
         id=export_id,
         project_id=project_id,
@@ -439,8 +414,7 @@ async def launch_ffmpeg_export(
         ffprobe_verification_json=probe_meta,
         finished_at=datetime.now(timezone.utc),
     )
-    db.add(job)
-    await db.commit()
+    await repository.create_export_result(asset, job)
 
     return {
         "export_id": job.id,
@@ -478,34 +452,18 @@ def _install_p3_timeline_api_patch() -> None:
         b_args = bound.arguments
         project_id = b_args.get("project_id")
         payload = b_args.get("payload")
-        db = b_args.get("db") or b_args.get("session")
+        repository = b_args.get("repository")
 
         early_unsupported: list[str] = []
-        if db is not None and project_id:
+        if repository is not None and project_id:
             try:
                 seq_id = getattr(payload, "sequence_id", None) if payload else None
                 if seq_id:
-                    seq_obj = await db.get(TimelineSequenceRecord, seq_id)
+                    seq_obj = await repository.get_timeline_sequence(seq_id)
                 else:
-                    seq_obj = (
-                        await db.execute(
-                            select(TimelineSequenceRecord)
-                            .where(TimelineSequenceRecord.project_id == project_id)
-                            .order_by(TimelineSequenceRecord.created_at.desc())
-                        )
-                    ).scalars().first()
+                    seq_obj = await repository.get_latest_timeline_sequence(project_id)
                 if seq_obj and seq_obj.project_id == project_id:
-                    manifest = seq_obj.manifest_json or {}
-                    collect_fn = getattr(TimelineValidationService, "collect_unsupported_features", None)
-                    if callable(collect_fn):
-                        early_unsupported = list(collect_fn(manifest) or [])
-                    else:
-                        if manifest.get("title_card"):
-                            early_unsupported.append("title_card")
-                        if manifest.get("has_subtitles"):
-                            early_unsupported.append("subtitles")
-                        if manifest.get("audio_tracks"):
-                            early_unsupported.append("audio_tracks")
+                    early_unsupported = _unsupported_export_features(seq_obj)
             except Exception:
                 early_unsupported = []
 
