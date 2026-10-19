@@ -27,8 +27,11 @@ Origin = tuple[str, str, int]
 
 
 def _origin(url: str) -> Origin | None:
-    """(scheme, host, port) for an absolute http(s) URL, or None for anything else."""
-    parts = urlsplit(url)
+    """(scheme, host, port) for an absolute http(s) URL, or None for invalid inputs."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
     scheme = parts.scheme.lower()
     if scheme not in _DEFAULT_PORTS or not parts.hostname:
         return None
