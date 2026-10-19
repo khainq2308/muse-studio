@@ -149,6 +149,7 @@ def test_origin_ignores_case_and_default_ports_but_not_scheme_or_port() -> None:
     assert _origin("http://muse.example.com/x") != same
     assert _origin("https://muse.example.com:8443/x") != same
     assert _origin("https://muse.example.com.evil.com/x") != same
+    assert _origin("https://muse.example.com:0/x") is None
     assert _origin("https://bücher.example/x") == _origin("https://xn--bcher-kva.example/y")
     assert _origin("file:///etc/passwd") is None
     assert _origin("/v1/media/x") is None
