@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
-from muse_orchestrator.core.config import SecretRedactor
+from muse_orchestrator.core.config import SecretRedactor, settings
 from muse_orchestrator.providers.base import (
     VideoProvider, ProviderHealth, ModelCapability,
     ImageGenerationRequest, VideoGenerationRequest,
@@ -252,25 +252,34 @@ class Muse2ApiAdapter(VideoProvider):
             return _task_from_response(_json_or_fail(resp))
 
     def _build_video_payload(self, request: VideoGenerationRequest) -> dict[str, object]:
-        """Build a video request compatible with known muse2api request-schema variants.
+        """Build a video request for the configured muse2api schema profile.
 
-        The www222fff schema consumes image and size; the czg86389-hub variant
-        documents first_frame_image and aspect_ratio. Unknown fields are ignored by
-        their request schemas, so include both aliases. Frame inputs must already be
-        URLs or data URIs, never internal Asset IDs.
+        compat emits documented aliases to preserve deployments whose fork has not
+        been identified. Select www222fff or czg86389-hub after confirming the deployed
+        contract to send only its supported frame and aspect-ratio fields; this avoids
+        duplicating large base64 data URIs in the JSON body.
         """
+        profile = settings.video_payload_profile
         body: dict[str, object] = {
             "model": request.model_id,
             "prompt": request.prompt,
             "duration": request.duration_seconds,
-            "size": request.aspect_ratio,
-            "aspect_ratio": request.aspect_ratio,
         }
+        if profile == "www222fff":
+            body["size"] = request.aspect_ratio
+        elif profile == "czg86389-hub":
+            body["aspect_ratio"] = request.aspect_ratio
+        else:  # compat (the safe default until the deployment is verified)
+            body["size"] = request.aspect_ratio
+            body["aspect_ratio"] = request.aspect_ratio
+
         if request.negative_prompt:
             body["negative_prompt"] = request.negative_prompt
         if request.first_frame_url:
-            body["image"] = request.first_frame_url
-            body["first_frame_image"] = request.first_frame_url
+            if profile in ("compat", "www222fff"):
+                body["image"] = request.first_frame_url
+            if profile in ("compat", "czg86389-hub"):
+                body["first_frame_image"] = request.first_frame_url
         if request.reference_image_urls:
             body["reference_images"] = request.reference_image_urls
         return body
