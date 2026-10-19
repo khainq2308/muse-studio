@@ -5,13 +5,12 @@ import uuid
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from muse_orchestrator.core.database import get_db
+from muse_orchestrator.api.dependencies import get_studio_repository
+from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
-    Project, Asset, ScriptRevision, StoryBibleEntry,
+    ScriptRevision, StoryBibleEntry,
     SceneRecord, ShotRecord, ShotApprovalState, ShotGenerationState
 )
 from muse_orchestrator.services.script_parser import ScriptAnalyzerService
@@ -25,7 +24,6 @@ router = APIRouter(prefix="/api/v1/projects/{project_id}", tags=["M2 Script-to-S
 class ScriptImportIn(BaseModel):
     raw_content: str = Field(..., min_length=5)
     source_format: str = Field(default="museflow")
-    # Applying a proposal replaces the Story Bible, scenes and shots; require explicit opt-in.
     auto_apply_proposal: bool = Field(default=False)
 
 
@@ -53,18 +51,18 @@ class ShotUpdateIn(BaseModel):
     approval_state: ShotApprovalState | None = None
 
 
-async def _recompile_project_shots(project_id: str, db: AsyncSession) -> list[ShotRecord]:
-    """Biên dịch lại Prompt và chạy Continuity Linter cho toàn bộ Shot của Project."""
-    proj = await db.get(Project, project_id)
+async def _recompile_project_shots(project_id: str, repository: StudioRepository) -> list[ShotRecord]:
+    """Recompile and persist prompts/lint state after an explicit project mutation.
+
+    Read-only list/export handlers must use ``StudioRepository.list_project_shots``
+    directly; calling this helper writes to the database.
+    """
+    proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
-    bible_rows = (
-        await db.execute(select(StoryBibleEntry).where(StoryBibleEntry.project_id == project_id))
-    ).scalars().all()
-    asset_rows = (
-        await db.execute(select(Asset.id).where(Asset.project_id == project_id))
-    ).scalars().all()
+    bible_rows = await repository.list_story_bible_entries(project_id)
+    asset_rows = await repository.list_project_asset_ids(project_id)
     available_assets = set(asset_rows)
 
     characters: dict[str, CharacterLock] = {}
@@ -105,13 +103,9 @@ async def _recompile_project_shots(project_id: str, db: AsyncSession) -> list[Sh
                 forbidden_terms=list(b.mutable_attributes.get("forbidden_terms", [])),
             )
 
-    shots = (
-        await db.execute(
-            select(ShotRecord)
-            .where(ShotRecord.project_id == project_id)
-            .order_by(ShotRecord.sequence_index.asc())
-        )
-    ).scalars().all()
+    shots = await repository.list_project_shots(project_id)
+    if shots is None:
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
     previous_spec: ShotSpec | None = None
     for s in shots:
@@ -155,7 +149,7 @@ async def _recompile_project_shots(project_id: str, db: AsyncSession) -> list[Sh
         elif s.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
             s.generation_state = ShotGenerationState.NOT_STARTED
 
-    await db.commit()
+    await repository.commit_pipeline_changes()
     return list(shots)
 
 
@@ -163,16 +157,14 @@ async def _recompile_project_shots(project_id: str, db: AsyncSession) -> list[Sh
 async def import_and_analyze_script(
     project_id: str,
     payload: ScriptImportIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
-    proj = await db.get(Project, project_id)
+    proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
-    existing_revs = (
-        await db.execute(select(ScriptRevision).where(ScriptRevision.project_id == project_id))
-    ).scalars().all()
+    existing_revs = await repository.list_script_revisions(project_id)
     next_ver = len(existing_revs) + 1
 
     proposal = ScriptAnalyzerService.analyze_script(payload.raw_content, default_style=proj.style_preset)
@@ -194,16 +186,14 @@ async def import_and_analyze_script(
         diff_summary=proposal.diff_summary,
         is_approved=payload.auto_apply_proposal,
     )
-    db.add(script_rev)
+    repository.stage_pipeline_entity(script_rev)
 
     if payload.auto_apply_proposal:
-        await db.execute(delete(ShotRecord).where(ShotRecord.project_id == project_id))
-        await db.execute(delete(SceneRecord).where(SceneRecord.project_id == project_id))
-        await db.execute(delete(StoryBibleEntry).where(StoryBibleEntry.project_id == project_id))
+        await repository.delete_project_pipeline_records(project_id)
 
         # 1. Lưu Style, Characters, Locations vào Story Bible
         style_data = proposal.style
-        db.add(StoryBibleEntry(
+        repository.stage_pipeline_entity(StoryBibleEntry(
             id=f"bib_{uuid.uuid4().hex[:8]}",
             project_id=project_id,
             entry_type="style",
@@ -213,7 +203,7 @@ async def import_and_analyze_script(
             mutable_attributes=style_data["mutable_attributes"],
         ))
         for ch in proposal.characters:
-            db.add(StoryBibleEntry(
+            repository.stage_pipeline_entity(StoryBibleEntry(
                 id=f"bib_{uuid.uuid4().hex[:8]}",
                 project_id=project_id,
                 entry_type="character",
@@ -223,7 +213,7 @@ async def import_and_analyze_script(
                 mutable_attributes=ch["mutable_attributes"],
             ))
         for loc in proposal.locations:
-            db.add(StoryBibleEntry(
+            repository.stage_pipeline_entity(StoryBibleEntry(
                 id=f"bib_{uuid.uuid4().hex[:8]}",
                 project_id=project_id,
                 entry_type="location",
@@ -238,7 +228,7 @@ async def import_and_analyze_script(
         for sc in proposal.scenes:
             sc_id = f"scn_{uuid.uuid4().hex[:8]}"
             scene_id_by_idx[sc["scene_index"]] = sc_id
-            db.add(SceneRecord(
+            repository.stage_pipeline_entity(SceneRecord(
                 id=sc_id,
                 project_id=project_id,
                 scene_index=sc["scene_index"],
@@ -278,12 +268,12 @@ async def import_and_analyze_script(
             if created_shot_records and created_shot_records[-1].scene_id == sc_id:
                 created_shot_records[-1].next_shot_id = new_shot.id
             created_shot_records.append(new_shot)
-            db.add(new_shot)
+            repository.stage_pipeline_entity(new_shot)
 
-        await db.commit()
-        shots = await _recompile_project_shots(project_id, db)
+        await repository.commit_pipeline_changes()
+        shots = await _recompile_project_shots(project_id, repository)
     else:
-        await db.commit()
+        await repository.commit_pipeline_changes()
         shots = []
 
     return {
@@ -299,10 +289,8 @@ async def import_and_analyze_script(
 
 
 @router.get("/story-bible")
-async def get_story_bible(project_id: str, db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
-    rows = (
-        await db.execute(select(StoryBibleEntry).where(StoryBibleEntry.project_id == project_id))
-    ).scalars().all()
+async def get_story_bible(project_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[dict[str, Any]]:
+    rows = await repository.list_story_bible_entries(project_id)
     return [
         {
             "id": r.id,
@@ -322,17 +310,10 @@ async def get_story_bible(project_id: str, db: AsyncSession = Depends(get_db)) -
 async def upsert_story_bible_entry(
     project_id: str,
     payload: BibleEntryCreateIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
-    existing = (
-        await db.execute(
-            select(StoryBibleEntry).where(
-                StoryBibleEntry.project_id == project_id,
-                StoryBibleEntry.code_name == payload.code_name,
-            )
-        )
-    ).scalar_one_or_none()
+    existing = await repository.get_story_bible_entry(project_id, payload.code_name)
 
     if existing:
         existing.display_name = payload.display_name
@@ -353,47 +334,54 @@ async def upsert_story_bible_entry(
             reference_asset_ids=payload.reference_asset_ids,
             requires_reference_lock=payload.requires_reference_lock,
         )
-        db.add(entry)
+        repository.stage_pipeline_entity(entry)
 
-    await db.commit()
-    await _recompile_project_shots(project_id, db)
+    await repository.commit_pipeline_changes()
+    await _recompile_project_shots(project_id, repository)
     return {"id": entry.id, "code_name": entry.code_name, "status": "recompiled_downstream_shots"}
 
 
+def _serialize_project_shot(s: ShotRecord) -> dict[str, Any]:
+    return {
+        "id": s.id,
+        "scene_id": s.scene_id,
+        "sequence_index": s.sequence_index,
+        "title": s.title,
+        "subject_codes": s.subject_codes,
+        "location_code": s.location_code,
+        "shot_size": s.shot_size,
+        "camera_motion": s.camera_motion,
+        "composition": s.composition,
+        "action": s.action,
+        "dialogue": s.dialogue,
+        "duration_seconds": s.duration_seconds,
+        "requires_reference_lock": s.requires_reference_lock,
+        "reference_asset_ids": s.reference_asset_ids,
+        "prompt_final": s.prompt_final,
+        "negative_prompt": s.negative_prompt,
+        "prompt_hash": s.prompt_hash,
+        "lint_report": s.lint_report_json,
+        "continuity_mode": s.continuity_mode,
+        "previous_shot_id": s.previous_shot_id,
+        "next_shot_id": s.next_shot_id,
+        "first_frame_asset_id": s.first_frame_asset_id,
+        "last_frame_asset_id": s.last_frame_asset_id,
+        "selected_take_id": s.selected_take_id,
+        "approval_state": s.approval_state,
+        "generation_state": s.generation_state,
+    }
+
+
 @router.get("/shots")
-async def list_project_shots(project_id: str, db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
-    shots = await _recompile_project_shots(project_id, db)
-    return [
-        {
-            "id": s.id,
-            "scene_id": s.scene_id,
-            "sequence_index": s.sequence_index,
-            "title": s.title,
-            "subject_codes": s.subject_codes,
-            "location_code": s.location_code,
-            "shot_size": s.shot_size,
-            "camera_motion": s.camera_motion,
-            "composition": s.composition,
-            "action": s.action,
-            "dialogue": s.dialogue,
-            "duration_seconds": s.duration_seconds,
-            "requires_reference_lock": s.requires_reference_lock,
-            "reference_asset_ids": s.reference_asset_ids,
-            "prompt_final": s.prompt_final,
-            "negative_prompt": s.negative_prompt,
-            "prompt_hash": s.prompt_hash,
-            "lint_report": s.lint_report_json,
-            "continuity_mode": s.continuity_mode,
-            "previous_shot_id": s.previous_shot_id,
-            "next_shot_id": s.next_shot_id,
-            "first_frame_asset_id": s.first_frame_asset_id,
-            "last_frame_asset_id": s.last_frame_asset_id,
-            "selected_take_id": s.selected_take_id,
-            "approval_state": s.approval_state,
-            "generation_state": s.generation_state,
-        }
-        for s in shots
-    ]
+async def list_project_shots(
+    project_id: str,
+    repository: StudioRepository = Depends(get_studio_repository),
+) -> list[dict[str, Any]]:
+    """Return stored prompt/lint state without recompiling or committing any writes."""
+    shots = await repository.list_project_shots(project_id)
+    if shots is None:
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
+    return [_serialize_project_shot(shot) for shot in shots]
 
 
 @router.patch("/shots/{shot_id}")
@@ -401,26 +389,26 @@ async def update_and_review_shot(
     project_id: str,
     shot_id: str,
     payload: ShotUpdateIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
-    shot = await db.get(ShotRecord, shot_id)
+    shot = await repository.get_shot(shot_id)
     if not shot or shot.project_id != project_id:
         raise HTTPException(status_code=404, detail="Không tìm thấy Shot trong dự án.")
 
     for field_name, val in payload.model_dump(exclude_unset=True).items():
         setattr(shot, field_name, val)
 
-    await db.commit()
-    await _recompile_project_shots(project_id, db)
-    await db.refresh(shot)
+    await repository.commit_pipeline_changes()
+    await _recompile_project_shots(project_id, repository)
+    await repository.refresh_pipeline_entity(shot)
 
     # Chặn duyệt (approve) nếu Shot vẫn còn lỗi Blocker trong Prompt Linter
     if shot.approval_state == ShotApprovalState.APPROVED:
         blockers = [i for i in (shot.lint_report_json or []) if i.get("severity") == "blocker"]
         if blockers:
             shot.approval_state = ShotApprovalState.NEEDS_REVIEW
-            await db.commit()
+            await repository.commit_pipeline_changes()
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Không thể Approve Shot khi còn lỗi Blocker: {blockers[0]['code']} - {blockers[0]['message']}",
@@ -440,9 +428,12 @@ async def update_and_review_shot(
 async def export_shot_list(
     project_id: str,
     format: str = "json",
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
 ) -> Response:
-    shots = await list_project_shots(project_id, db)
+    shot_records = await repository.list_project_shots(project_id)
+    if shot_records is None:
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
+    shots = [_serialize_project_shot(shot) for shot in shot_records]
     if format.lower() == "csv":
         buf = io.StringIO()
         writer = csv.writer(buf)
