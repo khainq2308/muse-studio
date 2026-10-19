@@ -41,6 +41,24 @@ Hoặc cài package và chạy bộ kiểm thử orchestrator:
 
 Orchestrator dùng package sibling `muse-media`; vì package này chưa được publish lên package index, hãy cài `apps/media-engine` trước khi cài orchestrator để dependency metadata được thỏa mãn bằng bản local.
 
+## Production deployment
+
+`docker-compose.yml` là cấu hình **development**: nó bật hot reload và mount source code. Không dùng stack này như cấu hình production.
+
+Production có file riêng, không mount source code, không bật reload, không publish trực tiếp cổng Postgres/Redis/API ra host, build frontend thành static assets, và định tuyến API cùng origin qua Nginx. Tạo file env riêng rồi điền secret trước khi chạy:
+
+Trước khi chạy production, đặt `MUSE2API_VIDEO_PAYLOAD_PROFILE` trong `.env.prod` thành profile nhà cung cấp đã được xác minh với gateway thực tế: `czg86389-hub`, hoặc `www222fff` kèm `MUSE2API_VIDEO_SIZE` đúng định dạng mà gateway chấp nhận. Production chủ động từ chối profile cũ `compat` vì nó gửi frame đầu vào hai trường JSON và phát cả alias `size`/`aspect_ratio` chưa được xác minh. Không chọn profile chỉ dựa trên unit test; hãy xác minh request contract trên gateway đang triển khai.
+
+```sh
+cp .env.prod.example .env.prod
+# Điền POSTGRES_PASSWORD, SECRET_ENCRYPTION_KEY (ít nhất 32 ký tự ngẫu nhiên)
+# và STUDIO_ADMIN_TOKEN bằng các secret riêng, không dùng giá trị mặc định/dev.
+docker compose --env-file .env.prod -f docker-compose.prod.yml config --quiet
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+Tạo secret ngẫu nhiên, ví dụ bằng `openssl rand -hex 32` cho encryption key và database password, và `openssl rand -hex 24` cho admin token. Nếu database password có ký tự đặc biệt trong URL, hãy percent-encode giá trị trước khi dùng trong `DATABASE_URL`. Frontend được bind vào `127.0.0.1:8080` mặc định; đặt reverse proxy HTTPS ở trước nó nếu cần truy cập từ mạng. Không expose cổng HTTP này trực tiếp ra Internet.
+
 ## Security configuration
 
 - Local development defaults are intentionally permissive when STUDIO_ADMIN_TOKEN is absent. Do not expose this mode to a network you do not trust.
@@ -49,4 +67,4 @@ Orchestrator dùng package sibling `muse-media`; vì package này chưa được
 
 ## Current implementation boundary
 
-Project/connection/asset endpoints now use application services and a shared repository adapter. Production video-task completion extracts real boundary frames with FFmpeg/FFprobe; before dispatch, the queue resolves a first-frame Asset to a local image, validates its project ownership, size, MIME signature and SHA-256, then sends a data URI rather than an internal Asset ID. The adapter emits both documented muse2api frame aliases (`image` and `first_frame_image`) and both aspect-ratio aliases (`size` and `aspect_ratio`) to support known request-schema variants. This is source-contract compatibility only: live frame-conditioned video generation still requires a dated real-instance probe; mock-provider tests do not prove visual continuity. Generation tasks are persisted in the database and dispatched through ARQ/Redis, with worker polling/backoff and a periodic recovery scan for queued/running tasks. The orchestrator worker runs as a separate Docker Compose service. Workflow DAG validation/cache behavior is present; persistent media-engine job execution and the remaining export features (title card, subtitles, audio mixing) remain roadmap work. Timeline export itself renders the real clips with FFmpeg and requires FFmpeg/FFprobe on the server. See docs/ARCHITECTURE.md, docs/IMPLEMENTATION_PLAN.md, docs/MUSE2API_CAPABILITY_MATRIX.md, and docs/FRAME_CHAIN_PROVIDER_CONTRACT.md.
+Project/connection/asset endpoints now use application services and a shared repository adapter. Production video-task completion extracts real boundary frames with FFmpeg/FFprobe; before dispatch, the queue resolves a first-frame Asset to a local image, validates its project ownership, size, MIME signature and SHA-256, then sends a data URI rather than an internal Asset ID. The adapter supports `MUSE2API_VIDEO_PAYLOAD_PROFILE` to select a single request schema: `www222fff` sends `image` plus an explicitly configured `size`, while `czg86389-hub` sends `first_frame_image` plus `aspect_ratio`. Development-only `compat` mode preserves the legacy duplicate aliases for unknown deployments; production refuses that mode to avoid doubling data-URI payload size or silently assuming the accepted `size` format. This is source-contract compatibility only: live frame-conditioned video generation still requires a dated real-instance probe; mock-provider tests do not prove visual continuity. Generation tasks are persisted in the database and dispatched through ARQ/Redis, with worker polling/backoff and a periodic recovery scan for queued/running tasks. The orchestrator worker runs as a separate Docker Compose service. Workflow DAG validation/cache behavior is present; persistent media-engine job execution and the remaining export features (title card, subtitles, audio mixing) remain roadmap work. Timeline export itself renders the real clips with FFmpeg and requires FFmpeg/FFprobe on the server. See docs/ARCHITECTURE.md, docs/IMPLEMENTATION_PLAN.md, docs/MUSE2API_CAPABILITY_MATRIX.md, and docs/FRAME_CHAIN_PROVIDER_CONTRACT.md.

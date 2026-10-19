@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-muse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-musestudio}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+
+  orchestrator-api:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile.prod
+    restart: unless-stopped
+    environment: &orchestrator-env
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-musestudio}
+      REDIS_URL: redis://redis:6379/0
+      MEDIA_ROOT: /data/media
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?Set a unique SECRET_ENCRYPTION_KEY (at least 32 characters)}
+      STUDIO_ADMIN_TOKEN: ${STUDIO_ADMIN_TOKEN:?Set a strong STUDIO_ADMIN_TOKEN}
+      MUSE2API_VIDEO_PAYLOAD_PROFILE: ${MUSE2API_VIDEO_PAYLOAD_PROFILE:?Set a provider-verified MUSE2API_VIDEO_PAYLOAD_PROFILE}
+      MUSE2API_VIDEO_SIZE: ${MUSE2API_VIDEO_SIZE:-}
+    volumes:
+      - media_storage:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 25s
+    networks: [backend]
+
+  orchestrator-worker:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile.prod
+    restart: unless-stopped
+    command: ["arq", "muse_orchestrator.workers.queue_worker.WorkerSettings"]
+    environment: *orchestrator-env
+    volumes:
+      - media_storage:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator-api:
+        condition: service_healthy
+    networks: [backend]
+
+  studio-web:
+    build:
+      context: ./apps/studio-web
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_ORCHESTRATOR_URL: "."
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${STUDIO_WEB_PORT:-8080}:80"
+    depends_on:
+      orchestrator-api:
+        condition: service_healthy
+    networks: [backend]
+
+networks:
+  backend:
+
+volumes:
+  pg_data:
+  redis_data:
+  media_storage:

@@ -31,6 +31,21 @@ jobs:
       - name: Run agent-kit guard unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py'
 
+      - name: Validate production Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          SECRET_ENCRYPTION_KEY: ci-only-encryption-key-0123456789abcdef0123456789abcdef
+          STUDIO_ADMIN_TOKEN: ci-only-admin-token
+          MUSE2API_VIDEO_PAYLOAD_PROFILE: czg86389-hub
+        run: docker compose -f docker-compose.prod.yml config --quiet
+      - name: Build production images
+        env:
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          SECRET_ENCRYPTION_KEY: ci-only-encryption-key-0123456789abcdef0123456789abcdef
+          STUDIO_ADMIN_TOKEN: ci-only-admin-token
+          MUSE2API_VIDEO_PAYLOAD_PROFILE: czg86389-hub
+        run: docker compose -f docker-compose.prod.yml build
+
   python-tests:
     name: Python tests
     runs-on: ubuntu-latest
