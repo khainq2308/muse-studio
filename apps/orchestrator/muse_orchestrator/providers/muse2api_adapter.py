@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import functools as _p2_functools
+import asyncio
 import hashlib
-import inspect as _p2_inspect
-import ipaddress as _p2_ipaddress
+import ipaddress
 import os
-import socket as _p2_socket
+import socket
 import time
 import uuid
-from typing import Any
-from urllib.parse import quote, urljoin, urlparse as _p2_urlparse, urlsplit
+from typing import Any, Awaitable, Callable
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 from muse_orchestrator.core.config import SecretRedactor
@@ -38,6 +37,25 @@ def _origin(url: str) -> Origin | None:
     except ValueError:
         return None
     return scheme, parts.hostname.lower(), port
+
+
+def _is_forbidden_ip(value: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True unless an address is globally routable."""
+    try:
+        address = value if isinstance(value, (ipaddress.IPv4Address, ipaddress.IPv6Address)) else ipaddress.ip_address(value.split("%", 1)[0])
+    except ValueError:
+        return True
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return (
+        not address.is_global
+        or address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
 
 
 _MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024
@@ -130,12 +148,16 @@ class Muse2ApiAdapter(VideoProvider):
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
         proxy: str | None = None,
+        dns_resolver: Callable[[str, int], Awaitable[list[tuple[Any, ...]]]] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self._transport = transport
         self.proxy = proxy
+        # Injectable for deterministic tests; production uses loop.getaddrinfo so DNS
+        # resolution does not block the event loop.
+        self._dns_resolver = dns_resolver
 
     def _headers(self, idempotency_key: str = "") -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -283,10 +305,17 @@ class Muse2ApiAdapter(VideoProvider):
         return origin is not None and origin == _origin(self.base_url)
 
     def _validate_download_url(self, url: str) -> str:
-        """Allow only http(s) URLs; a host other than the provider's must be reached over https."""
+        """Validate URL syntax and transport policy before DNS resolution."""
         origin = _origin(url)
         if origin is None:
             raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result URL must be an absolute http(s) URL.")
+        parts = urlsplit(url)
+        if parts.username is not None or parts.password is not None:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "Result URLs containing embedded credentials are not allowed.",
+                retryable=False,
+            )
         if origin != _origin(self.base_url) and origin[0] != "https":
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST, "Result URLs on another host must use https."
@@ -303,6 +332,98 @@ class Muse2ApiAdapter(VideoProvider):
         if not segments or "\\" in ref or any(segment in {".", ".."} for segment in segments):
             raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result reference is not a valid media id.")
         return f"{self.base_url}/v1/media/{quote('/'.join(segments), safe='/')}"
+
+    async def _pin_download_url(self, url: str) -> tuple[str, dict[str, str], dict[str, Any]]:
+        """Resolve and pin an untrusted download host before connecting.
+
+        The configured provider origin is trusted configuration (including private
+        self-hosted providers). Every other DNS host is resolved asynchronously,
+        all answers are checked, and the request URL is rewritten to one validated IP.
+        Host and TLS SNI/certificate verification continue to use the original name.
+        """
+        self._validate_download_url(url)
+        if self._is_provider_origin(url):
+            return url, {}, {}
+
+        parts = urlsplit(url)
+        hostname = parts.hostname
+        if not hostname:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST, "SSRF blocked: missing destination hostname.", retryable=False
+            )
+        try:
+            literal_ip = ipaddress.ip_address(hostname.split("%25", 1)[0])
+        except ValueError:
+            literal_ip = None
+
+        if literal_ip is not None:
+            if _is_forbidden_ip(literal_ip):
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    f"SSRF blocked: non-public IP literal '{hostname}'.",
+                    retryable=False,
+                )
+            return url, {}, {}
+
+        port = parts.port or _DEFAULT_PORTS[parts.scheme.lower()]
+        try:
+            if self._dns_resolver is not None:
+                records = await asyncio.wait_for(self._dns_resolver(hostname, port), timeout=5.0)
+            else:
+                records = await asyncio.wait_for(
+                    asyncio.get_running_loop().getaddrinfo(hostname, port, type=socket.SOCK_STREAM),
+                    timeout=5.0,
+                )
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: destination hostname could not be resolved safely.",
+                retryable=False,
+            ) from exc
+
+        if not records:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: destination hostname returned no addresses.",
+                retryable=False,
+            )
+
+        resolved: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+        for record in records:
+            try:
+                sockaddr = record[4]
+                raw_address = sockaddr[0]
+                address = ipaddress.ip_address(str(raw_address).split("%", 1)[0])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if _is_forbidden_ip(address):
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    f"SSRF blocked: destination hostname '{hostname}' resolved to a non-public IP.",
+                    retryable=False,
+                )
+            resolved.append(address)
+
+        if not resolved:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: DNS returned no usable IP addresses.",
+                retryable=False,
+            )
+
+        # Pin the TCP destination so the HTTP client cannot perform a second DNS
+        # lookup after validation (the DNS-rebinding/TOCTOU gap).
+        pinned_ip = resolved[0]
+        pinned_host = f"[{pinned_ip.compressed}]" if pinned_ip.version == 6 else pinned_ip.compressed
+        port_suffix = f":{parts.port}" if parts.port is not None else ""
+        pinned_netloc = f"{pinned_host}{port_suffix}"
+        pinned_url = parts._replace(netloc=pinned_netloc).geturl()
+        request_headers = {"Host": parts.netloc}
+        request_extensions: dict[str, Any] = {}
+        if parts.scheme.lower() == "https":
+            request_extensions["sni_hostname"] = hostname
+        return pinned_url, request_headers, request_extensions
+
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
         # P1a: network and filesystem errors become ProviderFailure so the queue can
@@ -330,11 +451,14 @@ class Muse2ApiAdapter(VideoProvider):
                 for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
                     # The API key is only ever sent to the provider's own origin, never to a
                     # host named in an upstream response or in a redirect.
-                    headers = {"Accept": "*/*"}
+                    request_url, pinned_headers, request_extensions = await self._pin_download_url(url)
+                    headers = {"Accept": "*/*", **pinned_headers}
                     if self._is_provider_origin(url) and self.api_key:
                         headers["Authorization"] = f"Bearer {self.api_key}"
                     try:
-                        async with client.stream("GET", url, headers=headers) as resp:
+                        async with client.stream(
+                            "GET", request_url, headers=headers, extensions=request_extensions
+                        ) as resp:
                             if resp.status_code in _REDIRECT_STATUSES:
                                 location = resp.headers.get("location")
                                 if not location:
@@ -411,136 +535,3 @@ class Muse2ApiAdapter(VideoProvider):
                 ErrorCategory.INVALID_REQUEST, f"Cannot finalize download file: {exc}", None, False
             ) from exc
         return StoredMedia(local_path=file_path, mime_type=mime, size_bytes=total, sha256=digest)
-
-# --- P2 HARDENING: SSRF PROTECTION ON EXTERNAL DOWNLOADS & REDIRECTS ---
-_P2_FORBIDDEN_HOSTS = {
-    "localhost",
-    "localhost.localdomain",
-    "ip6-localhost",
-    "ip6-loopback",
-    "metadata",
-    "metadata.google.internal",
-}
-
-
-def _p2_is_forbidden_ip(ip_obj: _p2_ipaddress.IPv4Address | _p2_ipaddress.IPv6Address) -> bool:
-    if isinstance(ip_obj, _p2_ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
-        ip_obj = ip_obj.ipv4_mapped
-    return (
-        not ip_obj.is_global
-        or ip_obj.is_private
-        or ip_obj.is_loopback
-        or ip_obj.is_link_local
-        or ip_obj.is_multicast
-        or ip_obj.is_reserved
-        or ip_obj.is_unspecified
-    )
-
-
-def _p2_verify_ssrf_safe_url(target_url: str, base_url: str | None = None) -> None:
-    parsed = _p2_urlparse(target_url)
-    if not parsed.scheme or not parsed.netloc:
-        return
-
-    if base_url:
-        base_p = _p2_urlparse(base_url)
-        base_origin = (base_p.scheme.lower(), (base_p.hostname or "").lower(), base_p.port)
-        target_origin = (parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port)
-        if target_origin == base_origin:
-            return
-
-    hostname = (parsed.hostname or "").strip().lower().rstrip(".")
-    if not hostname:
-        raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "SSRF blocked: missing hostname.", retryable=False)
-
-    if (
-        hostname in _P2_FORBIDDEN_HOSTS
-        or "." not in hostname
-        or hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa"))
-    ):
-        raise ProviderFailure(
-            ErrorCategory.INVALID_REQUEST,
-            f"SSRF blocked: forbidden internal hostname '{hostname}'.",
-            retryable=False,
-        )
-
-    try:
-        ip_lit = _p2_ipaddress.ip_address(hostname)
-    except ValueError:
-        ip_lit = None
-
-    if ip_lit is not None:
-        if _p2_is_forbidden_ip(ip_lit):
-            raise ProviderFailure(
-                ErrorCategory.INVALID_REQUEST,
-                f"SSRF blocked: non-public IP literal '{hostname}'.",
-                retryable=False,
-            )
-        return
-
-    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
-    try:
-        records = _p2_socket.getaddrinfo(hostname, port, type=_p2_socket.SOCK_STREAM)
-    except _p2_socket.gaierror:
-        # Nếu tên miền giả lập trong unit test (dùng httpx.MockTransport) không tồn tại trên DNS thật,
-        # nó không thể phân giải ra IP nội bộ; còn trên mạng thật httpx sẽ tự báo ConnectError.
-        return
-
-    for rec in records:
-        sockaddr = rec[4]
-        raw_ip = sockaddr[0] if sockaddr else ""
-        try:
-            ip_obj = _p2_ipaddress.ip_address(raw_ip)
-        except ValueError:
-            continue
-        if _p2_is_forbidden_ip(ip_obj):
-            raise ProviderFailure(
-                ErrorCategory.INVALID_REQUEST,
-                f"SSRF blocked: host '{hostname}' resolved to non-public IP '{raw_ip}'.",
-                retryable=False,
-            )
-
-
-def _install_p2_adapter_patches() -> None:
-    cls = globals().get("Muse2ApiAdapter")
-    if cls is None or getattr(cls, "_p2_installed", False):
-        return
-
-    raw_val = cls.__dict__.get("_validate_download_url")
-    if raw_val is not None:
-        is_cm = isinstance(raw_val, classmethod)
-        is_sm = isinstance(raw_val, staticmethod)
-        orig_fn = raw_val.__func__ if (is_cm or is_sm) else raw_val
-        sig = _p2_inspect.signature(orig_fn)
-
-        @_p2_functools.wraps(orig_fn)
-        def _val_wrapper(*args: Any, **kwargs: Any) -> Any:
-            res = orig_fn(*args, **kwargs)
-            bound = sig.bind_partial(*args, **kwargs)
-            b_args = bound.arguments
-            self_obj = b_args.get("self")
-            base_u = getattr(self_obj, "base_url", None) or b_args.get("base_url")
-            url_str = (
-                res if isinstance(res, str)
-                else (b_args.get("url") or b_args.get("result_ref") or b_args.get("target_url"))
-            )
-            if not isinstance(url_str, str):
-                for k, v in b_args.items():
-                    if k != "self" and isinstance(v, str) and ("http://" in v or "https://" in v):
-                        url_str = v
-                        break
-            if isinstance(url_str, str):
-                _p2_verify_ssrf_safe_url(url_str, base_url=base_u)
-            return res
-
-        if is_cm:
-            setattr(cls, "_validate_download_url", classmethod(_val_wrapper))
-        elif is_sm:
-            setattr(cls, "_validate_download_url", staticmethod(_val_wrapper))
-        else:
-            setattr(cls, "_validate_download_url", _val_wrapper)
-
-    cls._p2_installed = True
-
-
-_install_p2_adapter_patches()
