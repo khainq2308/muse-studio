@@ -28,7 +28,13 @@ These are source-level observations, not a live probe of the user's deployment:
 - [www222fff/muse2api video route](https://github.com/www222fff/muse2api/blob/main/src/muse2api/api/routes/videos.py) reads `body.image` or `body.input_reference`. Its [request schema](https://github.com/www222fff/muse2api/blob/main/src/muse2api/api/schemas.py) defines `image`, `input_reference`, and `size`; the shared image loader accepts data URLs or HTTP(S) URLs.
 - [czg86389-hub/muse2api README](https://github.com/czg86389-hub/muse2api) documents `first_frame_image` as a first-frame input and says it accepts data URLs or HTTP(S) URLs.
 
-To support these known variants without knowing the fork in advance, the adapter emits both `image` and `first_frame_image` with the same data URI, and both `size` and `aspect_ratio` with the shot aspect ratio. This adds payload overhead: the image is duplicated in JSON, so the queue imposes a 20-MiB raw-image bound. Unknown-field tolerance is an observed contract of the www222fff Pydantic schema and is not independently verified for every fork. If a deployment rejects unknown fields, the adapter must be changed to emit only that deployment's supported field before production use; this branch does not add a dialect-selection setting.
+The adapter supports an explicit `MUSE2API_VIDEO_PAYLOAD_PROFILE` setting:
+
+- `compat` (default) preserves the historical aliases: both `image` and `first_frame_image`, plus both `size` and `aspect_ratio`. This avoids a behavior change before the configured fork is identified, but duplicates a base64 data URI and may enlarge a request substantially.
+- `czg86389-hub` sends `first_frame_image` and `aspect_ratio` only.
+- `www222fff` sends `image` and `size` only. The accepted representation of `size` is deliberately not inferred from the name or set to an aspect ratio. Set `MUSE2API_VIDEO_SIZE` to a value confirmed for the actual deployed gateway; the application refuses this profile when that value is missing.
+
+The profile removes the duplicate frame field for the two provider-specific configurations. It does not itself prove that the deployment accepts the chosen field or that generated output is visually conditioned on the frame. Keep `compat` until the deployment is identified, and test the selected profile against that exact version before treating frame chaining as verified. The queue continues to enforce the 20-MiB raw-frame limit.
 
 ## Verification status and operational test
 
