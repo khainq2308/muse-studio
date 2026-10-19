@@ -12,12 +12,21 @@ def generation_step_job_id(task: GenerationTaskRecord) -> str:
     return f"generation-step:{task.id}:{task.state.value}:{task.poll_count}:{updated_token}"
 
 
-async def enqueue_generation_step(redis: Any, task: GenerationTaskRecord) -> bool:
-    """Schedule one active task; duplicate calls for the same DB state are deduplicated."""
+async def enqueue_generation_step(
+    redis: Any,
+    task: GenerationTaskRecord,
+    *,
+    immediate: bool = False,
+) -> bool:
+    """Schedule one active task; duplicate calls for the same DB state are deduplicated.
+
+    API-created tasks can opt into an immediate first dispatch. Worker/recovery callers
+    preserve the task's persisted backoff or lease wait to avoid a tight retry loop.
+    """
     if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
         return False
 
-    delay = 0 if task.state == QueueTaskState.QUEUED else max(0.0, float(task.next_poll_delay_seconds))
+    delay = 0.0 if immediate else max(0.0, float(task.next_poll_delay_seconds))
     job = await redis.enqueue_job(
         "process_generation_task_step",
         task.id,
