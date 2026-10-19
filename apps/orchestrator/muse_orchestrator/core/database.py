@@ -7,7 +7,6 @@ from pathlib import Path
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from muse_orchestrator.core.config import settings
-from muse_orchestrator.models.domain import Base
 
 engine = create_async_engine(settings.database_url, echo=False, future=True)
 AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
