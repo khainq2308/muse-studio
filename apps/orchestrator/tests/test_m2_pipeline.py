@@ -174,3 +174,36 @@ async def test_script_import_without_opt_in_preserves_existing_shots_and_story_b
     bible_after = (await client.get(f"/api/v1/projects/{project_id}/story-bible")).json()
     assert {shot["id"] for shot in shots_after} == original_shot_ids
     assert {entry["code_name"] for entry in bible_after} == original_bible_codes
+
+@pytest.mark.asyncio
+async def test_shot_reads_and_exports_do_not_recompile_or_write(client: AsyncClient, monkeypatch):
+    project_response = await client.post("/api/v1/projects", json={"name": "Read-only shot list"})
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    import_response = await client.post(
+        f"/api/v1/projects/{project_id}/scripts/import",
+        json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "source_format": "museflow", "auto_apply_proposal": True},
+    )
+    assert import_response.status_code == 201
+
+    import muse_orchestrator.api.pipeline as pipeline_module
+
+    async def unexpected_recompile(*_args, **_kwargs):
+        raise AssertionError("GET shot routes must not recompile prompts or commit writes")
+
+    monkeypatch.setattr(pipeline_module, "_recompile_project_shots", unexpected_recompile)
+
+    shots_response = await client.get(f"/api/v1/projects/{project_id}/shots")
+    assert shots_response.status_code == 200
+    shots = shots_response.json()
+    assert len(shots) == 2
+    assert shots[0]["prompt_hash"]
+
+    csv_response = await client.get(f"/api/v1/projects/{project_id}/shots/export?format=csv")
+    assert csv_response.status_code == 200
+    assert "shot_id,title" in csv_response.text
+
+    json_response = await client.get(f"/api/v1/projects/{project_id}/shots/export?format=json")
+    assert json_response.status_code == 200
+    assert json_response.json()["shots"][0]["prompt_hash"] == shots[0]["prompt_hash"]
