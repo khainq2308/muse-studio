@@ -29,6 +29,13 @@ from muse_orchestrator.models.domain import (
     NodeExecution,
     WorkflowCacheEntry,
 )
+from muse_orchestrator.models.domain import (
+    ExportJobRecord,
+    ShotTakeRecord as TimelineShotTakeRecord,
+    TimelineClipRecord,
+    TimelineSequenceRecord,
+    TimelineTrackRecord,
+)
 
 
 class StudioRepository:
@@ -36,6 +43,60 @@ class StudioRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    # --- M6 timeline persistence ---
+
+    async def get_timeline_shot_take(self, take_id: str) -> TimelineShotTakeRecord | None:
+        return await self.session.get(TimelineShotTakeRecord, take_id)
+
+    async def get_timeline_sequence(
+        self, sequence_id: str
+    ) -> TimelineSequenceRecord | None:
+        return await self.session.get(TimelineSequenceRecord, sequence_id)
+
+    async def get_latest_timeline_sequence(
+        self, project_id: str
+    ) -> TimelineSequenceRecord | None:
+        result = await self.session.execute(
+            select(TimelineSequenceRecord)
+            .where(TimelineSequenceRecord.project_id == project_id)
+            .order_by(TimelineSequenceRecord.created_at.desc())
+        )
+        return result.scalars().first()
+
+    async def list_timeline_clips(self, sequence_id: str) -> list[TimelineClipRecord]:
+        result = await self.session.execute(
+            select(TimelineClipRecord)
+            .where(TimelineClipRecord.sequence_id == sequence_id)
+            .order_by(TimelineClipRecord.order_index.asc())
+        )
+        return list(result.scalars().all())
+
+    async def create_timeline_bundle(
+        self,
+        sequence: TimelineSequenceRecord,
+        tracks: list[TimelineTrackRecord],
+        clips: list[TimelineClipRecord],
+    ) -> TimelineSequenceRecord:
+        self.session.add(sequence)
+        self.session.add_all([*tracks, *clips])
+        await self.session.commit()
+        await self.session.refresh(sequence)
+        return sequence
+
+    async def create_export_job(self, job: ExportJobRecord) -> ExportJobRecord:
+        self.session.add(job)
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
+
+    async def create_export_result(
+        self, asset: Asset, job: ExportJobRecord
+    ) -> ExportJobRecord:
+        self.session.add_all([asset, job])
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
 
     # --- M3 workflow persistence ---
 
