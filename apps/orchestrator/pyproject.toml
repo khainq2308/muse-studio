@@ -35,6 +35,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 
-# Use the repository's local media package for reproducible resolution in uv.
+# Resolve the monorepo media package locally rather than from a public index.
 [tool.uv.sources]
 muse-media = { path = "../media-engine", editable = true }
