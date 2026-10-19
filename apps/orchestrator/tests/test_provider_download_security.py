@@ -6,7 +6,11 @@ import httpx
 import pytest
 
 from muse_orchestrator.providers.base import ErrorCategory, ProviderFailure
-from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter, _origin
+from muse_orchestrator.providers.muse2api_adapter import (
+    Muse2ApiAdapter,
+    _origin,
+    _read_limited_error_body,
+)
 
 BASE = "https://muse.example.com"
 API_KEY = "sk-secret-key"
@@ -20,6 +24,30 @@ VIDEO = httpx.Response(
 
 def _redirect(location: str | None) -> httpx.Response:
     return httpx.Response(302, headers={"location": location} if location else {})
+
+
+class _CountingErrorStream(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.chunks_yielded = 0
+
+    async def __aiter__(self):
+        for _ in range(100):
+            self.chunks_yielded += 1
+            yield b"x" * 1024
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_error_body_reader_stops_at_configured_limit() -> None:
+    stream = _CountingErrorStream()
+    response = httpx.Response(500, stream=stream)
+
+    body = await _read_limited_error_body(response, limit=4096)
+
+    assert body == "x" * 4096
+    assert stream.chunks_yielded == 4  # Does not drain the remaining 96 KiB.
 
 
 class Upstream:

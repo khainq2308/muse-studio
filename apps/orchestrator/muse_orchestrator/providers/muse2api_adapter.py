@@ -78,6 +78,26 @@ def _detect_media_format(content_type: str, header: bytes) -> tuple[str, str]:
     return extension, _MIME_BY_EXTENSION[extension]
 
 
+async def _read_limited_error_body(resp: httpx.Response, limit: int = 4096) -> str:
+    """Read only a small prefix of an upstream error response, then let the stream close.
+
+    Response.aread() buffers the entire body before callers can slice it, so a
+    large error page could exhaust memory even though only a short diagnostic is used.
+    Chunking and stopping once the byte budget is reached bounds application buffering.
+    """
+    if limit <= 0:
+        return ""
+    body = bytearray()
+    async for chunk in resp.aiter_bytes(chunk_size=1024):
+        remaining = limit - len(body)
+        if remaining <= 0:
+            break
+        body.extend(chunk[:remaining])
+        if len(body) >= limit:
+            break
+    return body.decode("utf-8", "replace")
+
+
 def _json_or_fail(resp: httpx.Response) -> dict:
     """Parse a provider JSON object; a malformed body becomes a ProviderFailure, not a 500."""
     try:
@@ -324,8 +344,11 @@ class Muse2ApiAdapter(VideoProvider):
                                 url = self._validate_download_url(urljoin(url, location))
                                 continue
                             if resp.status_code >= 400:
-                                body = (await resp.aread())[:4096].decode("utf-8", "replace")
-                                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(body, [self.api_key or ""]))
+                                body = await _read_limited_error_body(resp, limit=4096)
+                                raise classify_http_error(
+                                    resp.status_code,
+                                    SecretRedactor.redact_text(body, [self.api_key or ""]),
+                                )
                             if resp.status_code != 200:
                                 raise ProviderFailure(
                                     ErrorCategory.INVALID_REQUEST, f"Unexpected status {resp.status_code} while downloading result."
