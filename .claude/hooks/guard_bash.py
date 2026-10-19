@@ -75,6 +75,13 @@ def dynamic_shell_expansion_risk(segments: list[str]) -> str | None:
             continue
 
         lowered = segment.lower()
+        # These explicitly evaluate command strings rather than exposing a command for
+        # static policy checks. Dynamic command text cannot be proven safe here.
+        if re.search(r"\beval\b", segment, re.IGNORECASE):
+            return "eval can execute opaque shell command text"
+        if re.search(r"\b(?:bash|sh|dash|zsh)\b[^;&|]*\s-c(?:\s|$)", segment, re.IGNORECASE):
+            return "shell -c uses dynamically expanded command text"
+
         # A variable/substitution can hide the executable, force flag, or destination
         # branch. The guard cannot safely evaluate shell expansions.
         if re.search(r"\bgit\s+push\b", segment, re.IGNORECASE):
