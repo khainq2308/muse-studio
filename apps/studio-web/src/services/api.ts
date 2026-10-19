@@ -224,6 +224,7 @@ export function createStudioApi(adminToken: string) {
 
   return {
     request,
+    assetDownloadUrl: (assetId: string) => `${baseUrl}/api/v1/assets/${encodeURIComponent(assetId)}/download`,
     listProjects: () => request<Project[]>("/api/v1/projects"),
     createProject: (input: Pick<Project, "name"> & Partial<Pick<Project, "description" | "aspect_ratio" | "fps" | "style_preset" | "language" | "output_profile">>) =>
       request<Project>("/api/v1/projects", { method: "POST", body: JSON.stringify(input) }),
