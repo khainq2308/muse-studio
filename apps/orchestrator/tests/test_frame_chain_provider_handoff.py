@@ -106,7 +106,8 @@ async def test_optional_non_chained_frame_can_be_absent():
     assert await GenerationQueueService.load_first_frame_data_uri(FakeAssetSession({}), shot) is None
 
 
-def test_video_payload_maps_first_frame_to_both_documented_muse2api_fields():
+def test_compat_video_payload_maps_first_frame_to_both_documented_fields(monkeypatch):
+    monkeypatch.setattr(settings, "video_payload_profile", "compat")
     frame_data_uri = "data:image/png;base64,aGVsbG8="
     adapter = Muse2ApiAdapter("https://muse.example.com")
     request = VideoGenerationRequest(
@@ -124,6 +125,42 @@ def test_video_payload_maps_first_frame_to_both_documented_muse2api_fields():
     assert body["first_frame_image"] == frame_data_uri
     assert body["size"] == "16:9"
     assert body["aspect_ratio"] == "16:9"
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_frame_key", "unexpected_frame_key", "expected_ratio_key", "unexpected_ratio_key"),
+    [
+        ("www222fff", "image", "first_frame_image", "size", "aspect_ratio"),
+        ("czg86389-hub", "first_frame_image", "image", "aspect_ratio", "size"),
+    ],
+)
+def test_provider_specific_video_payload_avoids_duplicate_data_uri(
+    monkeypatch,
+    profile,
+    expected_frame_key,
+    unexpected_frame_key,
+    expected_ratio_key,
+    unexpected_ratio_key,
+):
+    monkeypatch.setattr(settings, "video_payload_profile", profile)
+    frame_data_uri = "data:image/png;base64,aGVsbG8="
+    adapter = Muse2ApiAdapter("https://muse.example.com")
+    request = VideoGenerationRequest(
+        shot_id="shot-2",
+        prompt="Continue the motion from the supplied first frame",
+        model_id="muse-video-v1",
+        duration_seconds=5,
+        aspect_ratio="9:16",
+        first_frame_url=frame_data_uri,
+    )
+
+    body = adapter._build_video_payload(request)
+
+    assert body[expected_frame_key] == frame_data_uri
+    assert unexpected_frame_key not in body
+    assert body[expected_ratio_key] == "9:16"
+    assert unexpected_ratio_key not in body
+    assert sum(body.get(key) == frame_data_uri for key in ("image", "first_frame_image")) == 1
 
 
 def test_video_payload_omits_optional_frame_fields_when_no_frame_is_set():
