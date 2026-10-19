@@ -92,3 +92,30 @@ jobs:
       - name: Build frontend
         working-directory: apps/studio-web
         run: npm run build
+
+
+  # Temporary lock-generation helper. Removed after committing the resulting uv.lock.
+  generate-python-lock-bootstrap:
+    if: github.event_name == 'pull_request' && github.head_ref == 'chore/python-uv-lockfile'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+      - name: Resolve project and local muse-media dependency
+        run: uv lock --project apps/orchestrator
+      - name: Print generated lock for recovery if artifact access is unavailable
+        run: |
+          echo "LOCKFILE_BEGIN"
+          cat apps/orchestrator/uv.lock
+          echo "LOCKFILE_END"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-uv-lock-bootstrap
+          path: apps/orchestrator/uv.lock
+          if-no-files-found: error
+          retention-days: 3
