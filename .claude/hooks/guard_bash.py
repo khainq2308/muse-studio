@@ -37,6 +37,31 @@ _SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")"}
 _GLOB_OR_EXPANSION = re.compile(r"""[*?\[\]{}$\x60]""")
 
 
+def _shell_command_segments(command: str) -> list[str]:
+    """Return conservative token-normalized segments for rule matching.
+
+    The raw command is still checked as well (important for pipes and secrets), but
+    shlex normalization catches harmless-looking quote concatenation such as
+    `g"it" push origin main`, which the shell executes as `git push origin main`.
+    This is deliberately not a shell evaluator and never expands variables/substitutions.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+    lexer.whitespace_split = True
+    tokens = list(lexer)
+    segments: list[str] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _SHELL_SEPARATORS or (token and set(token) <= {";", "&", "|", "(", ")"}):
+            if current:
+                segments.append(" ".join(current))
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(" ".join(current))
+    return segments
+
+
 def _recursive_flags(tokens: list[str]) -> bool:
     options = True
     for token in tokens:
@@ -126,8 +151,18 @@ def main() -> None:
     if not isinstance(command, str) or not command.strip():
         block("[guard_bash] Bash hook event has no command; refusing to bypass the guard.")
 
+    try:
+        normalized_segments = _shell_command_segments(command)
+    except ValueError:
+        # Other guard checks still run against the raw command. An unparseable shell
+        # string may not be silently treated as normalized/safe.
+        normalized_segments = []
+        if re.search(r"\bgit\s+push\b|\bdocker\s+compose\s+down\b|\bDROP\s+(TABLE|DATABASE|SCHEMA)\b", command, re.IGNORECASE):
+            block("[guard_bash:parse] Refusing an unparseable command containing a protected operation.")
+
+    candidates = [command, *normalized_segments]
     for pattern, rule, message in RULES:
-        if re.search(pattern, command, re.IGNORECASE):
+        if any(re.search(pattern, candidate, re.IGNORECASE) for candidate in candidates):
             block(f"[guard_bash:{rule}] {message}\nCommand: {command}")
 
     bad = rm_is_dangerous(command)

@@ -30,8 +30,87 @@ def attribute_path(node: ast.AST) -> tuple[str | None, list[str]]:
     return current.id, attributes
 
 
+def _annotation_tail(node: ast.AST) -> str | None:
+    """Get the final name of an annotation, including qualified/subscripted types."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Subscript):
+        return _annotation_tail(node.value)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            return _annotation_tail(ast.parse(node.value, mode="eval").body)
+        except SyntaxError:
+            return None
+    return None
+
+
+def _depends_on_get_db(node: ast.AST) -> bool:
+    """Identify Depends(get_db) even when the parameter itself has no type annotation."""
+    return any(
+        isinstance(child, ast.Name) and child.id == "get_db"
+        for child in ast.walk(node)
+    )
+
+
 def count_violations(path: Path) -> int:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    # Respect renamed imports such as:
+    # from sqlalchemy.ext.asyncio import AsyncSession as DatabaseSession
+    session_type_names = {"AsyncSession"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "sqlalchemy.ext.asyncio":
+            for alias in node.names:
+                if alias.name == "AsyncSession":
+                    session_type_names.add(alias.asname or alias.name)
+
+    # Start with historical names, then identify session objects by type/dependency,
+    # and propagate simple aliases (e.g. store = database). This prevents a mere
+    # local-variable rename from bypassing the layering ratchet.
+    db_objects = set(DB_OBJECTS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.arg):
+            if _annotation_tail(node.annotation) in session_type_names:
+                db_objects.add(node.arg)
+        elif isinstance(node, (ast.AnnAssign, ast.Assign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            value = node.value
+            if isinstance(node, ast.AnnAssign) and _annotation_tail(node.annotation) in session_type_names:
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        db_objects.add(target.id)
+            if isinstance(value, ast.Name) and value.id in db_objects:
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        db_objects.add(target.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            positional = list(node.args.posonlyargs) + list(node.args.args)
+            defaults = [None] * (len(positional) - len(node.args.defaults)) + list(node.args.defaults)
+            for arg, default in zip(positional, defaults):
+                if default is not None and _depends_on_get_db(default):
+                    db_objects.add(arg.arg)
+            for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+                if default is not None and _depends_on_get_db(default):
+                    db_objects.add(arg.arg)
+
+    # Alias chains can span multiple assignment statements. Resolve them to a fixpoint.
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = node.value
+            if not isinstance(value, ast.Name) or value.id not in db_objects:
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id not in db_objects:
+                    db_objects.add(target.id)
+                    changed = True
+
     total = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -39,8 +118,8 @@ def count_violations(path: Path) -> int:
         func = node.func
         if isinstance(func, ast.Attribute):
             root, attributes = attribute_path(func)
-            # Detect direct and nested forms: db.execute, session.query, db.session.execute.
-            if root in DB_OBJECTS and attributes and attributes[-1] in DB_METHODS:
+            # Detect direct, typed-renamed and aliased forms.
+            if root in db_objects and attributes and attributes[-1] in DB_METHODS:
                 total += 1
         elif isinstance(func, ast.Name) and func.id == "select":
             total += 1
