@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,16 @@ class Settings(BaseSettings):
     secret_encryption_key: str = _DEVELOPMENT_ENCRYPTION_KEY
     studio_admin_token: str | None = None
 
+    # Payload profiles are source-contract compatibility choices, not live verification.
+    video_payload_profile: Literal["compat", "www222fff", "czg86389-hub"] = Field(
+        default="compat", validation_alias="MUSE2API_VIDEO_PAYLOAD_PROFILE"
+    )
+    # The www222fff "size" value is intentionally deployment-supplied: its accepted
+    # representation must be confirmed against the actual deployed gateway.
+    video_payload_size: str | None = Field(
+        default=None, validation_alias="MUSE2API_VIDEO_SIZE"
+    )
+
     # M7: orphan media cleanup (ARQ cron) and project backups.
     orphan_cleanup_enabled: bool = True
     orphan_cleanup_retention_hours: float = 24.0
@@ -29,6 +39,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
+        if self.video_payload_profile == "www222fff" and not (self.video_payload_size or "").strip():
+            raise ValueError(
+                "MUSE2API_VIDEO_SIZE is required when MUSE2API_VIDEO_PAYLOAD_PROFILE=www222fff; "
+                "configure the value accepted by the deployed muse2api version."
+            )
+
         # Fail closed: only explicit dev/test environments may use the public default key.
         if self.environment.strip().lower() not in _DEV_ENVIRONMENTS:
             if not self.studio_admin_token or not self.studio_admin_token.strip():
