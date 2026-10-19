@@ -38,3 +38,8 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+
+# Resolve the monorepo media package locally rather than from a public index.
+[tool.uv.sources]
+muse-media = { path = "../media-engine", editable = true }
