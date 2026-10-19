@@ -9,9 +9,9 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m2_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.main import app
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.models.domain import Base
+from muse_orchestrator.main import app  # noqa: E402 -- test environment must be set before app import
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- test environment must be set before app import
+from muse_orchestrator.models.domain import Base  # noqa: E402 -- test environment must be set before app import
 
 
 @pytest.fixture()
@@ -124,3 +124,40 @@ async def test_m2_script_import_bible_extraction_and_continuity(client: AsyncCli
     assert csv_res.status_code == 200
     assert "sequence_index,shot_id,title" in csv_res.text
     assert "Conan Edogawa" in csv_res.text
+
+
+
+@pytest.mark.asyncio
+async def test_shot_reads_and_exports_do_not_recompile_or_write(client: AsyncClient, monkeypatch):
+    project_response = await client.post("/api/v1/projects", json={"name": "Read-only shot list"})
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    import_response = await client.post(
+        f"/api/v1/projects/{project_id}/scripts/import",
+        json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "source_format": "museflow", "auto_apply_proposal": True},
+    )
+    assert import_response.status_code == 201
+
+    import muse_orchestrator.api.pipeline as pipeline_module
+
+    async def unexpected_recompile(*_args, **_kwargs):
+        raise AssertionError("GET shot routes must not recompile prompts or commit writes")
+
+    monkeypatch.setattr(pipeline_module, "_recompile_project_shots", unexpected_recompile)
+
+    shots_response = await client.get(f"/api/v1/projects/{project_id}/shots")
+    assert shots_response.status_code == 200
+    shots = shots_response.json()
+    assert len(shots) == 2
+    assert shots[0]["prompt_hash"]
+
+    csv_response = await client.get(f"/api/v1/projects/{project_id}/shots/export?format=csv")
+    assert csv_response.status_code == 200
+    assert "shot_id,title" in csv_response.text
+
+    json_response = await client.get(f"/api/v1/projects/{project_id}/shots/export?format=json")
+    assert json_response.status_code == 200
+    assert json_response.json()["shots"][0]["prompt_hash"] == shots[0]["prompt_hash"]
+
+
