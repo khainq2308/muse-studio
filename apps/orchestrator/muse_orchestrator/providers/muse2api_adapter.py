@@ -360,8 +360,14 @@ class Muse2ApiAdapter(VideoProvider):
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST, "SSRF blocked: missing destination hostname.", retryable=False
             )
+        if ":" in hostname and "%" in hostname:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: scoped IPv6 addresses are not allowed.",
+                retryable=False,
+            )
         try:
-            literal_ip = ipaddress.ip_address(hostname.split("%25", 1)[0])
+            literal_ip = ipaddress.ip_address(hostname)
         except ValueError:
             literal_ip = None
 
@@ -375,7 +381,7 @@ class Muse2ApiAdapter(VideoProvider):
             return url, {}, {}
 
         try:
-            ascii_hostname = hostname.encode("idna").decode("ascii")
+            ascii_hostname = hostname.rstrip(".").encode("idna").decode("ascii").lower()
         except UnicodeError as exc:
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST,
@@ -412,8 +418,12 @@ class Muse2ApiAdapter(VideoProvider):
                 sockaddr = record[4]
                 raw_address = sockaddr[0]
                 address = ipaddress.ip_address(str(raw_address).split("%", 1)[0])
-            except (IndexError, TypeError, ValueError):
-                continue
+            except (IndexError, TypeError, ValueError) as exc:
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    "SSRF blocked: DNS returned an invalid address record.",
+                    retryable=False,
+                ) from exc
             if _is_forbidden_ip(address):
                 raise ProviderFailure(
                     ErrorCategory.INVALID_REQUEST,
@@ -447,16 +457,14 @@ class Muse2ApiAdapter(VideoProvider):
 
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
-        # P1a: network and filesystem errors become ProviderFailure so the queue can
-        # retry or fail the task instead of leaving it stuck in RUNNING.
-        # P2b: stream straight to a temp file (hashed incrementally) instead of
-        # buffering the whole file in RAM.
+        """Stream a media result to disk only after validating and pinning its target."""
         try:
             os.makedirs(dest_dir, exist_ok=True)
         except OSError as exc:
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST, f"Cannot create download directory: {exc}", None, False
             ) from exc
+
         url = self._resolve_download_url(result_ref)
         tmp_path = os.path.join(dest_dir, f".download_{os.urandom(8).hex()}.tmp")
         hasher = hashlib.sha256()
@@ -466,17 +474,26 @@ class Muse2ApiAdapter(VideoProvider):
         ext = ""
         mime = ""
         try:
-            async with httpx.AsyncClient(
-                timeout=60.0, follow_redirects=False, transport=self._transport, proxy=self.proxy
-            ) as client:
-                for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
-                    # The API key is only ever sent to the provider's own origin, never to a
-                    # host named in an upstream response or in a redirect.
-                    request_url, pinned_headers, request_extensions = await self._pin_download_url(url)
-                    headers = {"Accept": "*/*", **pinned_headers}
-                    if self._is_provider_origin(url) and self.api_key:
-                        headers["Authorization"] = f"Bearer {self.api_key}"
-                    try:
+            for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
+                # Resolve every redirect independently. Proxies resolve destinations on
+                # their own, so the configured proxy is only used for the trusted provider
+                # origin. External result hosts connect directly to the validated IP.
+                is_provider_origin = self._is_provider_origin(url)
+                request_url, pinned_headers, request_extensions = await self._pin_download_url(url)
+                headers = {"Accept": "*/*", **pinned_headers}
+                if is_provider_origin and self.api_key:
+                    headers["Authorization"] = f"Bearer {self.api_key}"
+                request_proxy = self.proxy if is_provider_origin else None
+                if self._transport is not None:
+                    request_proxy = None
+
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=60.0,
+                        follow_redirects=False,
+                        transport=self._transport,
+                        proxy=request_proxy,
+                    ) as client:
                         async with client.stream(
                             "GET", request_url, headers=headers, extensions=request_extensions
                         ) as resp:
@@ -484,7 +501,9 @@ class Muse2ApiAdapter(VideoProvider):
                                 location = resp.headers.get("location")
                                 if not location:
                                     raise ProviderFailure(
-                                        ErrorCategory.INVALID_REQUEST, "Result download redirected without a location."
+                                        ErrorCategory.INVALID_REQUEST,
+                                        "Result download redirected without a location.",
+                                        retryable=False,
                                     )
                                 url = self._validate_download_url(urljoin(url, location))
                                 continue
@@ -496,53 +515,75 @@ class Muse2ApiAdapter(VideoProvider):
                                 )
                             if resp.status_code != 200:
                                 raise ProviderFailure(
-                                    ErrorCategory.INVALID_REQUEST, f"Unexpected status {resp.status_code} while downloading result."
+                                    ErrorCategory.INVALID_REQUEST,
+                                    f"Unexpected status {resp.status_code} while downloading result.",
+                                    retryable=False,
                                 )
-                            declared = resp.headers.get("content-length")
-                            if declared and declared.isdigit() and int(declared) > _MAX_DOWNLOAD_BYTES:
-                                raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result file exceeds the size limit.")
+                            declared = resp.headers.get("content-length", "")
+                            if declared.isdigit() and int(declared) > _MAX_DOWNLOAD_BYTES:
+                                raise ProviderFailure(
+                                    ErrorCategory.INVALID_REQUEST,
+                                    "Result file exceeds the size limit.",
+                                    retryable=False,
+                                )
                             try:
-                                f = open(tmp_path, "wb")
+                                output = open(tmp_path, "wb")
                             except OSError as exc:
                                 raise ProviderFailure(
-                                    ErrorCategory.INVALID_REQUEST, f"Cannot write download file: {exc}", None, False
+                                    ErrorCategory.INVALID_REQUEST,
+                                    f"Cannot write download file: {exc}",
+                                    None,
+                                    False,
                                 ) from exc
                             try:
                                 async for chunk in resp.aiter_bytes():
                                     total += len(chunk)
                                     if total > _MAX_DOWNLOAD_BYTES:
-                                        raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result file exceeds the size limit.")
+                                        raise ProviderFailure(
+                                            ErrorCategory.INVALID_REQUEST,
+                                            "Result file exceeds the size limit.",
+                                            retryable=False,
+                                        )
                                     hasher.update(chunk)
                                     if len(prefix) < 32:
                                         prefix.extend(chunk[: 32 - len(prefix)])
                                     try:
-                                        f.write(chunk)
+                                        output.write(chunk)
                                     except OSError as exc:
                                         raise ProviderFailure(
-                                            ErrorCategory.INVALID_REQUEST, f"Failed writing download file: {exc}", None, False
+                                            ErrorCategory.INVALID_REQUEST,
+                                            f"Failed writing download file: {exc}",
+                                            None,
+                                            False,
                                         ) from exc
                             finally:
-                                f.close()
+                                output.close()
+
                             if total == 0:
                                 raise ProviderFailure(
-                                    ErrorCategory.INVALID_REQUEST, "Provider returned an empty media file.", retryable=False
+                                    ErrorCategory.INVALID_REQUEST,
+                                    "Provider returned an empty media file.",
+                                    retryable=False,
                                 )
                             content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
                             ext, mime = _detect_media_format(content_type, bytes(prefix))
                             break
-                    except httpx.RequestError as exc:
-                        # Timeouts, connection resets, DNS failures: transient, safe to retry.
-                        safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
-                        raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
-                else:
-                    raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result download redirected too many times.")
+                except httpx.RequestError as exc:
+                    safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
+                    raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
+            else:
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    "Result download redirected too many times.",
+                    retryable=False,
+                )
         except ProviderFailure:
-            # Remove the partial temp file; the queue decides retry vs terminal.
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
             raise
+
         digest = hasher.hexdigest()
         file_path = os.path.join(dest_dir, f"{digest[:16]}_{uuid.uuid4().hex[:8]}.{ext}")
         try:
