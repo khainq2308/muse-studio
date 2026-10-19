@@ -30,5 +30,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Returning to the base revision intentionally drops application tables.
-    Base.metadata.drop_all(bind=op.get_bind(), checkfirst=True)
+    # This bridge adopts an already-running schema; dropping every application table
+    # would destroy data in upgraded installations and cannot be a safe generic rollback.
+    raise RuntimeError(
+        "The schema bootstrap bridge cannot be downgraded safely. "
+        "Restore a tested database backup instead of dropping application tables."
+    )
