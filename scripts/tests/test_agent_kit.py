@@ -399,7 +399,7 @@ class AgentHookReviewRegressionTests(unittest.TestCase):
     def test_bash_guard_normalizes_quoted_token_concatenation_and_compound_commands(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            denied = self.run_hook(
+            denied = GuardTests().run_hook(
                 HOOKS / "guard_bash.py",
                 root,
                 {"tool_name": "Bash", "tool_input": {"command": 'echo safe; g"it" push origin main'}},
@@ -407,7 +407,7 @@ class AgentHookReviewRegressionTests(unittest.TestCase):
             self.assertEqual(denied.returncode, 2, denied.stderr)
             self.assertIn("push-main", denied.stderr)
 
-            force_push = self.run_hook(
+            force_push = GuardTests().run_hook(
                 HOOKS / "guard_bash.py",
                 root,
                 {"tool_name": "Bash", "tool_input": {"command": 'echo safe; git"" push origin feature --force-with-lease'}},
