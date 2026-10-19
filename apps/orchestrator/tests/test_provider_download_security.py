@@ -149,6 +149,7 @@ def test_origin_ignores_case_and_default_ports_but_not_scheme_or_port() -> None:
     assert _origin("http://muse.example.com/x") != same
     assert _origin("https://muse.example.com:8443/x") != same
     assert _origin("https://muse.example.com.evil.com/x") != same
+    assert _origin("https://bücher.example/x") == _origin("https://xn--bcher-kva.example/y")
     assert _origin("file:///etc/passwd") is None
     assert _origin("/v1/media/x") is None
 
@@ -206,6 +207,54 @@ async def test_dns_rejects_host_with_any_private_answer(tmp_path: Path) -> None:
         await adapter.download_result("https://cdn.other.com/a.mp4", str(tmp_path))
 
     assert upstream.requests == []
+
+
+@pytest.mark.asyncio
+async def test_dns_invalid_record_fails_closed_even_with_a_public_answer(tmp_path: Path) -> None:
+    async def malformed_resolver(host: str, port: int):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("not-an-ip-address", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port)),
+        ]
+
+    upstream = Upstream({})
+    adapter = Muse2ApiAdapter(
+        BASE,
+        API_KEY,
+        transport=httpx.MockTransport(upstream),
+        dns_resolver=malformed_resolver,
+    )
+
+    with pytest.raises(ProviderFailure, match="invalid address record"):
+        await adapter.download_result("https://cdn.other.com/a.mp4", str(tmp_path))
+
+    assert upstream.requests == []
+
+
+@pytest.mark.asyncio
+async def test_idn_is_normalized_for_dns_host_header_and_tls_sni(tmp_path: Path) -> None:
+    seen_hosts: list[str] = []
+
+    async def idn_resolver(host: str, port: int):
+        seen_hosts.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port))]
+
+    logical_url = "https://xn--bcher-kva.example/a.mp4"
+    upstream = Upstream({logical_url: VIDEO})
+    adapter = Muse2ApiAdapter(
+        BASE,
+        API_KEY,
+        transport=httpx.MockTransport(upstream),
+        dns_resolver=idn_resolver,
+    )
+
+    stored = await adapter.download_result("https://bücher.example/a.mp4", str(tmp_path))
+
+    assert stored.size_bytes == len(VIDEO.content)
+    assert seen_hosts == ["xn--bcher-kva.example"]
+    assert upstream.wire_requests == [
+        ("https://93.184.216.34/a.mp4", "xn--bcher-kva.example", "xn--bcher-kva.example")
+    ]
 
 
 @pytest.mark.asyncio
@@ -267,6 +316,7 @@ async def test_redirect_to_plain_http_on_another_host_is_refused(tmp_path: Path)
         "https://[::1]/media/video.mp4",
         "https://[::ffff:127.0.0.1]/media/video.mp4",
         "https://[fe80::1%25eth0]/media/video.mp4",
+        "https://[2606:4700::1111%25eth0]/media/video.mp4",
         "https://[not-an-ipv6-literal]/media/video.mp4",
     ],
 )
