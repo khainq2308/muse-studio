@@ -49,17 +49,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
-      - name: Install orchestrator and media-engine test dependencies
-        working-directory: apps/orchestrator
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e "../media-engine"
-          pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+          enable-cache: true
+          cache-dependency-glob: |
+            apps/orchestrator/pyproject.toml
+            apps/orchestrator/uv.lock
+            apps/media-engine/pyproject.toml
+      - name: Sync locked orchestrator and media-engine dependencies
+        run: uv sync --locked --project apps/orchestrator --extra dev
       - name: Run orchestrator tests
-        working-directory: apps/orchestrator
         env:
           REQUIRE_FFMPEG: "1"
-        run: pytest -q -rs
+        run: uv run --locked --project apps/orchestrator --extra dev pytest -q -rs
 
   media-engine-tests:
     name: Media engine unit tests
@@ -92,30 +95,3 @@ jobs:
       - name: Build frontend
         working-directory: apps/studio-web
         run: npm run build
-
-
-  # Temporary lock-generation helper. Removed after committing the resulting uv.lock.
-  generate-python-lock-bootstrap:
-    if: github.event_name == 'pull_request' && github.head_ref == 'chore/python-uv-lockfile'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.10.0"
-      - name: Resolve project and local muse-media dependency
-        run: uv lock --project apps/orchestrator
-      - name: Print generated lock for recovery if artifact access is unavailable
-        run: |
-          echo "LOCKFILE_BEGIN"
-          cat apps/orchestrator/uv.lock
-          echo "LOCKFILE_END"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-uv-lock-bootstrap
-          path: apps/orchestrator/uv.lock
-          if-no-files-found: error
-          retention-days: 3
