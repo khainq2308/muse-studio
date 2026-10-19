@@ -219,7 +219,7 @@ def main() -> None:
     if dynamic_risk:
         block(
             f"[guard_bash:dynamic-shell] Refusing ambiguous protected operation: {dynamic_risk}. "
-            f"Use literal command arguments.\\nCommand: {command}"
+            f"Use literal command arguments.\nCommand: {command}"
         )
 
     candidates = [command, *normalized_segments]
