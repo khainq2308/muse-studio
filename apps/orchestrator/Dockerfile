@@ -3,15 +3,17 @@ FROM python:3.11-slim
 WORKDIR /workspace
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl ffmpeg && rm -rf /var/lib/apt/lists/*
 
-# The media engine is a local editable package dependency of the orchestrator.
+# Keep the virtual environment outside the source mount used by docker-compose.
+# The same resolved dependency graph is used by CI and this development image.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
 COPY apps/media-engine ./apps/media-engine
 COPY apps/orchestrator ./apps/orchestrator
 
 WORKDIR /workspace/apps/orchestrator
-# Install the sibling package first so the orchestrator's declared muse-media
-# dependency resolves locally instead of looking for a public distribution.
-RUN pip install --no-cache-dir -e "../media-engine" \
-    && pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir "uv==0.10.0" \
+    && uv sync --locked --project /workspace/apps/orchestrator --extra dev
 
 EXPOSE 8000
 CMD ["uvicorn", "muse_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8000"]
