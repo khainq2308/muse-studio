@@ -1,12 +1,14 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from muse_orchestrator.application.services import ApplicationError
-from muse_orchestrator.core.config import SecretRedactor
+from muse_orchestrator.core.config import SecretRedactor, settings
 from muse_orchestrator.core.database import init_db
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.providers.base import ProviderFailure
@@ -31,7 +33,12 @@ from muse_orchestrator.api.system import router as system_router
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
-    yield
+    arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    app.state.arq_pool = arq_pool
+    try:
+        yield
+    finally:
+        await arq_pool.aclose()
 
 
 app = FastAPI(title="MuseStudio Orchestrator API", version="0.7.0", lifespan=lifespan)
