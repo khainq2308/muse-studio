@@ -26,6 +26,20 @@ Hoặc cài package và chạy bộ kiểm thử orchestrator:
 
 Orchestrator dùng package sibling `muse-media`; vì package này chưa được publish lên package index, hãy cài `apps/media-engine` trước khi cài orchestrator để dependency metadata được thỏa mãn bằng bản local.
 
+## Database migrations
+
+Schema được quản lý qua Alembic; application startup chạy `upgrade head`. Revision đầu tiên là bootstrap bridge để database đã được tạo từ các phiên bản dùng `create_all` có thể được nhận diện mà không xoá dữ liệu: nó tạo những bảng còn thiếu và chạy compatibility repair hiện có. **Không sửa revision bootstrap sau khi đã phát hành.**
+
+Khi thay đổi model/schema, tạo revision mới, đọc lại SQL và kiểm tra cả đường upgrade lẫn downgrade:
+
+```sh
+cd apps/orchestrator
+alembic revision --autogenerate -m "describe schema change"
+alembic upgrade head
+```
+
+Không dựa vào `Base.metadata.create_all` để cập nhật schema đã tồn tại; mọi thay đổi schema mới phải có migration revision riêng. Lệnh Alembic sử dụng `DATABASE_URL` trong môi trường hoặc giá trị từ cấu hình local.
+
 ## Security configuration
 
 - Local development defaults are intentionally permissive when STUDIO_ADMIN_TOKEN is absent. Do not expose this mode to a network you do not trust.
