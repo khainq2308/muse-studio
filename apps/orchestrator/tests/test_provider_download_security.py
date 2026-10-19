@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import socket
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -89,9 +88,8 @@ class Upstream:
             dns_resolver=_public_dns_resolver,
         )
 
+
 BEARER = f"Bearer {API_KEY}"
-
-
 
 
 @pytest.mark.asyncio
@@ -269,6 +267,7 @@ async def test_redirect_to_plain_http_on_another_host_is_refused(tmp_path: Path)
         "https://[::1]/media/video.mp4",
         "https://[::ffff:127.0.0.1]/media/video.mp4",
         "https://[fe80::1%25eth0]/media/video.mp4",
+        "https://[not-an-ipv6-literal]/media/video.mp4",
     ],
 )
 async def test_unsafe_references_are_refused_without_any_request(reference: str, tmp_path: Path) -> None:
