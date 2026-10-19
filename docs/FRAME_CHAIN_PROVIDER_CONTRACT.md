@@ -28,7 +28,15 @@ These are source-level observations, not a live probe of the user's deployment:
 - [www222fff/muse2api video route](https://github.com/www222fff/muse2api/blob/main/src/muse2api/api/routes/videos.py) reads `body.image` or `body.input_reference`. Its [request schema](https://github.com/www222fff/muse2api/blob/main/src/muse2api/api/schemas.py) defines `image`, `input_reference`, and `size`; the shared image loader accepts data URLs or HTTP(S) URLs.
 - [czg86389-hub/muse2api README](https://github.com/czg86389-hub/muse2api) documents `first_frame_image` as a first-frame input and says it accepts data URLs or HTTP(S) URLs.
 
-To support these known variants without knowing the fork in advance, the adapter emits both `image` and `first_frame_image` with the same data URI, and both `size` and `aspect_ratio` with the shot aspect ratio. This adds payload overhead: the image is duplicated in JSON, so the queue imposes a 20-MiB raw-image bound. Unknown-field tolerance is an observed contract of the www222fff Pydantic schema and is not independently verified for every fork. If a deployment rejects unknown fields, the adapter must be changed to emit only that deployment's supported field before production use; this branch does not add a dialect-selection setting.
+By default, `MUSE2API_VIDEO_PAYLOAD_PROFILE=compat` preserves the aliases for an unidentified deployment: it emits both `image` and `first_frame_image`, plus both `size` and `aspect_ratio`. This can approximately double the base64 image content in the request body. The queue still caps the raw frame at 20 MiB.
+
+After confirming the deployed fork/schema, set one explicit profile on the Orchestrator process to remove the duplicated image and unneeded size alias:
+
+- `MUSE2API_VIDEO_PAYLOAD_PROFILE=www222fff`: sends `image` and `size` only.
+- `MUSE2API_VIDEO_PAYLOAD_PROFILE=czg86389-hub`: sends `first_frame_image` and `aspect_ratio` only.
+- `MUSE2API_VIDEO_PAYLOAD_PROFILE=compat`: retains both sets of aliases for backward compatibility (default).
+
+The profile setting does not prove live frame conditioning; the selected field must still be tested against the actual deployed version.
 
 ## Verification status and operational test
 
