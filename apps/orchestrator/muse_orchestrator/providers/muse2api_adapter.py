@@ -22,23 +22,43 @@ from muse_orchestrator.providers.base import (
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _MAX_DOWNLOAD_REDIRECTS = 3
+_FORBIDDEN_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "ip6-localhost",
+    "ip6-loopback",
+    "metadata",
+    "metadata.google.internal",
+}
+_FORBIDDEN_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
 
 Origin = tuple[str, str, int]
 
 
 def _origin(url: str) -> Origin | None:
-    """(scheme, host, port) for an absolute http(s) URL, or None for anything else."""
+    """Return a canonical (scheme, ASCII host, port) for an HTTP(S) origin."""
     try:
         parts = urlsplit(url)
         scheme = parts.scheme.lower()
         hostname = parts.hostname
-        port = parts.port or _DEFAULT_PORTS.get(scheme)
-    except ValueError:
+        explicit_port = parts.port
+        port = explicit_port if explicit_port is not None else _DEFAULT_PORTS.get(scheme)
+        # Port zero is reserved and must not alias the scheme's default port.
+        # Returning None makes the caller reject it before any network request.
+        if port is not None and not 1 <= port <= 65535:
+            return None
+        if hostname and ":" not in hostname:
+            # Normalize IDNs and trailing root dots consistently before comparing
+            # provider origins or constructing Host/SNI values.
+            hostname = hostname.rstrip(".").encode("idna").decode("ascii").lower()
+        elif hostname:
+            hostname = hostname.lower()
+    except (UnicodeError, ValueError):
         # urlsplit can reject malformed bracketed IPv6 literals and ports.
         return None
     if scheme not in _DEFAULT_PORTS or not hostname or port is None:
         return None
-    return scheme, hostname.lower(), port
+    return scheme, hostname, port
 
 
 def _is_forbidden_ip(value: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -371,9 +391,18 @@ class Muse2ApiAdapter(VideoProvider):
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST, "SSRF blocked: missing destination hostname.", retryable=False
             )
+
+        # Scoped IPv6 literals are interface-dependent and should never be accepted
+        # for untrusted URLs, even if the underlying address itself is globally routable.
+        if ":" in hostname and "%" in hostname:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: scoped IPv6 addresses are not allowed.",
+                retryable=False,
+            )
+
         try:
-            # urlsplit().hostname removes IPv6 brackets and may retain an encoded zone id.
-            literal_ip = ipaddress.ip_address(hostname.split("%25", 1)[0])
+            literal_ip = ipaddress.ip_address(hostname)
         except ValueError:
             literal_ip = None
 
@@ -384,15 +413,39 @@ class Muse2ApiAdapter(VideoProvider):
                     f"SSRF blocked: non-public IP literal '{hostname}'.",
                     retryable=False,
                 )
+            # A public IP literal is already pinned and requires no DNS lookup.
             return url, {}, {}
+
+        try:
+            ascii_hostname = hostname.rstrip(".").encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: destination hostname is invalid.",
+                retryable=False,
+            ) from exc
+
+        # Block local/single-label names independently of DNS answers; resolvers may
+        # apply search domains or multicast DNS and map them to internal services.
+        if (
+            not ascii_hostname
+            or "." not in ascii_hostname
+            or ascii_hostname in _FORBIDDEN_HOSTS
+            or ascii_hostname.endswith(_FORBIDDEN_HOST_SUFFIXES)
+        ):
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: destination uses a local or non-public hostname.",
+                retryable=False,
+            )
 
         port = parts.port or _DEFAULT_PORTS[parts.scheme.lower()]
         try:
             if self._dns_resolver is not None:
-                records = await asyncio.wait_for(self._dns_resolver(hostname, port), timeout=5.0)
+                records = await asyncio.wait_for(self._dns_resolver(ascii_hostname, port), timeout=5.0)
             else:
                 records = await asyncio.wait_for(
-                    asyncio.get_running_loop().getaddrinfo(hostname, port, type=socket.SOCK_STREAM),
+                    asyncio.get_running_loop().getaddrinfo(ascii_hostname, port, type=socket.SOCK_STREAM),
                     timeout=5.0,
                 )
         except (OSError, asyncio.TimeoutError) as exc:
@@ -412,17 +465,37 @@ class Muse2ApiAdapter(VideoProvider):
         resolved: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
         for record in records:
             try:
-                sockaddr = record[4]
+                if not isinstance(record, (tuple, list)) or len(record) != 5:
+                    raise ValueError("malformed getaddrinfo record")
+                family, _socktype, _protocol, _canonical_name, sockaddr = record
+                if family not in (socket.AF_INET, socket.AF_INET6):
+                    raise ValueError("unsupported DNS address family")
+                if not isinstance(sockaddr, (tuple, list)) or len(sockaddr) < 2:
+                    raise ValueError("malformed socket address")
                 raw_address = sockaddr[0]
-                address = ipaddress.ip_address(str(raw_address).split("%", 1)[0])
-            except (IndexError, TypeError, ValueError):
-                continue
+                # Scope IDs are not valid DNS answers for this public-host pinning path.
+                if "%" in str(raw_address):
+                    raise ValueError("scoped DNS address")
+                address = ipaddress.ip_address(str(raw_address))
+                if (family == socket.AF_INET and address.version != 4) or (
+                    family == socket.AF_INET6 and address.version != 6
+                ):
+                    raise ValueError("address does not match DNS family")
+            except (IndexError, TypeError, ValueError) as exc:
+                # Any malformed answer invalidates the whole DNS result; do not
+                # silently discard it and select a different, possibly attacker-chosen IP.
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    "SSRF blocked: DNS returned an invalid address record.",
+                    retryable=False,
+                ) from exc
+
             # Reject the whole host if any answer is private/reserved, rather than
             # selecting a public answer while another answer points into a private net.
             if _is_forbidden_ip(address):
                 raise ProviderFailure(
                     ErrorCategory.INVALID_REQUEST,
-                    f"SSRF blocked: destination hostname '{hostname}' resolved to a non-public IP.",
+                    f"SSRF blocked: destination hostname '{ascii_hostname}' resolved to a non-public IP.",
                     retryable=False,
                 )
             resolved.append(address)
@@ -430,22 +503,26 @@ class Muse2ApiAdapter(VideoProvider):
         if not resolved:
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST,
-                "SSRF blocked: DNS returned no usable IP addresses.",
+                "SSRF blocked: DNS returned no usable addresses.",
                 retryable=False,
             )
 
         # Pin the TCP destination so the HTTP client cannot do a second DNS lookup
         # after validation. For HTTPS, keep Host, SNI and certificate checks on the
-        # original DNS name; URL rewriting alone would incorrectly validate against the IP.
+        # canonical original DNS name; URL rewriting alone would validate against the IP.
         pinned_ip = resolved[0]
         pinned_host = f"[{pinned_ip.compressed}]" if pinned_ip.version == 6 else pinned_ip.compressed
         port_suffix = f":{parts.port}" if parts.port is not None else ""
         pinned_netloc = f"{pinned_host}{port_suffix}"
         pinned_url = parts._replace(netloc=pinned_netloc).geturl()
-        request_headers = {"Host": parts.netloc}
+
+        host_header = ascii_hostname
+        if parts.port is not None:
+            host_header = f"{host_header}:{parts.port}"
+        request_headers = {"Host": host_header}
         request_extensions: dict[str, Any] = {}
         if parts.scheme.lower() == "https":
-            request_extensions["sni_hostname"] = hostname
+            request_extensions["sni_hostname"] = ascii_hostname
         return pinned_url, request_headers, request_extensions
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
