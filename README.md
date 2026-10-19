@@ -20,8 +20,11 @@ Từ repo root, khởi chạy Docker Compose:
 Hoặc cài package và chạy bộ kiểm thử orchestrator:
 
     cd apps/orchestrator
-    pip install -e ".[dev]" -e "../media-engine"
+    pip install -e "../media-engine"
+    pip install -e ".[dev]"
     pytest -q
+
+Orchestrator dùng package sibling `muse-media`; vì package này chưa được publish lên package index, hãy cài `apps/media-engine` trước khi cài orchestrator để dependency metadata được thỏa mãn bằng bản local.
 
 ## Security configuration
 
@@ -31,4 +34,4 @@ Hoặc cài package và chạy bộ kiểm thử orchestrator:
 
 ## Current implementation boundary
 
-Project/connection/asset endpoints now use application services and a shared repository adapter. Production video-task completion extracts real boundary frames with FFmpeg/FFprobe; before dispatch, the queue resolves a first-frame Asset to a local image, validates its project ownership, size, MIME signature and SHA-256, then sends a data URI rather than an internal Asset ID. The adapter emits both documented muse2api frame aliases (`image` and `first_frame_image`) and both aspect-ratio aliases (`size` and `aspect_ratio`) to support known request-schema variants. This is source-contract compatibility only: live frame-conditioned video generation still requires a dated real-instance probe; mock-provider tests do not prove visual continuity. Workflow DAG validation/cache behavior is present, but production ARQ dispatch/polling, persistent media-engine job execution and the remaining export features (title card, subtitles, audio mixing) remain roadmap work. Timeline export itself renders the real clips with FFmpeg and requires FFmpeg/FFprobe on the server. See docs/ARCHITECTURE.md, docs/IMPLEMENTATION_PLAN.md, docs/MUSE2API_CAPABILITY_MATRIX.md, and docs/FRAME_CHAIN_PROVIDER_CONTRACT.md.
+Project/connection/asset endpoints now use application services and a shared repository adapter. Production video-task completion extracts real boundary frames with FFmpeg/FFprobe; before dispatch, the queue resolves a first-frame Asset to a local image, validates its project ownership, size, MIME signature and SHA-256, then sends a data URI rather than an internal Asset ID. The adapter emits both documented muse2api frame aliases (`image` and `first_frame_image`) and both aspect-ratio aliases (`size` and `aspect_ratio`) to support known request-schema variants. This is source-contract compatibility only: live frame-conditioned video generation still requires a dated real-instance probe; mock-provider tests do not prove visual continuity. Generation tasks are persisted in the database and dispatched through ARQ/Redis, with worker polling/backoff and a periodic recovery scan for queued/running tasks. The orchestrator worker runs as a separate Docker Compose service. Workflow DAG validation/cache behavior is present; persistent media-engine job execution and the remaining export features (title card, subtitles, audio mixing) remain roadmap work. Timeline export itself renders the real clips with FFmpeg and requires FFmpeg/FFprobe on the server. See docs/ARCHITECTURE.md, docs/IMPLEMENTATION_PLAN.md, docs/MUSE2API_CAPABILITY_MATRIX.md, and docs/FRAME_CHAIN_PROVIDER_CONTRACT.md.
