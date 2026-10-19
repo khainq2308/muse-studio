@@ -32,6 +32,8 @@ Orchestrator dùng package sibling `muse-media`; vì package này chưa được
 
 Production có file riêng, không mount source code, không bật reload, không publish trực tiếp cổng Postgres/Redis/API ra host, build frontend thành static assets, và định tuyến API cùng origin qua Nginx. Tạo file env riêng rồi điền secret trước khi chạy:
 
+Trước khi chạy production, đặt `MUSE2API_VIDEO_PAYLOAD_PROFILE` trong `.env.prod` thành profile nhà cung cấp đã được xác minh với gateway thực tế: `czg86389-hub`, hoặc `www222fff` kèm `MUSE2API_VIDEO_SIZE` đúng định dạng mà gateway chấp nhận. Production chủ động từ chối profile cũ `compat` vì nó gửi frame đầu vào hai trường JSON và phát cả alias `size`/`aspect_ratio` chưa được xác minh. Không chọn profile chỉ dựa trên unit test; hãy xác minh request contract trên gateway đang triển khai.
+
 ```sh
 cp .env.prod.example .env.prod
 # Điền POSTGRES_PASSWORD, SECRET_ENCRYPTION_KEY (ít nhất 32 ký tự ngẫu nhiên)
@@ -39,8 +41,6 @@ cp .env.prod.example .env.prod
 docker compose --env-file .env.prod -f docker-compose.prod.yml config --quiet
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 ```
-
-Trước khi chạy production, đặt `MUSE2API_VIDEO_PAYLOAD_PROFILE` trong `.env.prod` thành profile nhà cung cấp đã được xác minh với gateway thực tế: `czg86389-hub`, hoặc `www222fff` kèm `MUSE2API_VIDEO_SIZE` đúng định dạng mà gateway chấp nhận. Production chủ động từ chối profile cũ `compat` vì nó gửi frame đầu vào hai trường JSON và phát cả alias `size`/`aspect_ratio` chưa được xác minh. Không chọn profile chỉ dựa trên unit test; hãy xác minh request contract trên gateway đang triển khai.
 
 Tạo secret ngẫu nhiên, ví dụ bằng `openssl rand -hex 32` cho encryption key và database password, và `openssl rand -hex 24` cho admin token. Nếu database password có ký tự đặc biệt trong URL, hãy percent-encode giá trị trước khi dùng trong `DATABASE_URL`. Frontend được bind vào `127.0.0.1:8080` mặc định; đặt reverse proxy HTTPS ở trước nó nếu cần truy cập từ mạng. Không expose cổng HTTP này trực tiếp ra Internet.
 
