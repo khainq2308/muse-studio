@@ -68,7 +68,7 @@ export function StatusBadge({ status }: { status: string }) {
   else if (["running", "queued", "needs_review", "degraded", "blocked_upstream_frame"].includes(normalized)) tone = "blue";
   else if (["failed", "canceled", "cancelled", "auth_error", "unavailable", "blocked_reference"].includes(normalized)) tone = "bad";
   else if (["paused", "poll_timeout", "unknown", "draft"].includes(normalized)) tone = "warning";
-  return <Badge tone={tone}>{status.replaceAll("_", " ")}</Badge>;
+  return <Badge tone={tone}>{status.replace(/_/g, " ")}</Badge>;
 }
 
 export function LoadingLine({ label = "Đang tải dữ liệu…" }: { label?: string }) {
