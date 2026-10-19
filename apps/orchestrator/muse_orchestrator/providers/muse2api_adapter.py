@@ -42,7 +42,10 @@ def _origin(url: str) -> Origin | None:
 def _is_forbidden_ip(value: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Return True unless an address is globally routable."""
     try:
-        address = value if isinstance(value, (ipaddress.IPv4Address, ipaddress.IPv6Address)) else ipaddress.ip_address(value.split("%", 1)[0])
+        if isinstance(value, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+            address = value
+        else:
+            address = ipaddress.ip_address(value.split("%", 1)[0])
     except ValueError:
         return True
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
