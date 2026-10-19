@@ -70,6 +70,29 @@ class LayeringCheckerRegressionTests(unittest.TestCase):
         source = "session.query(Project)\nhttp_client.get(url)\nrepository.execute(command)\n"
         self.assertEqual(self.count(source), 1)
 
+    def test_detects_database_session_access_after_variable_rename(self):
+        source = (
+            "from sqlalchemy.ext.asyncio import AsyncSession as DatabaseSession\\n"
+            "async def endpoint(connection: DatabaseSession):\\n"
+            "    await connection.commit()\\n"
+        )
+        self.assertEqual(self.count(source), 1)
+
+    def test_detects_database_session_access_through_alias(self):
+        source = (
+            "async def endpoint(database: AsyncSession):\\n"
+            "    storage = database\\n"
+            "    await storage.refresh(entity)\\n"
+        )
+        self.assertEqual(self.count(source), 1)
+
+    def test_detects_untyped_session_parameter_injected_by_get_db(self):
+        source = (
+            "async def endpoint(unit=Depends(get_db)):\\n"
+            "    await unit.rollback()\\n"
+        )
+        self.assertEqual(self.count(source), 1)
+
 
 class StopGateBaselineRegressionTests(unittest.TestCase):
     @classmethod
