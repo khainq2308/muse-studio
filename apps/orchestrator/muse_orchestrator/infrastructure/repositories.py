@@ -12,6 +12,7 @@ from muse_orchestrator.models.domain import (
     BackupRecord,
     ConnectionAccount,
     StructuredLogRecord,
+    ShotRecord,
 )
 
 
@@ -46,6 +47,20 @@ class StudioRepository:
 
     async def get_project(self, project_id: str) -> Project | None:
         return await self.session.get(Project, project_id)
+
+    async def list_project_shots(self, project_id: str) -> list[ShotRecord] | None:
+        """Return stored shot state without recompiling prompts or committing writes.
+
+        None means the project does not exist; an empty list is a valid empty project.
+        """
+        if await self.session.get(Project, project_id) is None:
+            return None
+        result = await self.session.execute(
+            select(ShotRecord)
+            .where(ShotRecord.project_id == project_id)
+            .order_by(ShotRecord.sequence_index.asc())
+        )
+        return list(result.scalars().all())
 
     async def list_project_revisions(self, project_id: str) -> list[ProjectRevision]:
         result = await self.session.execute(
