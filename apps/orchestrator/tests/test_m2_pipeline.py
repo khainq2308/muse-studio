@@ -123,7 +123,8 @@ async def test_m2_script_import_bible_extraction_and_continuity(client: AsyncCli
     csv_res = await client.get(f"/api/v1/projects/{proj_id}/shots/export?format=csv")
     assert csv_res.status_code == 200
     assert "sequence_index,shot_id,title" in csv_res.text
-    assert "Conan Edogawa" in csv_res.text\n
+    assert "Conan Edogawa" in csv_res.text
+
 def test_script_import_proposal_requires_explicit_opt_in():
     from muse_orchestrator.api.pipeline import ScriptImportIn
 
