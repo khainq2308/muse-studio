@@ -62,7 +62,7 @@ jobs:
       - name: Run orchestrator tests
         env:
           REQUIRE_FFMPEG: "1"
-        run: uv run --locked --project apps/orchestrator --extra dev pytest -q -rs
+        run: uv run --locked --project apps/orchestrator --extra dev python -m pytest -p pytest_asyncio.plugin -q -rs
 
   media-engine-tests:
     name: Media engine unit tests
