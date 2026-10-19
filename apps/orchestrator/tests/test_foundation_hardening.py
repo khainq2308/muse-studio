@@ -53,7 +53,9 @@ async def test_all_product_api_routes_require_admin_token_when_configured(
         assert authorized == "admin_operator"
 
 
-def test_production_settings_reject_missing_or_default_secrets() -> None:
+def test_production_settings_reject_missing_or_default_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Test secret validation independently from the production payload-profile guard.
+    monkeypatch.setenv("MUSE2API_VIDEO_PAYLOAD_PROFILE", "czg86389-hub")
     with pytest.raises(ValidationError):
         Settings(environment="production")
     with pytest.raises(ValidationError):
