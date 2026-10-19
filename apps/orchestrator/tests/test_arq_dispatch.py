@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import pytest
 from arq.connections import RedisSettings
 
-from muse_orchestrator.core.config import settings
 from muse_orchestrator.models.domain import GenerationTaskRecord, QueueTaskState
 from muse_orchestrator.services.arq_dispatch import enqueue_generation_step
 from muse_orchestrator.workers.queue_worker import WorkerSettings
