@@ -22,7 +22,7 @@ async def schedule_generation_task(request: Request, task: GenerationTaskRecord)
             detail={
                 "code": "queue_dispatch_unavailable",
                 "task_id": task.id,
-                "message": "Task is saved, but the ARQ scheduler is not initialized. Retry the same idempotent request.",
+                "message": "Task is saved, but the ARQ scheduler is not initialized. Background recovery will retry after Redis is reachable; do not create a new generation just to reschedule.",
             },
         )
 
@@ -39,6 +39,6 @@ async def schedule_generation_task(request: Request, task: GenerationTaskRecord)
             detail={
                 "code": "queue_dispatch_unavailable",
                 "task_id": task.id,
-                "message": "Task is saved, but Redis scheduling failed. Retry the same idempotent request.",
+                "message": "Task is saved, but Redis scheduling failed. Background recovery will retry after Redis is reachable; do not create a new generation just to reschedule.",
             },
         ) from exc
