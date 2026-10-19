@@ -62,6 +62,129 @@ def _shell_command_segments(command: str) -> list[str]:
     return segments
 
 
+_DYNAMIC_SHELL_SYNTAX = re.compile(r"[#!/usr/bin/env python3
+"""PreToolUse(Bash): block destructive or policy-violating shell commands."""
+from __future__ import annotations
+
+import posixpath
+import re
+import shlex
+
+from _common import block, read_event
+
+RULES: list[tuple[str, str, str]] = [
+    (r"\bgit\s+push\b.*(--force\b|--force-with-lease\b|\s-f\b)", "force-push",
+     "Force-push is not allowed. Push a feature branch normally."),
+    (r"\bgit\s+push\b[^|;&]*\b(origin\s+)?(main|master)\b", "push-main",
+     "Do not push to main/master. Work on feat/*, fix/* or refactor/* and open a PR."),
+    (r"\bgit\s+reset\s+--hard\b", "reset-hard",
+     "git reset --hard discards work. Use git stash or ask the user."),
+    (r"\bgit\s+clean\b.*-[a-zA-Z]*f", "git-clean",
+     "git clean -f deletes untracked files. Ask the user first."),
+    (r"\bgit\s+checkout\s+(--\s+)?\.\s*$", "checkout-dot",
+     "Discarding all working-tree changes is not allowed."),
+    (r"\bdocker\s+compose\s+down\b.*(-v\b|--volumes\b)", "compose-volumes",
+     "docker compose down -v deletes Postgres/Redis/media volumes."),
+    (r"\bdocker\s+volume\s+(rm|prune)\b", "docker-volume",
+     "Removing Docker volumes can destroy project data."),
+    (r"(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z)?sh\b", "pipe-to-shell",
+     "Piping a download into a shell is not allowed."),
+    (r"\bDROP\s+(TABLE|DATABASE|SCHEMA)\b", "drop-sql",
+     "Destructive SQL is not allowed from the agent. Write an Alembic migration instead."),
+    (r"\bTRUNCATE\s+TABLE\b", "truncate-sql", "TRUNCATE is not allowed from the agent."),
+    (r"\bsudo\b", "sudo", "sudo is not available to the agent."),
+    (r"\bchmod\s+-R\s+777\b", "chmod-777", "chmod -R 777 is not allowed."),
+]
+
+SECRET_PATH = re.compile(r"""(?<![A-Za-z0-9_.-])\.env(?!\.example(?:$|[\s/'";|&)]))[\w.*?{}-]*(?=$|[\s/'";|&)])""", re.IGNORECASE)
+_SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")"}
+_GLOB_OR_EXPANSION = re.compile(r"""[*?\[\]{}$\x60]""")
+
+
+def _shell_command_segments(command: str) -> list[str]:
+    """Return conservative token-normalized segments for rule matching.
+
+    The raw command is still checked as well (important for pipes and secrets), but
+    shlex normalization catches harmless-looking quote concatenation such as
+    `g"it" push origin main`, which the shell executes as `git push origin main`.
+    This is deliberately not a shell evaluator and never expands variables/substitutions.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+    lexer.whitespace_split = True
+    tokens = list(lexer)
+    segments: list[str] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _SHELL_SEPARATORS or (token and set(token) <= {";", "&", "|", "(", ")"}):
+            if current:
+                segments.append(" ".join(current))
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(" ".join(current))
+    return segments
+
+
+]")
+
+def dynamic_shell_expansion_risk(segments: list[str]) -> str | None:
+    """Reject opaque shell expansion when it can alter a protected operation.
+
+    The guard is intentionally not a shell evaluator. It first normalizes ordinary
+    shell quoting/separators; this second check prevents parameter/command expansion
+    from hiding the executable, branch, or destructive option from the policy regexes.
+    Variable-expanded git pushes are rejected even for apparently safe branches because
+    the final ref cannot be proven statically. Pushes with literal refs remain allowed.
+    """
+    for segment in segments:
+        if not _DYNAMIC_SHELL_SYNTAX.search(segment):
+            continue
+
+        lowered = segment.lower()
+
+        # A ref such as "$(printf main)" or "$BRANCH" can resolve to main/master.
+        # Also catches hidden command names such as g${IFS}it and "$GIT".
+        if re.search(r"\\bgit\\s+push\\b", segment, re.IGNORECASE):
+            return "git push uses shell expansion"
+        if re.search(r"\\bpush\\b", segment, re.IGNORECASE) and (
+            re.search(r"\\b(main|master)\\b", segment, re.IGNORECASE)
+            or re.search(r"--force(?:-with-lease)?\\b|(?<!\\S)-[^\\s]*f[^\\s]*", segment, re.IGNORECASE)
+        ):
+            return "shell expansion can hide a protected git push target or force flag"
+
+        if re.search(r"\\breset\\b", lowered) and re.search(r"--hard\\b|(?<!\\S)-[^\\s]*hard", lowered):
+            return "shell expansion can hide a destructive git reset"
+        if re.search(r"\\bclean\\b", lowered) and re.search(
+            r"--(?:force|interactive)\\b|(?<!\\S)-[a-zA-Z]*f[a-zA-Z]*", lowered
+        ):
+            return "shell expansion can hide a destructive git clean"
+        if "docker" in lowered and "compose" in lowered and (
+            re.search(r"\\bdown\\b", lowered)
+            or "--volumes" in lowered
+            or re.search(r"(?<!\\S)-[a-zA-Z]*v[a-zA-Z]*(?!\\S)", lowered)
+        ):
+            return "shell expansion can hide a docker compose volume removal"
+        if "docker" in lowered and "volume" in lowered:
+            return "shell expansion can hide a docker volume removal"
+        if re.search(r"\\b(drop\\s+(?:table|database|schema)|truncate\\s+table)\\b", segment, re.IGNORECASE):
+            return "shell expansion appears in destructive SQL"
+        
+        # A dynamic executable combined with recursive-delete flags or a root-like
+        # operand cannot be classified safely (e.g. "$TOOL" -rf /).
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = []
+        if tokens and _DYNAMIC_SHELL_SYNTAX.search(tokens[0]):
+            if _recursive_flags(tokens[1:]) or any(
+                token in {"/", "~", "..", "./", "../"} for token in tokens[1:]
+            ):
+                return "dynamic shell command with recursive-delete flags or a broad target"
+
+    return None
+
+
 def _recursive_flags(tokens: list[str]) -> bool:
     options = True
     for token in tokens:
@@ -159,6 +282,13 @@ def main() -> None:
         normalized_segments = []
         if re.search(r"\bgit\s+push\b|\bdocker\s+compose\s+down\b|\bDROP\s+(TABLE|DATABASE|SCHEMA)\b", command, re.IGNORECASE):
             block("[guard_bash:parse] Refusing an unparseable command containing a protected operation.")
+
+    dynamic_risk = dynamic_shell_expansion_risk(normalized_segments)
+    if dynamic_risk:
+        block(
+            f"[guard_bash:dynamic-shell] Refusing ambiguous protected operation: {dynamic_risk}. "
+            f"Use literal command arguments.\\nCommand: {command}"
+        )
 
     candidates = [command, *normalized_segments]
     for pattern, rule, message in RULES:
