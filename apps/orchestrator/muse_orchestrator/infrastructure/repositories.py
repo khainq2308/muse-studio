@@ -41,7 +41,7 @@ class StudioRepository:
 
     # --- M6 timeline persistence ---
 
-    async def get_shot_take(self, take_id: str) -> ShotTakeRecord | None:
+    async def get_timeline_shot_take(self, take_id: str) -> ShotTakeRecord | None:
         return await self.session.get(ShotTakeRecord, take_id)
 
     async def get_timeline_sequence(
