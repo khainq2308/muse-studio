@@ -45,6 +45,19 @@ class Settings(BaseSettings):
                 "configure the value accepted by the deployed muse2api version."
             )
 
+        # "compat" duplicates first-frame bytes into two JSON fields and sends size/aspect
+        # aliases without knowing which schema the deployed gateway actually accepts.
+        # Keep it for development, but require production to choose a provider-specific
+        # contract so large data URIs are not silently duplicated.
+        if (
+            self.environment.strip().lower() not in _DEV_ENVIRONMENTS
+            and self.video_payload_profile == "compat"
+        ):
+            raise ValueError(
+                "MUSE2API_VIDEO_PAYLOAD_PROFILE must select a provider-specific schema "
+                "outside development; choose a profile verified against the deployed gateway."
+            )
+
         # Fail closed: only explicit dev/test environments may use the public default key.
         if self.environment.strip().lower() not in _DEV_ENVIRONMENTS:
             if not self.studio_admin_token or not self.studio_admin_token.strip():
