@@ -30,6 +30,20 @@ def _ensure_schema_compatibility(sync_conn) -> None:
     if "shot_takes" not in table_names:
         return
 
+    # Fresh databases already have the UniqueConstraint from Base.metadata. Existing
+    # databases receive a unique index once; skip the legacy-data scan on later starts.
+    has_unique_constraint = any(
+        set(constraint.get("column_names") or ()) == {"shot_id", "take_number"}
+        for constraint in inspector.get_unique_constraints("shot_takes")
+    )
+    has_unique_index = any(
+        index.get("unique")
+        and set(index.get("column_names") or ()) == {"shot_id", "take_number"}
+        for index in inspector.get_indexes("shot_takes")
+    )
+    if has_unique_constraint or has_unique_index:
+        return
+
     rows = sync_conn.execute(text(
         "SELECT id, shot_id, take_number FROM shot_takes ORDER BY shot_id, created_at, id"
     )).fetchall()
@@ -58,22 +72,11 @@ def _ensure_schema_compatibility(sync_conn) -> None:
         else:
             used.add(raw_number)
 
-    # create_all cannot add a UniqueConstraint to an existing table. Avoid
-    # creating a redundant index when this schema already has an equivalent constraint.
-    has_unique_constraint = any(
-        set(constraint.get("column_names") or ()) == {"shot_id", "take_number"}
-        for constraint in inspector.get_unique_constraints("shot_takes")
-    )
-    has_unique_index = any(
-        index.get("unique")
-        and set(index.get("column_names") or ()) == {"shot_id", "take_number"}
-        for index in inspector.get_indexes("shot_takes")
-    )
-    if not (has_unique_constraint or has_unique_index):
-        sync_conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_shot_takes_shot_number "
-            "ON shot_takes (shot_id, take_number)"
-        ))
+    # create_all cannot add a UniqueConstraint to an existing table.
+    sync_conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_shot_takes_shot_number "
+        "ON shot_takes (shot_id, take_number)"
+    ))
 
 
 async def init_db() -> None:
