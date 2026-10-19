@@ -52,7 +52,11 @@ class ShotUpdateIn(BaseModel):
 
 
 async def _recompile_project_shots(project_id: str, repository: StudioRepository) -> list[ShotRecord]:
-    """Biên dịch lại Prompt và chạy Continuity Linter cho toàn bộ Shot của Project."""
+    """Recompile and persist prompts/lint state after an explicit project mutation.
+
+    Read-only list/export handlers must use ``StudioRepository.list_project_shots``
+    directly; calling this helper writes to the database.
+    """
     proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
