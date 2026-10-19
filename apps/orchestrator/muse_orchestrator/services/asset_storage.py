@@ -6,6 +6,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 MAX_UPLOAD_SIZE_BYTES = 150 * 1024 * 1024
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]")
@@ -96,6 +97,76 @@ class LocalAssetStorage:
             sha256=digest,
             detected_mime=verified_mime,
         )
+
+    def save_stream(
+        self,
+        project_id: str,
+        filename: str,
+        source: BinaryIO,
+        declared_mime: str,
+    ) -> SavedAssetFile:
+        """Store a binary stream without buffering the full asset in memory.
+
+        Bytes are streamed to a temporary file while the size and SHA-256 are
+        computed. The first 12 bytes are enough to validate every supported media
+        signature; the file is atomically moved to its final unique path only after
+        the stream passes size and MIME checks.
+        """
+        safe_name = self.sanitize_filename(filename)
+        temp_path = self.root_path / f".asset-{uuid.uuid4().hex}.part"
+        digest = hashlib.sha256()
+        total = 0
+        prefix = bytearray()
+
+        try:
+            with temp_path.open("xb") as output:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    if not isinstance(chunk, (bytes, bytearray)):
+                        raise AssetStorageError("Asset stream must produce bytes.")
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_SIZE_BYTES:
+                        raise AssetStorageError("File vượt quá dung lượng cho phép.")
+                    if len(prefix) < 12:
+                        prefix.extend(chunk[: 12 - len(prefix)])
+                    digest.update(chunk)
+                    output.write(chunk)
+
+            verified_mime = self.verify_mime_signature(bytes(prefix), declared_mime)
+            digest_hex = digest.hexdigest()
+            safe_project = _SAFE_FILENAME_RE.sub("_", project_id)
+            relative_directory = Path(safe_project) / digest_hex[:2]
+            target_directory = (self.root_path / relative_directory).resolve()
+            try:
+                target_directory.relative_to(self.root_path)
+            except ValueError as exc:
+                raise AssetStorageError("Project path escaped the media root.") from exc
+            target_directory.mkdir(parents=True, exist_ok=True)
+
+            # A unique token avoids sharing a physical file between asset records.
+            final_filename = f"{digest_hex[:12]}_{uuid.uuid4().hex[:8]}_{safe_name}"
+            full_path = (target_directory / final_filename).resolve()
+            try:
+                full_path.relative_to(self.root_path)
+            except ValueError as exc:
+                raise AssetStorageError("Asset path escaped the media root.") from exc
+            os.replace(temp_path, full_path)
+            return SavedAssetFile(
+                safe_filename=safe_name,
+                storage_rel_path=str(relative_directory / final_filename),
+                full_disk_path=str(full_path),
+                size_bytes=total,
+                sha256=digest_hex,
+                detected_mime=verified_mime,
+            )
+        except Exception:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     def resolve_safe_path(self, storage_rel_path: str) -> Path:
         candidate = (self.root_path / storage_rel_path).resolve()
