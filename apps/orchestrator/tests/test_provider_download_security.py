@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import socket
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -50,25 +52,44 @@ async def test_error_body_reader_stops_at_configured_limit() -> None:
     assert stream.chunks_yielded == 4  # Does not drain the remaining 96 KiB.
 
 
+async def _public_dns_resolver(host: str, port: int):
+    """Use a deterministic globally routable address for HTTPX MockTransport tests."""
+    return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port))]
+
+
 class Upstream:
-    """Scripted upstream that records every request and the Authorization header it carried."""
+    """Scripted upstream that records wire destinations and logical Host headers."""
 
     def __init__(self, routes: dict[str, httpx.Response]) -> None:
         self.routes = routes
         self.requests: list[tuple[str, str | None]] = []
+        self.wire_requests: list[tuple[str, str | None, str | None]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        url = str(request.url)
-        self.requests.append((url, request.headers.get("authorization")))
-        return self.routes[url]
+        wire_url = str(request.url)
+        host_header = request.headers.get("host")
+        auth_header = request.headers.get("authorization")
+        sni_hostname = request.extensions.get("sni_hostname")
+        self.wire_requests.append((wire_url, host_header, sni_hostname))
+
+        # Pinned-DNS requests use an IP in the URL but preserve the original host
+        # header. Reconstruct the logical URL to select the scripted route.
+        route_url = wire_url
+        if host_header:
+            route_url = urlsplit(wire_url)._replace(netloc=host_header).geturl()
+        self.requests.append((route_url, auth_header))
+        return self.routes[route_url]
 
     def adapter(self) -> Muse2ApiAdapter:
-        return Muse2ApiAdapter(BASE, API_KEY, transport=httpx.MockTransport(self))
+        return Muse2ApiAdapter(
+            BASE,
+            API_KEY,
+            transport=httpx.MockTransport(self),
+            dns_resolver=_public_dns_resolver,
+        )
 
 
 BEARER = f"Bearer {API_KEY}"
-
-
 
 
 @pytest.mark.asyncio
@@ -133,6 +154,61 @@ def test_origin_ignores_case_and_default_ports_but_not_scheme_or_port() -> None:
 
 
 @pytest.mark.asyncio
+async def test_external_dns_target_is_pinned_but_host_and_tls_name_are_preserved(tmp_path: Path) -> None:
+    logical_url = "https://cdn.other.com/a.mp4"
+    upstream = Upstream({logical_url: VIDEO})
+
+    stored = await upstream.adapter().download_result(logical_url, str(tmp_path))
+
+    assert stored.size_bytes == len(VIDEO.content)
+    assert upstream.wire_requests == [
+        ("https://93.184.216.34/a.mp4", "cdn.other.com", "cdn.other.com")
+    ]
+    assert upstream.requests == [(logical_url, None)]
+
+
+@pytest.mark.asyncio
+async def test_dns_resolution_failure_is_fail_closed(tmp_path: Path) -> None:
+    async def broken_resolver(host: str, port: int):
+        raise socket.gaierror("temporary resolver failure")
+
+    upstream = Upstream({})
+    adapter = Muse2ApiAdapter(
+        BASE,
+        API_KEY,
+        transport=httpx.MockTransport(upstream),
+        dns_resolver=broken_resolver,
+    )
+
+    with pytest.raises(ProviderFailure, match="SSRF blocked"):
+        await adapter.download_result("https://cdn.other.com/a.mp4", str(tmp_path))
+
+    assert upstream.requests == []
+
+
+@pytest.mark.asyncio
+async def test_dns_rejects_host_with_any_private_answer(tmp_path: Path) -> None:
+    async def mixed_resolver(host: str, port: int):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.7", port)),
+        ]
+
+    upstream = Upstream({})
+    adapter = Muse2ApiAdapter(
+        BASE,
+        API_KEY,
+        transport=httpx.MockTransport(upstream),
+        dns_resolver=mixed_resolver,
+    )
+
+    with pytest.raises(ProviderFailure, match="non-public IP"):
+        await adapter.download_result("https://cdn.other.com/a.mp4", str(tmp_path))
+
+    assert upstream.requests == []
+
+
+@pytest.mark.asyncio
 async def test_url_on_another_host_never_receives_the_api_key(tmp_path: Path) -> None:
     upstream = Upstream({"https://cdn.other.com/a.mp4": VIDEO})
 
@@ -181,7 +257,18 @@ async def test_redirect_to_plain_http_on_another_host_is_refused(tmp_path: Path)
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "reference",
-    ["file:///etc/passwd", "ftp://muse.example.com/a.mp4", "//evil.example.com/a.mp4", "../../admin", "a/../../b", ""],
+    [
+        "file:///etc/passwd",
+        "ftp://muse.example.com/a.mp4",
+        "//evil.example.com/a.mp4",
+        "../../admin",
+        "a/../../b",
+        "",
+        "https://[::1]/media/video.mp4",
+        "https://[::ffff:127.0.0.1]/media/video.mp4",
+        "https://[fe80::1%25eth0]/media/video.mp4",
+        "https://[not-an-ipv6-literal]/media/video.mp4",
+    ],
 )
 async def test_unsafe_references_are_refused_without_any_request(reference: str, tmp_path: Path) -> None:
     upstream = Upstream({})
