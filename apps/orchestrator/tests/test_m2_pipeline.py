@@ -9,9 +9,9 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m2_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.main import app
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.models.domain import Base
+from muse_orchestrator.main import app  # noqa: E402 -- env must be set before app import
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- env must be set before app import
+from muse_orchestrator.models.domain import Base  # noqa: E402 -- env must be set before app import
 
 
 @pytest.fixture()
@@ -124,3 +124,53 @@ async def test_m2_script_import_bible_extraction_and_continuity(client: AsyncCli
     assert csv_res.status_code == 200
     assert "sequence_index,shot_id,title" in csv_res.text
     assert "Conan Edogawa" in csv_res.text
+
+def test_script_import_proposal_requires_explicit_opt_in():
+    from muse_orchestrator.api.pipeline import ScriptImportIn
+
+    assert ScriptImportIn(raw_content=SAMPLE_MUSEFLOW_SCRIPT).auto_apply_proposal is False
+    assert ScriptImportIn(
+        raw_content=SAMPLE_MUSEFLOW_SCRIPT, auto_apply_proposal=True
+    ).auto_apply_proposal is True
+
+
+@pytest.mark.asyncio
+async def test_script_import_without_opt_in_preserves_existing_shots_and_story_bible(client: AsyncClient):
+    project_response = await client.post(
+        "/api/v1/projects", json={"name": "Import preserves existing project data"}
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    applied = await client.post(
+        f"/api/v1/projects/{project_id}/scripts/import",
+        json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "auto_apply_proposal": True},
+    )
+    assert applied.status_code == 201
+    assert applied.json()["generated_shots"] == 2
+    original_shot_ids = {
+        shot["id"]
+        for shot in (await client.get(f"/api/v1/projects/{project_id}/shots")).json()
+    }
+    original_bible_codes = {
+        entry["code_name"]
+        for entry in (await client.get(f"/api/v1/projects/{project_id}/story-bible")).json()
+    }
+    assert len(original_shot_ids) == 2
+    assert original_bible_codes
+
+    # A follow-up import stores the new revision but must not replace live project data by default.
+    second = await client.post(
+        f"/api/v1/projects/{project_id}/scripts/import",
+        json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT},
+    )
+    assert second.status_code == 201
+    response = second.json()
+    assert response["version_number"] == 2
+    assert response["raw_content_preserved"] is True
+    assert response["generated_shots"] == 0
+
+    shots_after = (await client.get(f"/api/v1/projects/{project_id}/shots")).json()
+    bible_after = (await client.get(f"/api/v1/projects/{project_id}/story-bible")).json()
+    assert {shot["id"] for shot in shots_after} == original_shot_ids
+    assert {entry["code_name"] for entry in bible_after} == original_bible_codes

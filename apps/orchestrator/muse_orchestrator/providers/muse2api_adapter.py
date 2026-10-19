@@ -225,7 +225,7 @@ class Muse2ApiAdapter(VideoProvider):
             body["negative_prompt"] = request.negative_prompt
         if request.reference_image_urls:
             body["reference_images"] = request.reference_image_urls
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.post(f"{self.base_url}/v1/images/generations", headers=self._headers(request.idempotency_key), json=body)
             except httpx.RequestError as exc:
@@ -277,7 +277,7 @@ class Muse2ApiAdapter(VideoProvider):
     async def generate_video(self, request: VideoGenerationRequest) -> ProviderTask:
         body = self._build_video_payload(request)
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.post(f"{self.base_url}/v1/videos", headers=self._headers(request.idempotency_key), json=body)
             except httpx.RequestError as exc:
@@ -288,7 +288,7 @@ class Muse2ApiAdapter(VideoProvider):
             return _task_from_response(_json_or_fail(resp))
 
     async def get_task(self, task_id: str) -> ProviderTaskStatus:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
             try:
                 resp = await client.get(
                     f"{self.base_url}/v1/videos/{quote(task_id, safe='')}", headers=self._headers()
