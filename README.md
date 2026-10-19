@@ -26,6 +26,22 @@ Hoặc cài package và chạy bộ kiểm thử orchestrator:
 
 Orchestrator dùng package sibling `muse-media`; vì package này chưa được publish lên package index, hãy cài `apps/media-engine` trước khi cài orchestrator để dependency metadata được thỏa mãn bằng bản local.
 
+## Production deployment
+
+`docker-compose.yml` là cấu hình **development**: nó bật hot reload và mount source code. Không dùng stack này như cấu hình production.
+
+Production có file riêng, không mount source code, không bật reload, không publish trực tiếp cổng Postgres/Redis/API ra host, build frontend thành static assets, và định tuyến API cùng origin qua Nginx. Tạo file env riêng rồi điền secret trước khi chạy:
+
+```sh
+cp .env.prod.example .env.prod
+# Điền POSTGRES_PASSWORD, SECRET_ENCRYPTION_KEY (ít nhất 32 ký tự ngẫu nhiên)
+# và STUDIO_ADMIN_TOKEN bằng các secret riêng, không dùng giá trị mặc định/dev.
+docker compose --env-file .env.prod -f docker-compose.prod.yml config --quiet
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+Tạo secret ngẫu nhiên, ví dụ bằng `openssl rand -hex 32` cho encryption key và database password, và `openssl rand -hex 24` cho admin token. Nếu database password có ký tự đặc biệt trong URL, hãy percent-encode giá trị trước khi dùng trong `DATABASE_URL`. Frontend được bind vào `127.0.0.1:8080` mặc định; đặt reverse proxy HTTPS ở trước nó nếu cần truy cập từ mạng. Không expose cổng HTTP này trực tiếp ra Internet.
+
 ## Security configuration
 
 - Local development defaults are intentionally permissive when STUDIO_ADMIN_TOKEN is absent. Do not expose this mode to a network you do not trust.
