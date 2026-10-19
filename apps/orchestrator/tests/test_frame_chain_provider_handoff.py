@@ -128,22 +128,19 @@ def test_compat_video_payload_maps_first_frame_to_both_documented_fields(monkeyp
 
 
 @pytest.mark.parametrize(
-    ("profile", "expected_frame_key", "unexpected_frame_key", "expected_ratio_key", "unexpected_ratio_key"),
+    ("profile", "frame_key", "ratio_key"),
     [
-        ("www222fff", "image", "first_frame_image", "size", "aspect_ratio"),
-        ("czg86389-hub", "first_frame_image", "image", "aspect_ratio", "size"),
+        ("www222fff", "image", "size"),
+        ("czg86389-hub", "first_frame_image", "aspect_ratio"),
     ],
 )
 def test_provider_specific_video_payload_avoids_duplicate_data_uri(
-    monkeypatch,
-    profile,
-    expected_frame_key,
-    unexpected_frame_key,
-    expected_ratio_key,
-    unexpected_ratio_key,
+    monkeypatch, profile, frame_key, ratio_key
 ):
     monkeypatch.setattr(settings, "video_payload_profile", profile)
-    monkeypatch.setattr(settings, "video_payload_size", "720x1280" if profile == "www222fff" else None)
+    monkeypatch.setattr(
+        settings, "video_payload_size", "720x1280" if profile == "www222fff" else None
+    )
     frame_data_uri = "data:image/png;base64,aGVsbG8="
     adapter = Muse2ApiAdapter("https://muse.example.com")
     request = VideoGenerationRequest(
@@ -157,15 +154,16 @@ def test_provider_specific_video_payload_avoids_duplicate_data_uri(
 
     body = adapter._build_video_payload(request)
 
-    assert body[expected_frame_key] == ( "720x1280" if profile == "www222fff" else frame_data_uri ) if expected_frame_key == "size" else body[expected_frame_key] == frame_data_uri
-    assert unexpected_frame_key not in body
+    assert body[frame_key] == ("720x1280" if ratio_key == "size" else frame_data_uri) if ratio_key == "size" else body[frame_key] == frame_data_uri
+    assert sum(body.get(key) == frame_data_uri for key in ("image", "first_frame_image")) == 1
     if profile == "www222fff":
         assert body["size"] == "720x1280"
         assert "aspect_ratio" not in body
+        assert "first_frame_image" not in body
     else:
         assert body["aspect_ratio"] == "9:16"
         assert "size" not in body
-    assert sum(body.get(key) == frame_data_uri for key in ("image", "first_frame_image")) == 1
+        assert "image" not in body
 
 
 def test_www222fff_video_payload_requires_explicit_size(monkeypatch):
