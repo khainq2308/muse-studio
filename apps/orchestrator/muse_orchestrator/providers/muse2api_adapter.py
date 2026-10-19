@@ -392,6 +392,20 @@ class Muse2ApiAdapter(VideoProvider):
                 retryable=False,
             ) from exc
 
+        # Block local/single-label names independently of resolver behavior. Some
+        # platforms resolve these through search domains or multicast DNS.
+        if (
+            not ascii_hostname
+            or "." not in ascii_hostname
+            or ascii_hostname in {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback", "metadata", "metadata.google.internal"}
+            or ascii_hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa"))
+        ):
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: destination uses a local or non-public hostname.",
+                retryable=False,
+            )
+
         port = parts.port or _DEFAULT_PORTS[parts.scheme.lower()]
         try:
             if self._dns_resolver is not None:
@@ -478,15 +492,15 @@ class Muse2ApiAdapter(VideoProvider):
         mime = ""
         try:
             for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
-                # Resolve every redirect independently. Proxies resolve destinations on
-                # their own, so the configured proxy is only used for the trusted provider
-                # origin. External result hosts connect directly to the validated IP.
+                # Resolve and pin every redirect independently. External URLs are
+                # rewritten to an IP literal before proxying, so the proxy receives the
+                # checked destination rather than an untrusted hostname.
                 is_provider_origin = self._is_provider_origin(url)
                 request_url, pinned_headers, request_extensions = await self._pin_download_url(url)
                 headers = {"Accept": "*/*", **pinned_headers}
                 if is_provider_origin and self.api_key:
                     headers["Authorization"] = f"Bearer {self.api_key}"
-                request_proxy = self.proxy if is_provider_origin else None
+                request_proxy = self.proxy
                 if self._transport is not None:
                     request_proxy = None
 
