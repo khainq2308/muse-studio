@@ -26,7 +26,7 @@ from muse_orchestrator.models.domain import (
 )
 from muse_orchestrator.models.domain import (
     ExportJobRecord,
-    ShotTakeRecord,
+    ShotTakeRecord as TimelineShotTakeRecord,
     TimelineClipRecord,
     TimelineSequenceRecord,
     TimelineTrackRecord,
