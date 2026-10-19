@@ -11,6 +11,21 @@ Nền tảng điều phối sản xuất phim AI từ kịch bản (Script) -> S
 - docs: Architecture, decisions, implementation plan, capability matrix và test strategy.
 - ops: Công cụ vận hành và script probe muse2api.
 
+## Database migrations
+
+Schema được quản lý qua Alembic; application startup chạy `upgrade head`. Revision đầu tiên là bootstrap bridge để database từ các phiên bản dùng `create_all` có thể được nhận diện mà không xoá dữ liệu. Nó dùng snapshot cố định `muse_orchestrator/models/schema_baseline_v1.py` để tạo bảng còn thiếu, sau đó áp dụng compatibility repair đã đóng băng ngay trong revision. **Không sửa revision bootstrap hoặc snapshot sau khi đã phát hành.** Bất kỳ thay đổi schema mới nào phải nằm trong revision mới; không thêm model vào snapshot.
+
+Khi thay đổi model/schema, tạo revision mới, đọc lại SQL và kiểm tra cả đường upgrade lẫn downgrade:
+
+```sh
+cd apps/orchestrator
+alembic revision --autogenerate -m "describe schema change"
+alembic upgrade head
+```
+
+Không dựa vào `Base.metadata.create_all` để cập nhật schema đã tồn tại; mọi thay đổi schema mới phải có migration revision riêng. Lệnh Alembic sử dụng `DATABASE_URL` trong môi trường hoặc giá trị từ cấu hình local.
+
+
 ## Quick start
 
 Từ repo root, khởi chạy Docker Compose:
