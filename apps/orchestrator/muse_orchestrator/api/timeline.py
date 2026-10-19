@@ -1,10 +1,14 @@
 from __future__ import annotations
 import asyncio
+import functools as _p3_functools
+import inspect as _p3_inspect
+import json as _p3_json
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse as _P3JSONResponse
 from pydantic import BaseModel, Field
 
 from muse_orchestrator.api.dependencies import get_studio_repository
@@ -433,12 +437,6 @@ async def launch_ffmpeg_export(
     }
 
 # --- P3 HARDENING: PRESERVE ROUTE SIGNATURE & INCLUDE unsupported_features IN ALL 422 RESPONSES ---
-import functools as _p3_functools
-import inspect as _p3_inspect
-import json as _p3_json
-from fastapi.responses import JSONResponse as _P3JSONResponse
-
-
 def _install_p3_timeline_api_patch() -> None:
     orig_ep = globals().get("launch_ffmpeg_export")
     if orig_ep is None or getattr(orig_ep, "_p3_installed", False):
