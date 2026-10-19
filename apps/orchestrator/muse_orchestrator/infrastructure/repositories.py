@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.models.domain import (
@@ -8,6 +8,10 @@ from muse_orchestrator.models.domain import (
     AuditEvent,
     Project,
     ProjectRevision,
+    ScriptRevision,
+    StoryBibleEntry,
+    SceneRecord,
+    ShotRecord,
     ProviderConnection,
     BackupRecord,
     ConnectionAccount,
@@ -90,6 +94,71 @@ class StudioRepository:
 
     async def get_project(self, project_id: str) -> Project | None:
         return await self.session.get(Project, project_id)
+
+    async def list_project_shots(self, project_id: str) -> list[ShotRecord] | None:
+        """Return stored shot state without recompiling prompts or committing writes.
+
+        None means the project does not exist; an empty list is a valid empty project.
+        """
+        if await self.session.get(Project, project_id) is None:
+            return None
+        result = await self.session.execute(
+            select(ShotRecord)
+            .where(ShotRecord.project_id == project_id)
+            .order_by(ShotRecord.sequence_index.asc())
+        )
+        return list(result.scalars().all())
+
+    # --- M2 script-to-shot pipeline persistence ---
+
+    async def list_story_bible_entries(self, project_id: str) -> list[StoryBibleEntry]:
+        result = await self.session.execute(
+            select(StoryBibleEntry).where(StoryBibleEntry.project_id == project_id)
+        )
+        return list(result.scalars().all())
+
+    async def list_project_asset_ids(self, project_id: str) -> list[str]:
+        result = await self.session.execute(
+            select(Asset.id).where(Asset.project_id == project_id)
+        )
+        return list(result.scalars().all())
+
+    async def list_script_revisions(self, project_id: str) -> list[ScriptRevision]:
+        result = await self.session.execute(
+            select(ScriptRevision).where(ScriptRevision.project_id == project_id)
+        )
+        return list(result.scalars().all())
+
+    async def get_story_bible_entry(
+        self, project_id: str, code_name: str
+    ) -> StoryBibleEntry | None:
+        result = await self.session.execute(
+            select(StoryBibleEntry).where(
+                StoryBibleEntry.project_id == project_id,
+                StoryBibleEntry.code_name == code_name,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_shot(self, shot_id: str) -> ShotRecord | None:
+        return await self.session.get(ShotRecord, shot_id)
+
+    async def delete_project_pipeline_records(self, project_id: str) -> None:
+        # Preserve the original deletion order for child records and associated constraints.
+        await self.session.execute(delete(ShotRecord).where(ShotRecord.project_id == project_id))
+        await self.session.execute(delete(SceneRecord).where(SceneRecord.project_id == project_id))
+        await self.session.execute(
+            delete(StoryBibleEntry).where(StoryBibleEntry.project_id == project_id)
+        )
+
+    def stage_pipeline_entity(self, entity: object) -> None:
+        self.session.add(entity)
+
+    async def commit_pipeline_changes(self) -> None:
+        await self.session.commit()
+
+    async def refresh_pipeline_entity(self, entity: object) -> None:
+        await self.session.refresh(entity)
 
     async def list_project_revisions(self, project_id: str) -> list[ProjectRevision]:
         result = await self.session.execute(
