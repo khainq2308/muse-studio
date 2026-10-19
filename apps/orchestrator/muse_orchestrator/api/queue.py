@@ -16,6 +16,8 @@ from muse_orchestrator.models.domain import (
 from muse_orchestrator.services.generation_queue import GenerationQueueService
 
 router = APIRouter(prefix="/api/v1/queue", tags=["M4 Generation Queue & Takes"])
+
+
 class EnqueueTaskIn(BaseModel):
     shot_id: str
     connection_id: str
