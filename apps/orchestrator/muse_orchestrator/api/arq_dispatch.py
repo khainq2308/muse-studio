@@ -4,6 +4,7 @@ import logging
 
 from fastapi import HTTPException, Request, status
 
+from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.models.domain import GenerationTaskRecord, QueueTaskState
 from muse_orchestrator.services.arq_dispatch import enqueue_generation_step
 
@@ -33,7 +34,11 @@ async def schedule_generation_task(request: Request, task: GenerationTaskRecord)
             immediate=(task.state == QueueTaskState.QUEUED and not task.external_task_id),
         )
     except Exception as exc:
-        logger.exception("Could not schedule generation task %s in ARQ", task.id)
+        logger.error(
+            "Could not schedule generation task %s in ARQ: %s",
+            task.id,
+            SecretRedactor.redact_text(str(exc)),
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
