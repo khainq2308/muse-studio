@@ -58,11 +58,13 @@ jobs:
             apps/orchestrator/uv.lock
             apps/media-engine/pyproject.toml
       - name: Sync locked orchestrator and media-engine dependencies
-        run: uv sync --locked --project apps/orchestrator --extra dev
+        working-directory: apps/orchestrator
+        run: uv sync --locked --project . --extra dev
       - name: Run orchestrator tests
+        working-directory: apps/orchestrator
         env:
           REQUIRE_FFMPEG: "1"
-        run: uv run --locked --project apps/orchestrator --extra dev python -m pytest -p pytest_asyncio.plugin -q -rs
+        run: uv run --locked --project . --extra dev python -m pytest -q -rs
 
   media-engine-tests:
     name: Media engine unit tests
