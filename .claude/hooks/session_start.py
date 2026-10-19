@@ -22,14 +22,14 @@ def _has_arq_worker_service(compose_text: str) -> bool:
         if not in_services:
             continue
 
-        service_match = re.match(r"^  ([A-Za-z0-9_.-]+):\\s*(?:#.*)?$", line)
+        service_match = re.match(r"^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$", line)
         if service_match:
             current_service = service_match.group(1)
             continue
 
         if current_service == "orchestrator-worker":
             found_worker = True
-            if re.match(r"^    command:\\s*(?:arq(?:\\s|$)|\\[\\s*['\\\"]arq['\\\"])", line):
+            if re.match(r"^    command:\s*(?:arq(?:\s|$)|\[\s*['\"]arq['\"])", line):
                 worker_has_arq_command = True
 
     return found_worker and worker_has_arq_command
