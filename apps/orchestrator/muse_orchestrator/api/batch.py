@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.core.database import get_db
+from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
     Project, ShotRecord, ShotGenerationState, ProviderConnection,
@@ -59,7 +60,7 @@ async def launch_batch_render(
         raise HTTPException(status_code=400, detail="Connection không tồn tại hoặc đang bị tắt.")
 
     # Biên dịch lại toàn bộ prompt_hash và lint_report_json mới nhất
-    all_shots = await _recompile_project_shots(project_id, db)
+    all_shots = await _recompile_project_shots(project_id, StudioRepository(db))
 
     target_shots = [
         s for s in all_shots
