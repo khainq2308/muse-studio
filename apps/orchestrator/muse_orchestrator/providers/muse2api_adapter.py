@@ -28,15 +28,17 @@ Origin = tuple[str, str, int]
 
 def _origin(url: str) -> Origin | None:
     """(scheme, host, port) for an absolute http(s) URL, or None for anything else."""
-    parts = urlsplit(url)
-    scheme = parts.scheme.lower()
-    if scheme not in _DEFAULT_PORTS or not parts.hostname:
-        return None
     try:
-        port = parts.port or _DEFAULT_PORTS[scheme]
+        parts = urlsplit(url)
+        scheme = parts.scheme.lower()
+        hostname = parts.hostname
+        port = parts.port or _DEFAULT_PORTS.get(scheme)
     except ValueError:
+        # urlsplit can reject malformed bracketed IPv6 literals and ports.
         return None
-    return scheme, parts.hostname.lower(), port
+    if scheme not in _DEFAULT_PORTS or not hostname or port is None:
+        return None
+    return scheme, hostname.lower(), port
 
 
 def _is_forbidden_ip(value: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
