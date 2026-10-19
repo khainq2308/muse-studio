@@ -58,12 +58,22 @@ def _ensure_schema_compatibility(sync_conn) -> None:
         else:
             used.add(raw_number)
 
-    # Create a named unique index for legacy tables where create_all cannot add
-    # the model's UniqueConstraint after the original table has been created.
-    sync_conn.execute(text(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_shot_takes_shot_number "
-        "ON shot_takes (shot_id, take_number)"
-    ))
+    # create_all cannot add a UniqueConstraint to an existing table. Avoid
+    # creating a redundant index when this schema already has an equivalent constraint.
+    has_unique_constraint = any(
+        set(constraint.get("column_names") or ()) == {"shot_id", "take_number"}
+        for constraint in inspector.get_unique_constraints("shot_takes")
+    )
+    has_unique_index = any(
+        index.get("unique")
+        and set(index.get("column_names") or ()) == {"shot_id", "take_number"}
+        for index in inspector.get_indexes("shot_takes")
+    )
+    if not (has_unique_constraint or has_unique_index):
+        sync_conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_shot_takes_shot_number "
+            "ON shot_takes (shot_id, take_number)"
+        ))
 
 
 async def init_db() -> None:
