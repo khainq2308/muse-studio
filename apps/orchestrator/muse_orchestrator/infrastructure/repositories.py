@@ -12,6 +12,11 @@ from muse_orchestrator.models.domain import (
     BackupRecord,
     ConnectionAccount,
     StructuredLogRecord,
+    WorkflowDefinition,
+    WorkflowVersion,
+    WorkflowRun,
+    NodeExecution,
+    WorkflowCacheEntry,
 )
 
 
@@ -20,6 +25,43 @@ class StudioRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    # --- M3 workflow persistence ---
+
+    async def get_workflow_definition(self, workflow_id: str) -> WorkflowDefinition | None:
+        return await self.session.get(WorkflowDefinition, workflow_id)
+
+    async def get_workflow_version(
+        self, workflow_id: str, version_number: int
+    ) -> WorkflowVersion:
+        result = await self.session.execute(
+            select(WorkflowVersion).where(
+                WorkflowVersion.workflow_id == workflow_id,
+                WorkflowVersion.version_number == version_number,
+            )
+        )
+        return result.scalar_one()
+
+    async def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
+        return await self.session.get(WorkflowRun, run_id)
+
+    async def list_node_executions_for_run(self, run_id: str) -> list[NodeExecution]:
+        result = await self.session.execute(
+            select(NodeExecution).where(NodeExecution.run_id == run_id)
+        )
+        return list(result.scalars().all())
+
+    async def get_workflow_cache_entry(self, cache_key: str) -> WorkflowCacheEntry | None:
+        return await self.session.get(WorkflowCacheEntry, cache_key)
+
+    def stage_workflow_entity(self, entity: object) -> None:
+        self.session.add(entity)
+
+    def stage_workflow_entities(self, entities: list[object]) -> None:
+        self.session.add_all(entities)
+
+    async def commit_workflow_changes(self) -> None:
+        await self.session.commit()
 
     async def create_project_bundle(
         self,
