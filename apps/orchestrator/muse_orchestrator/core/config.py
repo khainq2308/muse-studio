@@ -69,7 +69,10 @@ class SecretRedactor:
 
     @classmethod
     def redact_dict(cls, data: dict[str, Any], explicit_secrets: list[str] | None = None) -> dict[str, Any]:
-        sensitive_keys = {
+        return cls._redact_mapping(data, explicit_secrets, False)
+
+    _SENSITIVE_KEYS = frozenset(
+        {
             "api_key",
             "admin_api_key",
             "cookie",
@@ -79,9 +82,15 @@ class SecretRedactor:
             "authorization",
             "secret",
         }
+    )
+
+    @classmethod
+    def _redact_mapping(cls, data: dict[str, Any], explicit_secrets: list[str] | None, inherited: bool) -> dict[str, Any]:
+        """Redact a mapping; ``inherited`` is True when an ancestor key was sensitive."""
         result: dict[str, Any] = {}
         for key, value in data.items():
-            result[key] = cls._redact_value(value, explicit_secrets, key.lower() in sensitive_keys)
+            sensitive = inherited or str(key).lower() in cls._SENSITIVE_KEYS
+            result[key] = cls._redact_value(value, explicit_secrets, sensitive)
         return result
 
     @classmethod
@@ -96,7 +105,7 @@ class SecretRedactor:
                 return cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
             return cls.redact_text(value, explicit_secrets)
         if isinstance(value, dict):
-            return cls.redact_dict(value, explicit_secrets)
+            return cls._redact_mapping(value, explicit_secrets, sensitive)
         if isinstance(value, (list, tuple)):
             items = [cls._redact_value(item, explicit_secrets, sensitive) for item in value]
             return tuple(items) if isinstance(value, tuple) else items

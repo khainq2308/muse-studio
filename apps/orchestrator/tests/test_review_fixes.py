@@ -72,13 +72,43 @@ def test_redact_dict_descends_into_lists_and_tuples():
     assert data["api_key"][0] == "sk-first-key"
 
 
+@pytest.mark.parametrize(
+    ("data", "secrets"),
+    [
+        ({"api_key": {"raw": "sk-secret-value"}}, ["sk-secret-value"]),
+        ({"password": [{"nested": "secret-value"}]}, ["secret-value"]),
+        ({"secret": ({"a": ["deep-secret-1"]}, "deep-secret-2")}, ["deep-secret-1", "deep-secret-2"]),
+        ({"authorization": {"scheme": {"token": "tok-abc-123"}}}, ["tok-abc-123"]),
+        ({"outer": {"cookie": {"sid": "sid-value-9"}}}, ["sid-value-9"]),
+    ],
+)
+def test_redact_dict_propagates_sensitive_state_into_nested_values(data, secrets):
+    from muse_orchestrator.core.config import SecretRedactor
+
+    flat = repr(SecretRedactor.redact_dict(data))
+    for leaked in secrets:
+        assert leaked not in flat
+
+
+def test_redact_dict_keeps_non_sensitive_values_and_proxy_host_diagnostics():
+    from muse_orchestrator.core.config import SecretRedactor
+
+    assert SecretRedactor.redact_dict({"note": {"user": "alice", "n": 2}}) == {"note": {"user": "alice", "n": 2}}
+    redacted = SecretRedactor.redact_dict({"api_key": {"proxy": "http://u:p4ss@h:1", "ttl": 30, "on": True, "none": None}})
+    assert "p4ss" not in repr(redacted)
+    assert redacted["api_key"]["proxy"].endswith("@h:1")
+    assert redacted["api_key"]["ttl"] == 30 and redacted["api_key"]["on"] is True and redacted["api_key"]["none"] is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("proxy", ["http://user:pw@proxy.example.com:8080", None])
 async def test_muse2api_adapter_builds_every_client_with_the_configured_proxy(monkeypatch, proxy):
     import httpx
-
     from muse_orchestrator.providers import muse2api_adapter
-    from muse_orchestrator.providers.base import ImageGenerationRequest, VideoGenerationRequest
+    from muse_orchestrator.providers.base import (
+        ImageGenerationRequest,
+        VideoGenerationRequest,
+    )
 
     created: list[dict] = []
 
