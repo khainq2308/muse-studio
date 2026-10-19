@@ -246,6 +246,18 @@ async def test_dns_failure_is_blocked_instead_of_failing_open(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_local_hostname_is_blocked_even_if_dns_returns_public_ip() -> None:
+    upstream = Upstream({})
+    upstream.dns_overrides["internal-service.local"] = ["93.184.215.14"]
+
+    with pytest.raises(ProviderFailure, match="SSRF blocked"):
+        await upstream.adapter()._pin_download_url("https://internal-service.local/file.mp4")
+
+    # Local suffixes are rejected before consulting platform-specific DNS/search domains.
+    assert upstream.dns_calls == []
+
+
+@pytest.mark.asyncio
 async def test_external_hostname_is_pinned_and_preserves_host_and_tls_sni() -> None:
     upstream = Upstream({})
     adapter = upstream.adapter()
