@@ -169,7 +169,6 @@ async def resume_task(task_id: str, request: Request, db: AsyncSession = Depends
         task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
         task.history_log = list(task.history_log or []) + ["Resumed by operator."]
         await db.commit()
-        await db.refresh(task)
     await schedule_generation_task(request, task)
     return _serialize_task(task)
 
