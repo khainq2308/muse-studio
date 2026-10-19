@@ -3,11 +3,8 @@ import uuid
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from muse_orchestrator.core.database import get_db
 from muse_orchestrator.infrastructure.repositories import StudioRepository
+from muse_orchestrator.api.dependencies import get_studio_repository
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
     Project, ShotRecord, ShotGenerationState, ProviderConnection,
@@ -42,7 +39,7 @@ async def launch_batch_render(
     project_id: str,
     payload: BatchLaunchIn,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """
@@ -52,16 +49,16 @@ async def launch_batch_render(
     - Tạm khoá các shot có continuity_mode == 'frame_chain' nếu shot phía trước chưa hoàn tất.
     - Nếu only_changed=True: Không render lại những shot đã succeeded và không đổi prompt_hash.
     """
-    proj = await db.get(Project, project_id)
+    proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
-    conn = await db.get(ProviderConnection, payload.connection_id)
+    conn = await repository.get_connection(payload.connection_id)
     if not conn or not conn.enabled:
         raise HTTPException(status_code=400, detail="Connection không tồn tại hoặc đang bị tắt.")
 
     # Biên dịch lại toàn bộ prompt_hash và lint_report_json mới nhất
-    all_shots = await _recompile_project_shots(project_id, StudioRepository(db))
+    all_shots = await _recompile_project_shots(project_id, repository)
 
     target_shots = [
         s for s in all_shots
@@ -77,7 +74,7 @@ async def launch_batch_render(
     for s in target_shots:
         # 1. Kiểm tra Smart Cache: Nếu shot đã có selected_take khớp với prompt_hash hiện tại -> Bỏ qua!
         if payload.only_changed and s.generation_state == ShotGenerationState.SUCCEEDED and s.selected_take_id:
-            sel_take = await db.get(ShotTakeRecord, s.selected_take_id)
+            sel_take = await repository.get_shot_take(s.selected_take_id)
             if sel_take and sel_take.prompt_hash == s.prompt_hash:
                 skipped_shot_ids.append(s.id)
                 continue
@@ -91,7 +88,7 @@ async def launch_batch_render(
 
         # 3. Kiểm tra phụ thuộc Frame Chaining
         if s.continuity_mode == "frame_chain" and s.previous_shot_id:
-            prev_shot = await db.get(ShotRecord, s.previous_shot_id)
+            prev_shot = await repository.get_shot(s.previous_shot_id)
             if prev_shot and prev_shot.last_frame_asset_id and prev_shot.generation_state == ShotGenerationState.SUCCEEDED:
                 s.first_frame_asset_id = prev_shot.last_frame_asset_id
             else:
@@ -101,7 +98,7 @@ async def launch_batch_render(
 
         prio = 50 if s.id in payload.priority_shot_ids else max(1, 30 - s.sequence_index)
         task, _ = await GenerationQueueService.enqueue_shot_generation(
-            db=db,
+            db=repository.session,
             shot=s,
             conn=conn,
             task_type="video",
@@ -128,8 +125,7 @@ async def launch_batch_render(
         skipped_shot_ids_json=skipped_shot_ids,
         blocked_shot_ids_json=blocked_shot_ids,
     )
-    db.add(batch_job)
-    await db.commit()
+    await repository.create_batch_render_job(batch_job)
 
     # Publish only after the database records are committed. The periodic worker
     # recovery job can re-enqueue persisted tasks if Redis is temporarily unavailable.
@@ -153,7 +149,7 @@ async def tick_project_batch_queue(
     project_id: str,
     request: Request,
     connection_id: str | None = None,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """
@@ -162,21 +158,7 @@ async def tick_project_batch_queue(
     - Lỗi ở 1 shot không làm ảnh hưởng đến tiến độ của các shot khác.
     - Khi 1 shot hoàn tất và mở khoá Frame Chain cho shot kế tiếp, tự động enqueue shot kế tiếp.
     """
-    stmt = (
-        select(GenerationTaskRecord)
-        .where(
-            GenerationTaskRecord.project_id == project_id,
-            GenerationTaskRecord.state.in_([QueueTaskState.RUNNING, QueueTaskState.QUEUED]),
-        )
-        .order_by(
-            GenerationTaskRecord.priority.desc(),
-            GenerationTaskRecord.created_at.asc(),
-        )
-    )
-    if connection_id:
-        stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
-
-    active_tasks = (await db.execute(stmt)).scalars().all()
+    active_tasks = await repository.list_active_generation_tasks(project_id, connection_id)
 
     # Ưu tiên bước Poll cho các task đang RUNNING trước, sau đó mới Dispatch các task QUEUED theo slot trống
     running_tasks = [t for t in active_tasks if t.state == QueueTaskState.RUNNING]
@@ -184,7 +166,7 @@ async def tick_project_batch_queue(
 
     stepped_results: list[dict[str, Any]] = []
     for t in running_tasks + queued_tasks:
-        updated = await GenerationQueueService.step_task(db, t.id)
+        updated = await GenerationQueueService.step_task(repository.session, t.id)
         await schedule_generation_task(request, updated)
         stepped_results.append({
             "task_id": updated.id,
@@ -198,21 +180,12 @@ async def tick_project_batch_queue(
     if active_tasks:
         default_conn_id = connection_id or active_tasks[0].connection_id
         default_model_id = active_tasks[0].model_id
-        conn = await db.get(ProviderConnection, default_conn_id)
+        conn = await repository.get_connection(default_conn_id)
         if conn:
-            ready_chained_shots = (
-                await db.execute(
-                    select(ShotRecord).where(
-                        ShotRecord.project_id == project_id,
-                        ShotRecord.continuity_mode == "frame_chain",
-                        ShotRecord.first_frame_asset_id.is_not(None),
-                        ShotRecord.generation_state == ShotGenerationState.NOT_STARTED,
-                    )
-                )
-            ).scalars().all()
+            ready_chained_shots = await repository.list_ready_frame_chain_shots(project_id)
             for cs in ready_chained_shots:
                 new_t, created = await GenerationQueueService.enqueue_shot_generation(
-                    db=db,
+                    db=repository.session,
                     shot=cs,
                     conn=conn,
                     task_type="video",
@@ -228,9 +201,7 @@ async def tick_project_batch_queue(
                         "auto_enqueued_from_frame_chain": True,
                     })
 
-    all_project_tasks = (
-        await db.execute(select(GenerationTaskRecord).where(GenerationTaskRecord.project_id == project_id))
-    ).scalars().all()
+    all_project_tasks = await repository.list_project_generation_tasks(project_id)
     counts: dict[str, int] = {}
     for pt in all_project_tasks:
         counts[pt.state.value] = counts.get(pt.state.value, 0) + 1
@@ -248,40 +219,27 @@ async def retry_failed_project_tasks(
     project_id: str,
     request: Request,
     connection_id: str | None = None,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """Chỉ retry các Shot bị lỗi (failed / poll_timeout), giữ nguyên thành quả các Shot đã succeeded."""
-    failed_shots = (
-        await db.execute(
-            select(ShotRecord).where(
-                ShotRecord.project_id == project_id,
-                ShotRecord.generation_state == ShotGenerationState.FAILED,
-            )
-        )
-    ).scalars().all()
+    failed_shots = await repository.list_failed_project_shots(project_id)
 
     if not failed_shots:
         return {"retried_count": 0, "new_task_ids": []}
 
     new_task_ids: list[str] = []
     for s in failed_shots:
-        last_task = (
-            await db.execute(
-                select(GenerationTaskRecord)
-                .where(GenerationTaskRecord.shot_id == s.id)
-                .order_by(GenerationTaskRecord.created_at.desc())
-            )
-        ).scalars().first()
+        last_task = await repository.get_latest_generation_task_for_shot(s.id)
         target_conn_id = connection_id or (last_task.connection_id if last_task else None)
         if not target_conn_id:
             continue
-        conn = await db.get(ProviderConnection, target_conn_id)
+        conn = await repository.get_connection(target_conn_id)
         if not conn:
             continue
         model_id = last_task.model_id if last_task else "muse-video-mock-v1"
         t, _ = await GenerationQueueService.enqueue_shot_generation(
-            db=db,
+            db=repository.session,
             shot=s,
             conn=conn,
             task_type="video",
@@ -301,26 +259,26 @@ async def flag_take_continuity_and_regenerate(
     take_id: str,
     payload: ContinuityFlagIn,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """Đánh dấu lỗi Continuity trên một Take và tuỳ chọn kích hoạt Regenerate có mục tiêu (Mục 1 & 3.8 PRD)."""
-    take = await db.get(ShotTakeRecord, take_id)
-    shot = await db.get(ShotRecord, shot_id)
+    take = await repository.get_shot_take(take_id)
+    shot = await repository.get_shot(shot_id)
     if not take or not shot or take.shot_id != shot_id or shot.project_id != project_id:
         raise HTTPException(status_code=404, detail="Shot hoặc Take không tồn tại.")
 
     take.continuity_flagged = payload.continuity_flagged
     take.director_notes = payload.director_notes
-    await db.commit()
+    await repository.save_take_continuity(take)
 
     regen_task_id: str | None = None
     if payload.regenerate_now:
-        orig_task = await db.get(GenerationTaskRecord, take.task_id)
+        orig_task = await repository.get_generation_task(take.task_id)
         conn_id = payload.connection_id or (orig_task.connection_id if orig_task else None)
         if not conn_id:
             raise HTTPException(status_code=400, detail="Cần cung cấp connection_id để regenerate.")
-        conn = await db.get(ProviderConnection, conn_id)
+        conn = await repository.get_connection(conn_id)
         if not conn:
             raise HTTPException(status_code=404, detail="Connection không tồn tại.")
         new_task, _ = await GenerationQueueService.enqueue_shot_generation(
@@ -350,11 +308,11 @@ async def compare_shot_takes_ab(
     shot_id: str,
     take_a_id: str,
     take_b_id: str,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
 ) -> dict[str, Any]:
     """So sánh A/B giữa 2 Takes của cùng một Shot (Mục 3.8 PRD)."""
-    ta = await db.get(ShotTakeRecord, take_a_id)
-    tb = await db.get(ShotTakeRecord, take_b_id)
+    ta = await repository.get_shot_take(take_a_id)
+    tb = await repository.get_shot_take(take_b_id)
     if not ta or not tb or ta.shot_id != shot_id or tb.shot_id != shot_id:
         raise HTTPException(status_code=404, detail="Một trong hai Takes không thuộc về Shot này.")
 
