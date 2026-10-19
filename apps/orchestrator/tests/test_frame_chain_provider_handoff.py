@@ -154,13 +154,14 @@ def test_provider_specific_video_payload_avoids_duplicate_data_uri(
 
     body = adapter._build_video_payload(request)
 
-    assert body[frame_key] == ("720x1280" if ratio_key == "size" else frame_data_uri) if ratio_key == "size" else body[frame_key] == frame_data_uri
     assert sum(body.get(key) == frame_data_uri for key in ("image", "first_frame_image")) == 1
     if profile == "www222fff":
+        assert body["image"] == frame_data_uri
         assert body["size"] == "720x1280"
         assert "aspect_ratio" not in body
         assert "first_frame_image" not in body
     else:
+        assert body["first_frame_image"] == frame_data_uri
         assert body["aspect_ratio"] == "9:16"
         assert "size" not in body
         assert "image" not in body
