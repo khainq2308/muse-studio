@@ -25,7 +25,8 @@ router = APIRouter(prefix="/api/v1/projects/{project_id}", tags=["M2 Script-to-S
 class ScriptImportIn(BaseModel):
     raw_content: str = Field(..., min_length=5)
     source_format: str = Field(default="museflow")
-    auto_apply_proposal: bool = Field(default=True)
+    # Applying a proposal replaces the Story Bible, scenes and shots; require explicit opt-in.
+    auto_apply_proposal: bool = Field(default=False)
 
 
 class BibleEntryCreateIn(BaseModel):
