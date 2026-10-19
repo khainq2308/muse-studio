@@ -9,7 +9,7 @@ from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.api.dependencies import get_studio_repository
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import (
-    Project, WorkflowDefinition, WorkflowVersion, WorkflowRun,
+    WorkflowDefinition, WorkflowVersion, WorkflowRun,
     NodeExecution, NodeExecutionState, WorkflowCacheEntry
 )
 from muse_orchestrator.services.workflow_engine import (
