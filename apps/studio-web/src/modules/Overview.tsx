@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ModuleProps } from "./shared";
-import { Badge, EmptyState, LoadingLine, PageHeader, Panel, StatusBadge } from "./shared";
+import { EmptyState, LoadingLine, PageHeader, Panel, StatusBadge } from "./shared";
 import type { Connection, QueueTask, Shot } from "../services/api";
 
 export default function Overview({ api, project, refreshToken, notify, onChanged }: ModuleProps) {
