@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from muse_orchestrator.models.domain import (
     GenerationTaskRecord, QueueTaskState, ShotTakeRecord, BatchRenderJobRecord
 )
 from muse_orchestrator.api.pipeline import _recompile_project_shots
+from muse_orchestrator.api.arq_dispatch import schedule_generation_task
 from muse_orchestrator.services.generation_queue import GenerationQueueService
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}", tags=["M5 Batch Render & Continuity QA"])
@@ -40,6 +41,7 @@ class ContinuityFlagIn(BaseModel):
 async def launch_batch_render(
     project_id: str,
     payload: BatchLaunchIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
@@ -68,6 +70,7 @@ async def launch_batch_render(
     ]
 
     enqueued_task_ids: list[str] = []
+    tasks_to_schedule: list[GenerationTaskRecord] = []
     skipped_shot_ids: list[str] = []
     blocked_shot_ids: list[str] = []
 
@@ -107,6 +110,7 @@ async def launch_batch_render(
             force_retry=not payload.only_changed,
         )
         enqueued_task_ids.append(task.id)
+        tasks_to_schedule.append(task)
 
     batch_id = f"bat_{uuid.uuid4().hex[:10]}"
     batch_job = BatchRenderJobRecord(
@@ -127,6 +131,11 @@ async def launch_batch_render(
     db.add(batch_job)
     await db.commit()
 
+    # Publish only after the database records are committed. The periodic worker
+    # recovery job can re-enqueue persisted tasks if Redis is temporarily unavailable.
+    for task in tasks_to_schedule:
+        await schedule_generation_task(request, task)
+
     return {
         "batch_id": batch_id,
         "total_shots": len(target_shots),
@@ -142,6 +151,7 @@ async def launch_batch_render(
 @router.post("/batch/tick")
 async def tick_project_batch_queue(
     project_id: str,
+    request: Request,
     connection_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(verify_single_admin),
@@ -175,6 +185,7 @@ async def tick_project_batch_queue(
     stepped_results: list[dict[str, Any]] = []
     for t in running_tasks + queued_tasks:
         updated = await GenerationQueueService.step_task(db, t.id)
+        await schedule_generation_task(request, updated)
         stepped_results.append({
             "task_id": updated.id,
             "shot_id": updated.shot_id,
@@ -208,6 +219,7 @@ async def tick_project_batch_queue(
                     model_id=default_model_id,
                     priority=max(1, 30 - cs.sequence_index),
                 )
+                await schedule_generation_task(request, new_t)
                 if created:
                     stepped_results.append({
                         "task_id": new_t.id,
@@ -234,6 +246,7 @@ async def tick_project_batch_queue(
 @router.post("/batch/retry-failed")
 async def retry_failed_project_tasks(
     project_id: str,
+    request: Request,
     connection_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(verify_single_admin),
@@ -276,6 +289,7 @@ async def retry_failed_project_tasks(
             force_retry=True,
         )
         new_task_ids.append(t.id)
+        await schedule_generation_task(request, t)
 
     return {"retried_count": len(new_task_ids), "new_task_ids": new_task_ids}
 
@@ -286,6 +300,7 @@ async def flag_take_continuity_and_regenerate(
     shot_id: str,
     take_id: str,
     payload: ContinuityFlagIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
@@ -318,6 +333,7 @@ async def flag_take_continuity_and_regenerate(
             force_retry=True,
         )
         regen_task_id = new_task.id
+        await schedule_generation_task(request, new_task)
 
     return {
         "shot_id": shot_id,
