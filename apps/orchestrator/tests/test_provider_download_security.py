@@ -255,6 +255,19 @@ async def test_external_hostname_is_pinned_and_preserves_host_and_tls_sni() -> N
 
 
 @pytest.mark.asyncio
+async def test_unicode_hostname_uses_idna_for_dns_host_and_sni() -> None:
+    upstream = Upstream({})
+    adapter = upstream.adapter()
+
+    pinned_url, headers, extensions = await adapter._pin_download_url("https://münich.example/a.mp4")
+
+    assert pinned_url == "https://93.184.215.14/a.mp4"
+    assert headers["Host"] == "xn--mnich-kva.example"
+    assert extensions["sni_hostname"] == "xn--mnich-kva.example"
+    assert upstream.dns_calls == [("xn--mnich-kva.example", 443)]
+
+
+@pytest.mark.asyncio
 async def test_public_ipv6_literal_is_allowed_but_private_ipv6_is_blocked() -> None:
     adapter = Muse2ApiAdapter(BASE, API_KEY)
 
