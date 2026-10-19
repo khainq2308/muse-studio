@@ -1,5 +1,4 @@
 from __future__ import annotations
-import logging
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -8,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.core.database import get_db
-from muse_orchestrator.services.arq_dispatch import enqueue_generation_step
+from muse_orchestrator.api.arq_dispatch import schedule_generation_task
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
     ShotRecord, ShotGenerationState, ProviderConnection,
@@ -17,41 +16,6 @@ from muse_orchestrator.models.domain import (
 from muse_orchestrator.services.generation_queue import GenerationQueueService
 
 router = APIRouter(prefix="/api/v1/queue", tags=["M4 Generation Queue & Takes"])
-logger = logging.getLogger(__name__)
-
-
-async def _schedule_generation_task(request: Request, task: GenerationTaskRecord) -> None:
-    """Publish an already-persisted active task to ARQ, failing visibly if Redis is down."""
-    if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
-        return
-    redis = getattr(request.app.state, "arq_pool", None)
-    if redis is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "queue_dispatch_unavailable",
-                "task_id": task.id,
-                "message": "Task is saved, but the ARQ scheduler is not initialized. Retry the same idempotent request.",
-            },
-        )
-    try:
-        await enqueue_generation_step(
-            redis,
-            task,
-            immediate=(task.state == QueueTaskState.QUEUED and not task.external_task_id),
-        )
-    except Exception as exc:
-        logger.exception("Could not schedule generation task %s in ARQ", task.id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "queue_dispatch_unavailable",
-                "task_id": task.id,
-                "message": "Task is saved, but Redis scheduling failed. Retry the same idempotent request.",
-            },
-        ) from exc
-
-
 class EnqueueTaskIn(BaseModel):
     shot_id: str
     connection_id: str
@@ -125,7 +89,7 @@ async def enqueue_generation_task(
         await db.commit()
         await db.refresh(task)
 
-    await _schedule_generation_task(request, task)
+    await schedule_generation_task(request, task)
 
     out = _serialize_task(task)
     out["created_new"] = created
