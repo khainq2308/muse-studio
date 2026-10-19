@@ -6,7 +6,11 @@ import httpx
 import pytest
 
 from muse_orchestrator.providers.base import ErrorCategory, ProviderFailure
-from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter, _origin, _read_limited_error_body
+from muse_orchestrator.providers.muse2api_adapter import (
+    Muse2ApiAdapter,
+    _origin,
+    _read_limited_error_body,
+)
 
 BASE = "https://muse.example.com"
 API_KEY = "sk-secret-key"
