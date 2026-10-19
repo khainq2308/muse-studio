@@ -388,5 +388,55 @@ class StopGateTests(unittest.TestCase):
         self.assertTrue(any("NOT RUN" in item for item in problems), problems)
 
 
+class AgentHookReviewRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.guard = load_module("test_guard_bash_normalization", HOOKS / "guard_bash.py")
+        # SessionStart is a script as well as a module, so suppress its normal context output.
+        with contextlib.redirect_stdout(io.StringIO()):
+            cls.session_start = load_module("test_session_start_worker_detection", HOOKS / "session_start.py")
+
+    def test_bash_guard_normalizes_quoted_token_concatenation_and_compound_commands(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            denied = self.run_hook(
+                HOOKS / "guard_bash.py",
+                root,
+                {"tool_name": "Bash", "tool_input": {"command": 'echo safe; g"it" push origin main'}},
+            )
+            self.assertEqual(denied.returncode, 2, denied.stderr)
+            self.assertIn("push-main", denied.stderr)
+
+            force_push = self.run_hook(
+                HOOKS / "guard_bash.py",
+                root,
+                {"tool_name": "Bash", "tool_input": {"command": 'echo safe; git"" push origin feature --force-with-lease'}},
+            )
+            self.assertEqual(force_push.returncode, 2, force_push.stderr)
+            self.assertIn("force-push", force_push.stderr)
+
+    def test_session_start_requires_a_real_worker_service_and_arq_command(self):
+        self.assertTrue(self.session_start._has_arq_worker_service(
+            "services:\n"
+            "  orchestrator-api:\n"
+            "    command: uvicorn app:app\n"
+            "  orchestrator-worker:\n"
+            "    command: arq muse_orchestrator.workers.WorkerSettings\n"
+        ))
+        self.assertFalse(self.session_start._has_arq_worker_service(
+            "services:\n"
+            "  orchestrator-api:\n"
+            "    command: uvicorn app:app # the arq worker is planned\n"
+            "    environment:\n"
+            "      QUEUE_MODE: arq\n"
+        ))
+        self.assertFalse(self.session_start._has_arq_worker_service(
+            "# arq worker service removed\n"
+            "services:\n"
+            "  orchestrator-worker:\n"
+            "    command: uvicorn app:app\n"
+        ))
+
+
 if __name__ == "__main__":
     unittest.main()
