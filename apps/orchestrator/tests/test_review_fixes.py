@@ -101,6 +101,20 @@ def test_redact_dict_keeps_non_sensitive_values_and_proxy_host_diagnostics():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scheme", ["socks5", "socks5h"])
+async def test_installed_httpx_can_build_a_client_for_accepted_socks_proxies(scheme):
+    """Proxy validation accepts socks5/socks5h, so the real httpx must be able to construct them.
+
+    A missing ``socksio`` (the ``httpx[socks]`` extra) raises ImportError at construction, which the
+    adapter's ``except httpx.RequestError`` blocks do not catch.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(proxy=f"{scheme}://user:pw@127.0.0.1:1080"):
+        pass
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("proxy", ["http://user:pw@proxy.example.com:8080", None])
 async def test_muse2api_adapter_builds_every_client_with_the_configured_proxy(monkeypatch, proxy):
     import httpx
