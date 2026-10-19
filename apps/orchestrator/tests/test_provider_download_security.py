@@ -284,7 +284,6 @@ async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(mo
         address = "10.10.1.5" if host in {
             "rebind.attacker.example.org", "internal-service.local", "localhost"
         } else "93.184.215.14"
-        ip = ipaddress.ip_address(address)
         return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))]
 
     adapter = Muse2ApiAdapter(
