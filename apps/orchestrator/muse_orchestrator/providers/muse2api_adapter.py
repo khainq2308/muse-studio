@@ -460,12 +460,22 @@ class Muse2ApiAdapter(VideoProvider):
         resolved: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
         for record in records:
             try:
-                sockaddr = record[4]
+                if not isinstance(record, (tuple, list)) or len(record) != 5:
+                    raise ValueError("malformed getaddrinfo record")
+                family, _socktype, _protocol, _canonical_name, sockaddr = record
+                if family not in (socket.AF_INET, socket.AF_INET6):
+                    raise ValueError("unsupported DNS address family")
+                if not isinstance(sockaddr, (tuple, list)) or len(sockaddr) < 2:
+                    raise ValueError("malformed socket address")
                 raw_address = sockaddr[0]
                 # Scope IDs are not valid DNS answers for this public-host pinning path.
                 if "%" in str(raw_address):
                     raise ValueError("scoped DNS address")
                 address = ipaddress.ip_address(str(raw_address))
+                if (family == socket.AF_INET and address.version != 4) or (
+                    family == socket.AF_INET6 and address.version != 6
+                ):
+                    raise ValueError("address does not match DNS family")
             except (IndexError, TypeError, ValueError) as exc:
                 # Any malformed answer invalidates the whole DNS result; do not
                 # silently discard it and select a different, possibly attacker-chosen IP.
