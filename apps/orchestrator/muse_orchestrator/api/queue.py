@@ -105,10 +105,20 @@ async def list_queue_tasks(
     account_used: str | None = None,
     repository: StudioRepository = Depends(get_studio_repository),
 ) -> list[dict[str, Any]]:
+    state_filter: QueueTaskState | None = None
+    if state:
+        try:
+            state_filter = QueueTaskState(state)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"state không hợp lệ. Giá trị cho phép: {[s.value for s in QueueTaskState]}",
+            ) from exc
+
     rows = await repository.list_queue_tasks(
         project_id=project_id,
         connection_id=connection_id,
-        state=state_filter if state else None,
+        state=state_filter,
         model_id=model_id,
         account_used=account_used,
     )
