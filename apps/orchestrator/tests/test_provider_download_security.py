@@ -77,7 +77,7 @@ class Upstream:
         return records
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        host_header = request.headers.get("host", request.url.netloc.decode("ascii"))
+        host_header = request.headers["host"]
         raw_path = request.url.raw_path.decode("ascii")
         url = f"{request.url.scheme}://{host_header}{raw_path}"
         self.requests.append((url, request.headers.get("authorization")))
@@ -282,7 +282,7 @@ async def test_p2_ssrf_blocks_private_ips_loopback_and_internal_dns_redirects(mo
 
     async def resolver(host: str, port: int) -> list[tuple[object, ...]]:
         address = "10.10.1.5" if host in {
-            "rebind.attacker.example.org", "internal-service.local"
+            "rebind.attacker.example.org", "internal-service.local", "localhost"
         } else "93.184.215.14"
         ip = ipaddress.ip_address(address)
         return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))]
