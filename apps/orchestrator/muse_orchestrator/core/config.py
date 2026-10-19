@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     media_root: str = "./storage/media"
     secret_encryption_key: str = _DEVELOPMENT_ENCRYPTION_KEY
     studio_admin_token: str | None = None
+
+    # Select the documented video schema of the configured muse2api deployment.
+    # "compat" retains both aliases until the deployment's actual schema is confirmed.
+    video_payload_profile: Literal["compat", "www222fff", "czg86389-hub"] = Field(
+        default="compat", validation_alias="MUSE2API_VIDEO_PAYLOAD_PROFILE"
+    )
 
     # M7: orphan media cleanup (ARQ cron) and project backups.
     orphan_cleanup_enabled: bool = True
