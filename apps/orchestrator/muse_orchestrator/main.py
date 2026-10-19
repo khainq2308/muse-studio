@@ -43,12 +43,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="MuseStudio Orchestrator API", version="0.7.0", lifespan=lifespan)
 
+# Keep the local dev UI origin explicit and allow only browser methods/headers
+# used by the API. Production serves the UI through same-origin reverse proxying.
+_CORS_ALLOWED_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+_CORS_ALLOWED_HEADERS = ["Accept", "Authorization", "Content-Type", "X-Studio-Admin-Token"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=_CORS_ALLOWED_METHODS,
+    allow_headers=_CORS_ALLOWED_HEADERS,
 )
 
 
