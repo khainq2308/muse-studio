@@ -7,8 +7,11 @@ from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.api.dependencies import get_studio_repository
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
-    Project, ShotRecord, ShotGenerationState, ProviderConnection,
-    GenerationTaskRecord, QueueTaskState, ShotTakeRecord, BatchRenderJobRecord
+    ShotGenerationState,
+    GenerationTaskRecord,
+    QueueTaskState,
+    ShotTakeRecord,
+    BatchRenderJobRecord,
 )
 from muse_orchestrator.api.pipeline import _recompile_project_shots
 from muse_orchestrator.api.arq_dispatch import schedule_generation_task
@@ -282,7 +285,7 @@ async def flag_take_continuity_and_regenerate(
         if not conn:
             raise HTTPException(status_code=404, detail="Connection không tồn tại.")
         new_task, _ = await GenerationQueueService.enqueue_shot_generation(
-            db=db,
+            db=repository.session,
             shot=shot,
             conn=conn,
             task_type="video",
