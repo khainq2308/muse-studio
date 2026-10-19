@@ -36,7 +36,13 @@ def _origin(url: str) -> Origin | None:
         port = parts.port or _DEFAULT_PORTS[scheme]
     except ValueError:
         return None
-    return scheme, parts.hostname.lower(), port
+    host = parts.hostname.lower()
+    if ":" not in host:
+        try:
+            host = host.encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            return None
+    return scheme, host, port
 
 
 def _is_forbidden_ip(value: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -368,13 +374,22 @@ class Muse2ApiAdapter(VideoProvider):
                 )
             return url, {}, {}
 
+        try:
+            ascii_hostname = hostname.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "SSRF blocked: destination hostname is invalid.",
+                retryable=False,
+            ) from exc
+
         port = parts.port or _DEFAULT_PORTS[parts.scheme.lower()]
         try:
             if self._dns_resolver is not None:
-                records = await asyncio.wait_for(self._dns_resolver(hostname, port), timeout=5.0)
+                records = await asyncio.wait_for(self._dns_resolver(ascii_hostname, port), timeout=5.0)
             else:
                 records = await asyncio.wait_for(
-                    asyncio.get_running_loop().getaddrinfo(hostname, port, type=socket.SOCK_STREAM),
+                    asyncio.get_running_loop().getaddrinfo(ascii_hostname, port, type=socket.SOCK_STREAM),
                     timeout=5.0,
                 )
         except (OSError, asyncio.TimeoutError) as exc:
@@ -421,10 +436,13 @@ class Muse2ApiAdapter(VideoProvider):
         port_suffix = f":{parts.port}" if parts.port is not None else ""
         pinned_netloc = f"{pinned_host}{port_suffix}"
         pinned_url = parts._replace(netloc=pinned_netloc).geturl()
-        request_headers = {"Host": parts.netloc}
+        host_header = ascii_hostname
+        if parts.port is not None:
+            host_header = f"{host_header}:{parts.port}"
+        request_headers = {"Host": host_header}
         request_extensions: dict[str, Any] = {}
         if parts.scheme.lower() == "https":
-            request_extensions["sni_hostname"] = hostname
+            request_extensions["sni_hostname"] = ascii_hostname
         return pinned_url, request_headers, request_extensions
 
 
