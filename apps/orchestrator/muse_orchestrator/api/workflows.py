@@ -4,13 +4,12 @@ from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from muse_orchestrator.core.database import get_db
 from muse_orchestrator.core.security import verify_single_admin
+from muse_orchestrator.api.dependencies import get_studio_repository
+from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import (
-    Project, WorkflowDefinition, WorkflowVersion, WorkflowRun,
+    WorkflowDefinition, WorkflowVersion, WorkflowRun,
     NodeExecution, NodeExecutionState, WorkflowCacheEntry
 )
 from muse_orchestrator.services.workflow_engine import (
@@ -50,10 +49,10 @@ class WorkflowRunRequestIn(BaseModel):
 async def create_workflow(
     project_id: str,
     payload: WorkflowCreateIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
-    proj = await db.get(Project, project_id)
+    proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
@@ -85,8 +84,8 @@ async def create_workflow(
         edges_json=edges_json,
         ui_layout_json=ui_layout,
     )
-    db.add_all([wf, ver])
-    await db.commit()
+    repository.stage_workflow_entities([wf, ver])
+    await repository.commit_workflow_changes()
 
     return {
         "id": wf.id,
@@ -106,10 +105,10 @@ async def update_workflow_graph(
     project_id: str,
     workflow_id: str,
     payload: WorkflowGraphUpdateIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
-    wf = await db.get(WorkflowDefinition, workflow_id)
+    wf = await repository.get_workflow_definition(workflow_id)
     if not wf or wf.project_id != project_id:
         raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
 
@@ -129,8 +128,8 @@ async def update_workflow_graph(
         edges_json=payload.edges,
         ui_layout_json=payload.ui_layout,
     )
-    db.add(ver)
-    await db.commit()
+    repository.stage_workflow_entity(ver)
+    await repository.commit_workflow_changes()
 
     return {
         "id": wf.id,
@@ -145,24 +144,17 @@ async def autosave_canvas_layout(
     project_id: str,
     workflow_id: str,
     payload: WorkflowLayoutOnlyIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """Lưu vị trí toạ độ node trên Canvas mà không làm thay đổi Merkle Cache Key của logic."""
-    wf = await db.get(WorkflowDefinition, workflow_id)
+    wf = await repository.get_workflow_definition(workflow_id)
     if not wf or wf.project_id != project_id:
         raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
 
-    ver = (
-        await db.execute(
-            select(WorkflowVersion).where(
-                WorkflowVersion.workflow_id == workflow_id,
-                WorkflowVersion.version_number == wf.current_version,
-            )
-        )
-    ).scalar_one()
+    ver = await repository.get_workflow_version(workflow_id, wf.current_version)
     ver.ui_layout_json = payload.ui_layout
-    await db.commit()
+    await repository.commit_workflow_changes()
     return {"workflow_id": workflow_id, "version_number": ver.version_number, "ui_layout_saved": True}
 
 
@@ -171,21 +163,14 @@ async def execute_workflow(
     project_id: str,
     workflow_id: str,
     payload: WorkflowRunRequestIn,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
-    wf = await db.get(WorkflowDefinition, workflow_id)
+    wf = await repository.get_workflow_definition(workflow_id)
     if not wf or wf.project_id != project_id:
         raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
 
-    ver = (
-        await db.execute(
-            select(WorkflowVersion).where(
-                WorkflowVersion.workflow_id == workflow_id,
-                WorkflowVersion.version_number == wf.current_version,
-            )
-        )
-    ).scalar_one()
+    ver = await repository.get_workflow_version(workflow_id, wf.current_version)
 
     nodes_def, edges_def = WorkflowEngine.parse_graph_json(ver.nodes_json, ver.edges_json)
     full_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def)
@@ -208,13 +193,13 @@ async def execute_workflow(
         status="running",
         execution_plan_order=plan_order,
     )
-    db.add(wf_run)
+    repository.stage_workflow_entity(wf_run)
 
     # Nếu là dry_run: chỉ trả về kế hoạch chạy và kiểm tra cache mà không thực thi
     if payload.run_mode == "dry_run":
         wf_run.status = "succeeded"
         wf_run.finished_at = datetime.now(timezone.utc)
-        await db.commit()
+        await repository.commit_workflow_changes()
         return {
             "run_id": run_id,
             "run_mode": "dry_run",
@@ -246,12 +231,12 @@ async def execute_workflow(
                 output_refs={},
                 logs=["Blocked waiting for upstream ManualApproval gate."],
             )
-            db.add(n_exec)
+            repository.stage_workflow_entity(n_exec)
             node_records.append(n_exec)
             continue
 
         # Kiểm tra Cache Entry nếu không ép chạy lại (force_rerun)
-        cached = None if payload.force_rerun else await db.get(WorkflowCacheEntry, ckey)
+        cached = None if payload.force_rerun else await repository.get_workflow_cache_entry(ckey)
         # The original M3 prototype stored placeholder node refs as "verified". Do not
         # trust legacy cache rows without an explicit execution provenance marker.
         if cached is not None and cached.output_refs.get("execution_kind") not in {
@@ -280,7 +265,7 @@ async def execute_workflow(
                 started_at=now,
                 ended_at=now,
             )
-            db.add(n_exec)
+            repository.stage_workflow_entity(n_exec)
             node_records.append(n_exec)
             continue
 
@@ -301,7 +286,7 @@ async def execute_workflow(
                 logs=["Paused at ManualApproval gate. Waiting for operator approval."],
                 started_at=now,
             )
-            db.add(n_exec)
+            repository.stage_workflow_entity(n_exec)
             node_records.append(n_exec)
             continue
 
@@ -330,12 +315,12 @@ async def execute_workflow(
             started_at=now,
             ended_at=now,
         )
-        db.add(n_exec)
+        repository.stage_workflow_entity(n_exec)
         node_records.append(n_exec)
 
-        existing_cache = await db.get(WorkflowCacheEntry, ckey)
+        existing_cache = await repository.get_workflow_cache_entry(ckey)
         if not existing_cache:
-            db.add(WorkflowCacheEntry(
+            repository.stage_workflow_entity(WorkflowCacheEntry(
                 cache_key=ckey,
                 project_id=project_id,
                 node_type=nd.node_type,
@@ -346,7 +331,7 @@ async def execute_workflow(
         wf_run.status = "succeeded"
         wf_run.finished_at = datetime.now(timezone.utc)
 
-    await db.commit()
+    await repository.commit_workflow_changes()
 
     return {
         "run_id": wf_run.id,
@@ -374,17 +359,15 @@ async def approve_manual_gate_and_resume(
     workflow_id: str,
     run_id: str,
     node_id: str,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """Duyệt cổng ManualApproval và tự động chạy tiếp các node phía sau đang bị blocked."""
-    wf_run = await db.get(WorkflowRun, run_id)
+    wf_run = await repository.get_workflow_run(run_id)
     if not wf_run or wf_run.workflow_id != workflow_id:
         raise HTTPException(status_code=404, detail="Workflow run không tồn tại.")
 
-    node_execs = (
-        await db.execute(select(NodeExecution).where(NodeExecution.run_id == run_id))
-    ).scalars().all()
+    node_execs = await repository.list_node_executions_for_run(run_id)
     exec_by_nid = {ne.node_id: ne for ne in node_execs}
 
     target = exec_by_nid.get(node_id)
@@ -402,8 +385,8 @@ async def approve_manual_gate_and_resume(
     }
     target.logs = list(target.logs or []) + [f"Approved by {actor}."]
 
-    if not await db.get(WorkflowCacheEntry, target.cache_key):
-        db.add(WorkflowCacheEntry(
+    if not await repository.get_workflow_cache_entry(target.cache_key):
+        repository.stage_workflow_entity(WorkflowCacheEntry(
             cache_key=target.cache_key,
             project_id=project_id,
             node_type=target.node_type,
@@ -427,8 +410,8 @@ async def approve_manual_gate_and_resume(
             ne.logs = list(ne.logs or []) + [
                 "Resumed state-machine simulation after ManualApproval; no media was generated."
             ]
-            if not await db.get(WorkflowCacheEntry, ne.cache_key):
-                db.add(WorkflowCacheEntry(
+            if not await repository.get_workflow_cache_entry(ne.cache_key):
+                repository.stage_workflow_entity(WorkflowCacheEntry(
                     cache_key=ne.cache_key,
                     project_id=project_id,
                     node_type=ne.node_type,
@@ -437,7 +420,7 @@ async def approve_manual_gate_and_resume(
 
     wf_run.status = "succeeded"
     wf_run.finished_at = now
-    await db.commit()
+    await repository.commit_workflow_changes()
 
     return {
         "run_id": wf_run.id,
