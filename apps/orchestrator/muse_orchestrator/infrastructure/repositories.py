@@ -188,6 +188,63 @@ class StudioRepository:
         await self.session.commit()
         return take
 
+    async def list_queue_tasks(
+        self,
+        *,
+        project_id: str | None = None,
+        connection_id: str | None = None,
+        state: QueueTaskState | None = None,
+        model_id: str | None = None,
+        account_used: str | None = None,
+    ) -> list[GenerationTaskRecord]:
+        stmt = select(GenerationTaskRecord).order_by(
+            GenerationTaskRecord.priority.desc(),
+            GenerationTaskRecord.created_at.desc(),
+        )
+        if project_id:
+            stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
+        if connection_id:
+            stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
+        if state is not None:
+            stmt = stmt.where(GenerationTaskRecord.state == state)
+        if model_id:
+            stmt = stmt.where(GenerationTaskRecord.model_id == model_id)
+        if account_used:
+            stmt = stmt.where(GenerationTaskRecord.account_used == account_used)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def save_queue_task(
+        self,
+        task: GenerationTaskRecord,
+        *,
+        shot: ShotRecord | None = None,
+        refresh: bool = False,
+    ) -> GenerationTaskRecord:
+        self.session.add(task)
+        if shot is not None:
+            self.session.add(shot)
+        await self.session.commit()
+        if refresh:
+            await self.session.refresh(task)
+        return task
+
+    async def list_shot_takes(self, shot_id: str) -> list[ShotTakeRecord]:
+        result = await self.session.execute(
+            select(ShotTakeRecord)
+            .where(ShotTakeRecord.shot_id == shot_id)
+            .order_by(ShotTakeRecord.take_number.asc())
+        )
+        return list(result.scalars().all())
+
+    async def save_selected_take(
+        self, shot: ShotRecord, takes: list[ShotTakeRecord]
+    ) -> ShotRecord:
+        self.session.add(shot)
+        self.session.add_all(takes)
+        await self.session.commit()
+        return shot
+
     # --- M2 script-to-shot pipeline persistence ---
 
     async def list_story_bible_entries(self, project_id: str) -> list[StoryBibleEntry]:
