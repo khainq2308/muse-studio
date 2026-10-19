@@ -41,7 +41,12 @@ def _origin(url: str) -> Origin | None:
         parts = urlsplit(url)
         scheme = parts.scheme.lower()
         hostname = parts.hostname
-        port = parts.port or _DEFAULT_PORTS.get(scheme)
+        explicit_port = parts.port
+        port = explicit_port if explicit_port is not None else _DEFAULT_PORTS.get(scheme)
+        # Port zero is reserved and must not alias the scheme's default port.
+        # Returning None makes the caller reject it before any network request.
+        if port is not None and not 1 <= port <= 65535:
+            return None
         if hostname and ":" not in hostname:
             # Normalize IDNs and trailing root dots consistently before comparing
             # provider origins or constructing Host/SNI values.
