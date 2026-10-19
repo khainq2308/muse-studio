@@ -69,7 +69,11 @@ class SecretRedactor:
 
     @classmethod
     def redact_dict(cls, data: dict[str, Any], explicit_secrets: list[str] | None = None) -> dict[str, Any]:
-        sensitive_keys = {
+        """Deeply redact sensitive values in mappings, sequences, and nested structures."""
+        return cls._redact_mapping(data, explicit_secrets, inherited=False)
+
+    _SENSITIVE_KEYS = frozenset(
+        {
             "api_key",
             "admin_api_key",
             "cookie",
@@ -79,14 +83,28 @@ class SecretRedactor:
             "authorization",
             "secret",
         }
+    )
+
+    @classmethod
+    def _redact_mapping(
+        cls, data: dict[str, Any], explicit_secrets: list[str] | None, inherited: bool
+    ) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in data.items():
-            if key.lower() in sensitive_keys and isinstance(value, str):
-                result[key] = cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
-            elif isinstance(value, dict):
-                result[key] = cls.redact_dict(value, explicit_secrets)
-            elif isinstance(value, str):
-                result[key] = cls.redact_text(value, explicit_secrets)
-            else:
-                result[key] = value
+            sensitive = inherited or str(key).lower() in cls._SENSITIVE_KEYS
+            result[key] = cls._redact_value(value, explicit_secrets, sensitive)
         return result
+
+    @classmethod
+    def _redact_value(cls, value: Any, explicit_secrets: list[str] | None, sensitive: bool) -> Any:
+        if isinstance(value, str):
+            if sensitive:
+                # Preserve a proxy URL’s diagnostic host, but never its credentials.
+                return cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
+            return cls.redact_text(value, explicit_secrets)
+        if isinstance(value, dict):
+            return cls._redact_mapping(value, explicit_secrets, sensitive)
+        if isinstance(value, (list, tuple)):
+            items = [cls._redact_value(item, explicit_secrets, sensitive) for item in value]
+            return tuple(items) if isinstance(value, tuple) else items
+        return value
