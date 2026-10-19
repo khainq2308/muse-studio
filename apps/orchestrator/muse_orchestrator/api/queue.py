@@ -3,15 +3,14 @@ from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from muse_orchestrator.core.database import get_db
+from muse_orchestrator.api.dependencies import get_studio_repository
+from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.api.arq_dispatch import schedule_generation_task
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
-    ShotRecord, ShotGenerationState, ProviderConnection,
-    GenerationTaskRecord, QueueTaskState, ShotTakeRecord
+    ShotGenerationState,
+    GenerationTaskRecord,
+    QueueTaskState,
 )
 from muse_orchestrator.services.generation_queue import GenerationQueueService
 
@@ -61,20 +60,20 @@ def _serialize_task(t: GenerationTaskRecord) -> dict[str, Any]:
 async def enqueue_generation_task(
     payload: EnqueueTaskIn,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
-    shot = await db.get(ShotRecord, payload.shot_id)
+    shot = await repository.get_shot(payload.shot_id)
     if not shot:
         raise HTTPException(status_code=404, detail="Shot không tồn tại.")
 
-    conn = await db.get(ProviderConnection, payload.connection_id)
+    conn = await repository.get_connection(payload.connection_id)
     if not conn or not conn.enabled:
         raise HTTPException(status_code=400, detail="Connection không tồn tại hoặc đang bị vô hiệu hoá.")
 
     try:
         task, created = await GenerationQueueService.enqueue_shot_generation(
-            db=db,
+            db=repository.session,
             shot=shot,
             conn=conn,
             task_type=payload.task_type,
@@ -88,8 +87,7 @@ async def enqueue_generation_task(
 
     if created and payload.max_polls != 60:
         task.max_polls = payload.max_polls
-        await db.commit()
-        await db.refresh(task)
+        await repository.save_queue_task(task, refresh=True)
 
     await schedule_generation_task(request, task)
 
@@ -105,31 +103,25 @@ async def list_queue_tasks(
     state: str | None = None,
     model_id: str | None = None,
     account_used: str | None = None,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
 ) -> list[dict[str, Any]]:
-    stmt = select(GenerationTaskRecord).order_by(
-        GenerationTaskRecord.priority.desc(),
-        GenerationTaskRecord.created_at.desc(),
-    )
-    if project_id:
-        stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
-    if connection_id:
-        stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
+    state_filter: QueueTaskState | None = None
     if state:
         try:
             state_filter = QueueTaskState(state)
-        except ValueError:
+        except ValueError as exc:
             raise HTTPException(
                 status_code=422,
                 detail=f"state không hợp lệ. Giá trị cho phép: {[s.value for s in QueueTaskState]}",
-            )
-        stmt = stmt.where(GenerationTaskRecord.state == state_filter)
-    if model_id:
-        stmt = stmt.where(GenerationTaskRecord.model_id == model_id)
-    if account_used:
-        stmt = stmt.where(GenerationTaskRecord.account_used == account_used)
+            ) from exc
 
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = await repository.list_queue_tasks(
+        project_id=project_id,
+        connection_id=connection_id,
+        state=state_filter,
+        model_id=model_id,
+        account_used=account_used,
+    )
     return [_serialize_task(r) for r in rows]
 
 
@@ -137,11 +129,11 @@ async def list_queue_tasks(
 async def step_generation_task(
     task_id: str,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     try:
-        task = await GenerationQueueService.step_task(db, task_id)
+        task = await GenerationQueueService.step_task(repository.session, task_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await schedule_generation_task(request, task)
@@ -149,33 +141,33 @@ async def step_generation_task(
 
 
 @router.post("/tasks/{task_id}/pause")
-async def pause_task(task_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
-    task = await db.get(GenerationTaskRecord, task_id)
+async def pause_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+    task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
     if task.state in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
         task.state = QueueTaskState.PAUSED
         task.history_log = list(task.history_log or []) + ["Paused by operator."]
-        await db.commit()
+        await repository.save_queue_task(task)
     return _serialize_task(task)
 
 
 @router.post("/tasks/{task_id}/resume")
-async def resume_task(task_id: str, request: Request, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
-    task = await db.get(GenerationTaskRecord, task_id)
+async def resume_task(task_id: str, request: Request, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+    task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
     if task.state == QueueTaskState.PAUSED:
         task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
         task.history_log = list(task.history_log or []) + ["Resumed by operator."]
-        await db.commit()
+        await repository.save_queue_task(task)
     await schedule_generation_task(request, task)
     return _serialize_task(task)
 
 
 @router.post("/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
-    task = await db.get(GenerationTaskRecord, task_id)
+async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+    task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
     if task.state in (
@@ -188,23 +180,17 @@ async def cancel_task(task_id: str, db: AsyncSession = Depends(get_db), actor: s
         return _serialize_task(task)
     task.state = QueueTaskState.CANCELED
     task.finished_at = datetime.now(timezone.utc)
-    shot = await db.get(ShotRecord, task.shot_id)
+    shot = await repository.get_shot(task.shot_id)
     if shot:
         shot.generation_state = ShotGenerationState.CANCELED
     task.history_log = list(task.history_log or []) + ["Canceled by operator."]
-    await db.commit()
+    await repository.save_queue_task(task, shot=shot)
     return _serialize_task(task)
 
 
 @router.get("/shots/{shot_id}/takes")
-async def list_shot_takes(shot_id: str, db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
-    rows = (
-        await db.execute(
-            select(ShotTakeRecord)
-            .where(ShotTakeRecord.shot_id == shot_id)
-            .order_by(ShotTakeRecord.take_number.asc())
-        )
-    ).scalars().all()
+async def list_shot_takes(shot_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[dict[str, Any]]:
+    rows = await repository.list_shot_takes(shot_id)
     return [
         {
             "id": t.id,
@@ -226,14 +212,12 @@ async def list_shot_takes(shot_id: str, db: AsyncSession = Depends(get_db)) -> l
 
 
 @router.post("/shots/{shot_id}/takes/{take_id}/select")
-async def select_shot_take(shot_id: str, take_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
-    shot = await db.get(ShotRecord, shot_id)
+async def select_shot_take(shot_id: str, take_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+    shot = await repository.get_shot(shot_id)
     if not shot:
         raise HTTPException(status_code=404, detail="Shot không tồn tại.")
 
-    takes = (
-        await db.execute(select(ShotTakeRecord).where(ShotTakeRecord.shot_id == shot_id))
-    ).scalars().all()
+    takes = await repository.list_shot_takes(shot_id)
     found = False
     for t in takes:
         if t.id == take_id:
@@ -249,8 +233,8 @@ async def select_shot_take(shot_id: str, take_id: str, db: AsyncSession = Depend
     shot.selected_take_id = take_id
     if selected_obj.last_frame_asset_id:
         shot.last_frame_asset_id = selected_obj.last_frame_asset_id
-    await db.commit()
-    unlocked = await GenerationQueueService.propagate_frame_chain_downstream(db, shot)
+    await repository.save_selected_take(shot, takes)
+    unlocked = await GenerationQueueService.propagate_frame_chain_downstream(repository.session, shot)
     return {
         "shot_id": shot_id,
         "selected_take_id": take_id,

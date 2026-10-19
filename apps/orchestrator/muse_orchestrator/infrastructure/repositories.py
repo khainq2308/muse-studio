@@ -12,7 +12,12 @@ from muse_orchestrator.models.domain import (
     StoryBibleEntry,
     SceneRecord,
     ShotRecord,
+    ShotGenerationState,
     ProviderConnection,
+    GenerationTaskRecord,
+    QueueTaskState,
+    ShotTakeRecord,
+    BatchRenderJobRecord,
     BackupRecord,
     ConnectionAccount,
     StructuredLogRecord,
@@ -108,6 +113,137 @@ class StudioRepository:
             .order_by(ShotRecord.sequence_index.asc())
         )
         return list(result.scalars().all())
+
+    # --- M5 batch rendering and continuity persistence ---
+
+    async def get_shot_take(self, take_id: str) -> ShotTakeRecord | None:
+        return await self.session.get(ShotTakeRecord, take_id)
+
+    async def get_generation_task(self, task_id: str) -> GenerationTaskRecord | None:
+        return await self.session.get(GenerationTaskRecord, task_id)
+
+    async def list_active_generation_tasks(
+        self, project_id: str, connection_id: str | None = None
+    ) -> list[GenerationTaskRecord]:
+        stmt = (
+            select(GenerationTaskRecord)
+            .where(
+                GenerationTaskRecord.project_id == project_id,
+                GenerationTaskRecord.state.in_((QueueTaskState.RUNNING, QueueTaskState.QUEUED)),
+            )
+            .order_by(
+                GenerationTaskRecord.priority.desc(),
+                GenerationTaskRecord.created_at.asc(),
+            )
+        )
+        if connection_id:
+            stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_ready_frame_chain_shots(self, project_id: str) -> list[ShotRecord]:
+        result = await self.session.execute(
+            select(ShotRecord).where(
+                ShotRecord.project_id == project_id,
+                ShotRecord.continuity_mode == "frame_chain",
+                ShotRecord.first_frame_asset_id.is_not(None),
+                ShotRecord.generation_state == ShotGenerationState.NOT_STARTED,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def list_project_generation_tasks(self, project_id: str) -> list[GenerationTaskRecord]:
+        result = await self.session.execute(
+            select(GenerationTaskRecord).where(GenerationTaskRecord.project_id == project_id)
+        )
+        return list(result.scalars().all())
+
+    async def list_failed_project_shots(self, project_id: str) -> list[ShotRecord]:
+        result = await self.session.execute(
+            select(ShotRecord).where(
+                ShotRecord.project_id == project_id,
+                ShotRecord.generation_state == ShotGenerationState.FAILED,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_latest_generation_task_for_shot(
+        self, shot_id: str
+    ) -> GenerationTaskRecord | None:
+        result = await self.session.execute(
+            select(GenerationTaskRecord)
+            .where(GenerationTaskRecord.shot_id == shot_id)
+            .order_by(GenerationTaskRecord.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_batch_render_job(self, batch_job: BatchRenderJobRecord) -> BatchRenderJobRecord:
+        self.session.add(batch_job)
+        await self.session.commit()
+        return batch_job
+
+    async def save_take_continuity(self, take: ShotTakeRecord) -> ShotTakeRecord:
+        self.session.add(take)
+        await self.session.commit()
+        return take
+
+    async def list_queue_tasks(
+        self,
+        *,
+        project_id: str | None = None,
+        connection_id: str | None = None,
+        state: QueueTaskState | None = None,
+        model_id: str | None = None,
+        account_used: str | None = None,
+    ) -> list[GenerationTaskRecord]:
+        stmt = select(GenerationTaskRecord).order_by(
+            GenerationTaskRecord.priority.desc(),
+            GenerationTaskRecord.created_at.desc(),
+        )
+        if project_id:
+            stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
+        if connection_id:
+            stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
+        if state is not None:
+            stmt = stmt.where(GenerationTaskRecord.state == state)
+        if model_id:
+            stmt = stmt.where(GenerationTaskRecord.model_id == model_id)
+        if account_used:
+            stmt = stmt.where(GenerationTaskRecord.account_used == account_used)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def save_queue_task(
+        self,
+        task: GenerationTaskRecord,
+        *,
+        shot: ShotRecord | None = None,
+        refresh: bool = False,
+    ) -> GenerationTaskRecord:
+        self.session.add(task)
+        if shot is not None:
+            self.session.add(shot)
+        await self.session.commit()
+        if refresh:
+            await self.session.refresh(task)
+        return task
+
+    async def list_shot_takes(self, shot_id: str) -> list[ShotTakeRecord]:
+        result = await self.session.execute(
+            select(ShotTakeRecord)
+            .where(ShotTakeRecord.shot_id == shot_id)
+            .order_by(ShotTakeRecord.take_number.asc())
+        )
+        return list(result.scalars().all())
+
+    async def save_selected_take(
+        self, shot: ShotRecord, takes: list[ShotTakeRecord]
+    ) -> ShotRecord:
+        self.session.add(shot)
+        self.session.add_all(takes)
+        await self.session.commit()
+        return shot
 
     # --- M2 script-to-shot pipeline persistence ---
 
