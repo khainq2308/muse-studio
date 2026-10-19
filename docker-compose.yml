@@ -41,6 +41,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-muse_secret_db_pass}@postgres:5432/${POSTGRES_DB:-musestudio}
       REDIS_URL: redis://redis:6379/0
+      MUSE2API_VIDEO_PAYLOAD_PROFILE: ${MUSE2API_VIDEO_PAYLOAD_PROFILE:-compat}
+      MUSE2API_VIDEO_SIZE: ${MUSE2API_VIDEO_SIZE:-}
       MEDIA_ROOT: /data/media
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-dev-only-32-byte-secret-key-change-me!!}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -55,6 +57,40 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  orchestrator-worker:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+    container_name: muse-orchestrator-worker
+    restart: unless-stopped
+    command: arq muse_orchestrator.workers.queue_worker.WorkerSettings
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD:-muse_secret_db_pass}@postgres:5432/${POSTGRES_DB:-musestudio}
+      REDIS_URL: redis://redis:6379/0
+      MUSE2API_VIDEO_PAYLOAD_PROFILE: ${MUSE2API_VIDEO_PAYLOAD_PROFILE:-compat}
+      MUSE2API_VIDEO_SIZE: ${MUSE2API_VIDEO_SIZE:-}
+      MEDIA_ROOT: /data/media
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-dev-only-32-byte-secret-key-change-me!!}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      STUDIO_ADMIN_TOKEN: ${STUDIO_ADMIN_TOKEN:-}
+    volumes:
+      - ./apps/orchestrator:/workspace/apps/orchestrator
+      - ./apps/media-engine:/workspace/apps/media-engine
+      - media_storage:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator-api:
         condition: service_healthy
 
   studio-web:

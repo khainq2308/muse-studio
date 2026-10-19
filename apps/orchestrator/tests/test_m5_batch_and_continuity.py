@@ -9,9 +9,27 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m5_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.main import app
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.models.domain import Base
+from muse_orchestrator.main import app  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.models.domain import Base  # noqa: E402 -- environment must be configured before app/database import
+
+
+class _FakeArqPool:
+    def __init__(self) -> None:
+        self.jobs: list[tuple[str, tuple, dict]] = []
+        self._job_ids: set[str] = set()
+
+    async def enqueue_job(self, function: str, *args, **kwargs):
+        job_id = kwargs.get("_job_id")
+        if job_id and job_id in self._job_ids:
+            return None
+        if job_id:
+            self._job_ids.add(job_id)
+        self.jobs.append((function, args, kwargs))
+        return object()
+
+    async def aclose(self) -> None:
+        return None
 
 
 @pytest.fixture()
@@ -25,10 +43,19 @@ async def client():
         async with TestSessionLocal() as session:
             yield session
 
+    previous_pool = getattr(app.state, "arq_pool", None)
+    app.state.arq_pool = _FakeArqPool()
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
-        yield ac
-    app.dependency_overrides.clear()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.clear()
+        if previous_pool is None:
+            if hasattr(app.state, "arq_pool"):
+                delattr(app.state, "arq_pool")
+        else:
+            app.state.arq_pool = previous_pool
 
 
 BATCH_SCRIPT_4_SHOTS = """

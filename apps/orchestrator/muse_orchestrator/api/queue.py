@@ -1,12 +1,13 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.core.database import get_db
+from muse_orchestrator.api.arq_dispatch import schedule_generation_task
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
     ShotRecord, ShotGenerationState, ProviderConnection,
@@ -59,6 +60,7 @@ def _serialize_task(t: GenerationTaskRecord) -> dict[str, Any]:
 @router.post("/tasks", status_code=status.HTTP_201_CREATED)
 async def enqueue_generation_task(
     payload: EnqueueTaskIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
@@ -88,6 +90,8 @@ async def enqueue_generation_task(
         task.max_polls = payload.max_polls
         await db.commit()
         await db.refresh(task)
+
+    await schedule_generation_task(request, task)
 
     out = _serialize_task(task)
     out["created_new"] = created
@@ -132,6 +136,7 @@ async def list_queue_tasks(
 @router.post("/tasks/{task_id}/step")
 async def step_generation_task(
     task_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
@@ -139,6 +144,7 @@ async def step_generation_task(
         task = await GenerationQueueService.step_task(db, task_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await schedule_generation_task(request, task)
     return _serialize_task(task)
 
 
@@ -155,7 +161,7 @@ async def pause_task(task_id: str, db: AsyncSession = Depends(get_db), actor: st
 
 
 @router.post("/tasks/{task_id}/resume")
-async def resume_task(task_id: str, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+async def resume_task(task_id: str, request: Request, db: AsyncSession = Depends(get_db), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
     task = await db.get(GenerationTaskRecord, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -163,6 +169,7 @@ async def resume_task(task_id: str, db: AsyncSession = Depends(get_db), actor: s
         task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
         task.history_log = list(task.history_log or []) + ["Resumed by operator."]
         await db.commit()
+    await schedule_generation_task(request, task)
     return _serialize_task(task)
 
 

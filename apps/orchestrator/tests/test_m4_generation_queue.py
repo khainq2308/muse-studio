@@ -10,9 +10,27 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m4_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.main import app
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.models.domain import Base
+from muse_orchestrator.main import app  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.models.domain import Base  # noqa: E402 -- environment must be configured before app/database import
+
+
+class _FakeArqPool:
+    def __init__(self) -> None:
+        self.jobs: list[tuple[str, tuple, dict]] = []
+        self._job_ids: set[str] = set()
+
+    async def enqueue_job(self, function: str, *args, **kwargs):
+        job_id = kwargs.get("_job_id")
+        if job_id and job_id in self._job_ids:
+            return None
+        if job_id:
+            self._job_ids.add(job_id)
+        self.jobs.append((function, args, kwargs))
+        return object()
+
+    async def aclose(self) -> None:
+        return None
 
 
 @pytest.fixture()
@@ -26,10 +44,20 @@ async def client():
         async with TestSessionLocal() as session:
             yield session
 
+    previous_pool = getattr(app.state, "arq_pool", None)
+    test_pool = _FakeArqPool()
+    app.state.arq_pool = test_pool
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
-        yield ac
-    app.dependency_overrides.clear()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.clear()
+        if previous_pool is None:
+            if hasattr(app.state, "arq_pool"):
+                delattr(app.state, "arq_pool")
+        else:
+            app.state.arq_pool = previous_pool
 
 
 @pytest.mark.asyncio
@@ -60,6 +88,14 @@ async def test_m4_async_video_generation_idempotency_and_asset_persistence(clien
     t1 = t1_res.json()
     assert t1["created_new"] is True
     task_id = t1["id"]
+
+    # The API must publish the committed task into the ARQ queue automatically.
+    queued_jobs = [
+        job for job in app.state.arq_pool.jobs
+        if job[0] == "process_generation_task_step" and job[1] == (task_id,)
+    ]
+    assert len(queued_jobs) == 1
+    assert queued_jobs[0][2]["_defer_by"] == 0
 
     t1_dup = await client.post(
         "/api/v1/queue/tasks",
@@ -150,7 +186,6 @@ SHOT 3: Stuck Poll Timeout Shot
 @pytest.mark.asyncio
 async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monkeypatch):
     """A duplicate worker invocation must not dispatch the same unclaimed task twice."""
-    from sqlalchemy import select
     from muse_orchestrator.models.domain import (
         GenerationDispatchLeaseRecord, GenerationTaskRecord, Project,
         ProviderConnection, SceneRecord, ShotRecord, QueueTaskState,

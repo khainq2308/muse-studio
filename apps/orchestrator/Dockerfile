@@ -8,7 +8,10 @@ COPY apps/media-engine ./apps/media-engine
 COPY apps/orchestrator ./apps/orchestrator
 
 WORKDIR /workspace/apps/orchestrator
-RUN pip install --no-cache-dir -e ".[dev]" -e "../media-engine"
+# Install the sibling package first so the orchestrator's declared muse-media
+# dependency resolves locally instead of looking for a public distribution.
+RUN pip install --no-cache-dir -e "../media-engine" \
+    && pip install --no-cache-dir -e ".[dev]"
 
 EXPOSE 8000
 CMD ["uvicorn", "muse_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8000"]
