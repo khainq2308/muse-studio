@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_media.boundary_frames import BoundaryFrames, extract_boundary_frames
@@ -55,6 +56,55 @@ def build_provider(
     connection-level credentials.
     """
     return build_provider_for_account(conn, account)
+
+
+TAKE_NUMBER_INSERT_MAX_ATTEMPTS = 20
+
+
+def _is_take_number_conflict(exc: IntegrityError) -> bool:
+    """Recognize only the (shot_id, take_number) uniqueness conflict."""
+    constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    if constraint_name == "uq_shot_takes_shot_number":
+        return True
+    message = str(exc.orig).lower()
+    return (
+        "shot_takes.shot_id" in message
+        and "shot_takes.take_number" in message
+        and ("unique" in message or "duplicate key" in message)
+    )
+
+
+async def _insert_take_with_number_retry(db: AsyncSession, take: ShotTakeRecord) -> bool:
+    """Insert a take in a savepoint and allocate a new number after a uniqueness race.
+
+    Other pending asset/task changes remain in the outer transaction. Only the take
+    insert is rolled back on a number collision, allowing a bounded retry without
+    re-downloading provider media or discarding already-created asset metadata.
+    """
+    for _attempt in range(TAKE_NUMBER_INSERT_MAX_ATTEMPTS):
+        try:
+            async with db.begin_nested():
+                db.add(take)
+                await db.flush([take])
+            return True
+        except IntegrityError as exc:
+            if not _is_take_number_conflict(exc):
+                raise
+            current_max = (
+                await db.execute(
+                    select(func.max(ShotTakeRecord.take_number)).where(
+                        ShotTakeRecord.shot_id == take.shot_id
+                    )
+                )
+            ).scalar_one()
+            if current_max is None:
+                # A concurrent writer can be outside this transaction's visible
+                # snapshot on some database configurations; still make progress.
+                take.take_number = max(1, take.take_number + 1)
+            else:
+                take.take_number = int(current_max) + 1
+            take.is_selected = False
+    return False
 
 
 @dataclass(frozen=True)
@@ -821,11 +871,11 @@ class GenerationQueueService:
             await db.refresh(task)
             return task
 
-        existing_takes_count = (
-            await db.execute(select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.shot_id == shot.id))
+        existing_max_take_num = (
+            await db.execute(select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id))
         ).scalar_one()
-        take_num = existing_takes_count + 1
-        is_first_take = existing_takes_count == 0
+        take_num = (int(existing_max_take_num) if existing_max_take_num is not None else 0) + 1
+        is_first_take = existing_max_take_num is None
 
         boundary_artifacts: list[_BoundaryFrameArtifact] = []
         if task.task_type == "video":
@@ -864,6 +914,25 @@ class GenerationQueueService:
             await db.commit()
             await db.refresh(task)
             return task
+
+        # Serialize take-number selection per shot on databases that support row locks.
+        # This lock is acquired after FFmpeg work so it is not held during extraction.
+        locked_shot = (
+            await db.execute(
+                select(ShotRecord)
+                .where(ShotRecord.id == shot.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+        shot = locked_shot
+        latest_max_take_num = (
+            await db.execute(
+                select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id)
+            )
+        ).scalar_one()
+        take_num = (int(latest_max_take_num) if latest_max_take_num is not None else 0) + 1
+        is_first_take = latest_max_take_num is None
 
         rel_path = os.path.relpath(stored.local_path, settings.media_root)
 
@@ -931,8 +1000,25 @@ class GenerationQueueService:
             account_used=task.account_used,
             is_selected=is_first_take,
         )
-        db.add(take)
+        inserted_take = await _insert_take_with_number_retry(db, take)
+        if not inserted_take:
+            for path in [stored.local_path, *(frame.path for frame in boundary_artifacts)]:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            await db.rollback()
+            conflict = ProviderFailure(
+                ErrorCategory.TRANSIENT_NETWORK,
+                "Concurrent take-number allocation could not be completed; retrying persistence.",
+                retryable=True,
+            )
+            return await GenerationQueueService._handle_poll_failure(
+                db, task, shot, conn, conflict, raw_secret, "take persistence"
+            )
 
+        take_num = take.take_number
+        is_first_take = take.is_selected
         if is_first_take:
             shot.selected_take_id = take_id
             if not shot.first_frame_asset_id:
