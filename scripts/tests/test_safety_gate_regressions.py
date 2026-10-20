@@ -68,7 +68,12 @@ class DynamicShellExpansionGuardRegressionTests(unittest.TestCase):
             'git push origin "$BRANCH"',
             "g${IFS}it push origin main",
             "cmd=git; $cmd push origin main",
+            'cmd=git; $cmd push origin "$TARGET"',
+            'g${IFS}it push origin fix/$BRANCH',
             'git push origin feature `echo --force`',
+            'git reset "$OPTIONS"',
+            'git clean "$OPTIONS"',
+            'docker compose "$ACTION" "$OPTIONS"',
             'eval "$COMMAND"',
             'bash -c "$COMMAND"',
         ]
