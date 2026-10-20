@@ -20,3 +20,6 @@ storage/
 .claude/settings.local.json
 .gemini/settings.local.json
 *.bak-*
+apps/studio-web/coverage/
+apps/studio-web/playwright-report/
+apps/studio-web/test-results/
