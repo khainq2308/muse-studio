@@ -84,9 +84,30 @@ export function normalizeApiBaseUrl(value: string | undefined): string {
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_ORCHESTRATOR_URL);
 
+export function encodePathSegment(segment: string): string {
+  if (segment === "." || segment === "..") {
+    throw new Error("API path segments must not be '.' or '..'.");
+  }
+  return encodeURIComponent(segment);
+}
+
 function buildUrl(path: string, query?: QueryParams): string {
   if (!path.startsWith("/") || path.startsWith("//")) {
     throw new Error("API paths must be absolute paths beginning with one '/'.");
+  }
+  if (path.includes("\\") || path.includes("?") || path.includes("#")) {
+    throw new Error("API paths must not include backslashes, queries, or fragments.");
+  }
+  for (const segment of path.split("/")) {
+    let decodedSegment: string;
+    try {
+      decodedSegment = decodeURIComponent(segment);
+    } catch {
+      throw new Error("API paths must use valid URL encoding.");
+    }
+    if (decodedSegment === "." || decodedSegment === "..") {
+      throw new Error("API paths must not contain dot segments.");
+    }
   }
 
   const url = new URL(API_BASE_URL + path, window.location.origin);
@@ -138,12 +159,22 @@ async function parseResponse(response: Response): Promise<unknown> {
   if (response.status === 204) return null;
   const contentType = response.headers.get("content-type") ?? "";
   if (!isJsonContentType(contentType)) {
-    throw new Error(`Expected JSON API response (${response.status}).`);
+    throw new ApiError({
+      status: response.status,
+      detail: `Expected JSON API response (${response.status}).`,
+      category: "invalid_response",
+      retryable: false,
+    });
   }
   try {
     return await response.json();
   } catch {
-    throw new Error(`Invalid JSON API response (${response.status}).`);
+    throw new ApiError({
+      status: response.status,
+      detail: `Invalid JSON API response (${response.status}).`,
+      category: "invalid_response",
+      retryable: false,
+    });
   }
 }
 
@@ -226,5 +257,8 @@ export async function downloadFile(
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  // Let the browser consume the Blob URL before revoking it. The response is currently
+  // materialized as a Blob for cross-browser authenticated downloads; a streaming-to-disk
+  // path can be added for very large media in a later media-workflow phase.
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
