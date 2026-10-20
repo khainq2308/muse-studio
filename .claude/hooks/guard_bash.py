@@ -67,54 +67,59 @@ _DYNAMIC_SHELL_SYNTAX = re.compile(r"[$\x60]")
 def dynamic_shell_expansion_risk(segments: list[str]) -> str | None:
     """Reject opaque shell expansion when it can alter a protected operation.
 
-    This is deliberately conservative: dynamic arguments on protected operations are
-    not considered safe simply because the literal text omits the dangerous value.
+    Dynamic arguments on sensitive commands are rejected conservatively: this guard
+    does not evaluate shell variables or substitutions, so it cannot prove that an
+    expanded destination, option, or subcommand is safe.
     """
     for segment in segments:
         if not _DYNAMIC_SHELL_SYNTAX.search(segment):
             continue
 
         lowered = segment.lower()
-        # These explicitly evaluate command strings rather than exposing a command for
-        # static policy checks. Dynamic command text cannot be proven safe here.
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = []
+
+        # These explicitly evaluate command strings rather than exposing a command
+        # for static policy checks. Dynamic command text cannot be proven safe here.
         if re.search(r"\beval\b", segment, re.IGNORECASE):
             return "eval can execute opaque shell command text"
         if re.search(r"\b(?:bash|sh|dash|zsh)\b[^;&|]*\s-c(?:\s|$)", segment, re.IGNORECASE):
             return "shell -c uses dynamically expanded command text"
 
-        # A variable/substitution can hide the executable, force flag, or destination
-        # branch. The guard cannot safely evaluate shell expansions.
+        # Reject every dynamically expanded git push, not just commands where a
+        # literal 'main' or '--force' happens to remain visible. The destination or
+        # option may be supplied entirely by a variable (e.g. "$TARGET" / "$FLAGS").
         if re.search(r"\bgit\s+push\b", segment, re.IGNORECASE):
             return "git push uses shell expansion"
-        if re.search(r"\bpush\b", segment, re.IGNORECASE) and (
-            re.search(r"\b(main|master)\b", segment, re.IGNORECASE)
-            or re.search(r"--force(?:-with-lease)?\b|(?<!\S)-[^\s]*f[^\s]*", segment, re.IGNORECASE)
-        ):
-            return "shell expansion can hide a protected git push target or force flag"
 
-        if re.search(r"\breset\b", lowered) and re.search(r"--hard\b|(?<!\S)-[^\s]*hard", lowered):
+        # Also catch a hidden executable such as '$cmd push ...' or 'g${IFS}it push'.
+        # If the first word is dynamically constructed, the verb alone is enough to
+        # make a sensitive git operation ambiguous.
+        if tokens and _DYNAMIC_SHELL_SYNTAX.search(tokens[0]):
+            if any(token.lower() in {"push", "reset", "clean"} for token in tokens[1:]):
+                return "dynamic executable can invoke a protected git operation"
+
+        # A variable or command substitution can hide a destructive flag even when
+        # the command name remains literal.
+        if re.search(r"\breset\b", lowered):
             return "shell expansion can hide a destructive git reset"
-        if re.search(r"\bclean\b", lowered) and re.search(
-            r"--force\b|(?<!\S)-[a-zA-Z]*f[a-zA-Z]*", lowered
-        ):
+        if re.search(r"\bclean\b", lowered):
             return "shell expansion can hide a destructive git clean"
-        if "docker" in lowered and "compose" in lowered and (
-            re.search(r"\bdown\b", lowered)
-            or "--volumes" in lowered
-            or re.search(r"(?<!\S)-[a-zA-Z]*v[a-zA-Z]*(?!\S)", lowered)
-        ):
-            return "shell expansion can hide a docker compose volume removal"
-        if "docker" in lowered and "volume" in lowered:
-            return "shell expansion can hide a docker volume removal"
+
+        # Docker subcommands/options are likewise ambiguous when expanded; reject
+        # dynamic docker-compose commands instead of trying to infer the expansion.
+        if re.search(r"\bdocker\s+compose\b", lowered):
+            return "shell expansion can hide a destructive docker compose operation"
+        if re.search(r"\bdocker\s+volume\b", lowered):
+            return "shell expansion can hide a destructive docker volume operation"
+
         if re.search(r"\b(drop\s+(?:table|database|schema)|truncate\s+table)\b", segment, re.IGNORECASE):
             return "shell expansion appears in destructive SQL"
 
         # A dynamic executable combined with recursive-delete flags or a broad target
         # cannot be classified safely (e.g. a variable command followed by -rf /).
-        try:
-            tokens = shlex.split(segment, posix=True)
-        except ValueError:
-            tokens = []
         if tokens and _DYNAMIC_SHELL_SYNTAX.search(tokens[0]):
             if _recursive_flags(tokens[1:]) or any(
                 token in {"/", "~", "..", "./", "../"} for token in tokens[1:]
@@ -122,7 +127,6 @@ def dynamic_shell_expansion_risk(segments: list[str]) -> str | None:
                 return "dynamic shell command with recursive-delete flags or a broad target"
 
     return None
-
 
 def _recursive_flags(tokens: list[str]) -> bool:
     options = True
