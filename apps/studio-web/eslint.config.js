@@ -68,8 +68,12 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ["../connections/**", "../../entities/connections/**", "@/entities/connections/**"],
-              message: "Entity modules must not import from another entity; use a shared lib contract.",
+              group: [
+                "../connections/**",
+                "../../entities/connections/**",
+                "@/entities/connections/**",
+              ],
+              message: "Cross-entity imports are forbidden; move shared contracts into lib.",
             },
           ],
         },
