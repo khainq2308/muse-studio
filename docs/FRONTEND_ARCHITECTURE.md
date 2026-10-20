@@ -2,7 +2,7 @@
 
 Tài liệu này là **chuẩn bắt buộc** cho mọi thay đổi trong `apps/studio-web`, áp dụng cho mọi coding agent (Claude, Gemini, Codex, người) làm việc trong repo. Nó cụ thể hoá — không thay thế — hợp đồng chung trong `AGENTS.md` và kiến trúc tổng thể trong `docs/ARCHITECTURE.md`. Các lựa chọn nền tảng được ghi thành ADR-006 và ADR-007 trong `docs/DECISIONS.md`.
 
-Bối cảnh: backend (M1–M7) đã có API đầy đủ và ổn định, trong khi frontend từng chỉ là một file `App.tsx` placeholder và nhiều bản giao diện sinh tự động (hand-rolled CSS, không thư viện component/icon, tự chế data-fetching, contracts viết tay trôi khỏi API thật, hiển thị JSON thô thay cho media). Tài liệu này khoá các quyết định để tình trạng đó không lặp lại.
+Bối cảnh: backend (M1–M7) hiện đã có các API phục vụ các luồng chính, trong khi frontend từng chỉ là một file `App.tsx` placeholder và nhiều bản giao diện sinh tự động (hand-rolled CSS, không thư viện component/icon, tự chế data-fetching, contracts viết tay trôi khỏi API thật, hiển thị JSON thô thay cho media). Lưu ý theo kỷ luật bằng chứng của `AGENTS.md`: "có endpoint" không đồng nghĩa "capability đã được kiểm chứng" — từng capability vẫn phải được xác minh theo OpenAPI, implementation và test tương ứng (xem `docs/MUSE2API_CAPABILITY_MATRIX.md`). Tài liệu này khoá các quyết định để tình trạng của frontend không lặp lại.
 
 ## 1. Nguyên tắc nền tảng
 
@@ -35,7 +35,7 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 ## 3. Contracts: sinh tự động từ OpenAPI — cấm viết tay
 
 - Nguồn sự thật duy nhất cho API types là OpenAPI schema của orchestrator. Schema phải lấy được **không cần chạy server**: script `scripts/export_openapi.py` nạp đối tượng FastAPI app và ghi `app.openapi()` ra snapshot được commit tại `apps/orchestrator/openapi.json`. (Nạp module app không chạy lifespan nên không cần DB/Redis.)
-- Lệnh chuẩn (script trong `apps/studio-web/package.json`) đọc snapshot đã commit, không phụ thuộc server đang chạy:
+- Lệnh chuẩn dưới đây là script **sẽ được bổ sung vào `apps/studio-web/package.json` ở Phase 0 — hiện tại nó chưa tồn tại** (package.json hiện chỉ có `dev`/`build`/`preview`, và thư mục frontend chưa có `package-lock.json`); đừng chạy khi chưa tới Phase 0. Khi đã có, lệnh đọc snapshot đã commit, không phụ thuộc server đang chạy:
 
   ```bash
   npm run gen:api   # openapi-typescript ../orchestrator/openapi.json -> src/lib/api/schema.d.ts
@@ -176,7 +176,7 @@ Mỗi phase là một PR riêng; không gộp refactor nền móng với viết 
 
 > **Quan hệ với PR #42:** PR #42 (`feat/studio-web-workspace`) triển khai một workspace nhiều module theo hướng ngược với tài liệu này — nới Docker build context lên root monorepo, mở rộng contracts viết tay, CSS viết tay, hiển thị JSON thô. PR #42 **bị supersede bởi tài liệu này và không được merge ở dạng hiện tại**; phạm vi chức năng của nó (các module và luồng người dùng đã làm) là đầu vào yêu cầu cho Phase 1–2, nhưng mã của nó không được dùng làm nền. Xem thêm ADR-007.
 
-- **Phase 0 — Nền móng:** thêm Tailwind + shadcn/ui + lucide-react + TanStack Query + Zustand + TanStack Router + react-hook-form/zod, ESLint/Prettier kèm các rule thực thi ở mục 4, `package-lock.json`; dựng `lib/api` (http client + generated schema + `gen:api` từ snapshot), `scripts/export_openapi.py` + CI chống drift, audit `response_model` ở backend (mục 3), app shell + theme + Playwright smoke test, và loại bỏ `packages/contracts` sau khi generated types thay thế xong. Chưa viết lại feature nào.
+- **Phase 0 — Nền móng:** thêm Tailwind + shadcn/ui + lucide-react + TanStack Query + Zustand + TanStack Router + react-hook-form/zod, ESLint/Prettier kèm các rule thực thi ở mục 4, `package-lock.json` **và cập nhật cả hai Dockerfile của studio-web sang dùng `package-lock.json` + `npm ci`** (hiện chúng đang `npm install` không khoá phiên bản); dựng `lib/api` (http client + generated schema + `gen:api` từ snapshot), `scripts/export_openapi.py` + CI chống drift, audit `response_model` ở backend (mục 3), app shell + theme + Playwright smoke test, và loại bỏ `packages/contracts` sau khi generated types thay thế xong. Chưa viết lại feature nào.
 - **Phase 1 — Vòng sản xuất lõi:** shot-board (media preview + duyệt take A/B) và queue-monitor (polling bằng TanStack Query).
 - **Phase 2 — Quản trị:** script-studio, projects, connections, system-ops theo chuẩn form ở mục 5.4.
 - **Phase 3 — Workflow canvas:** dựng lại bằng @xyflow/react theo mục 5.5.
