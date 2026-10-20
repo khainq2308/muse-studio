@@ -1,7 +1,9 @@
 import { useParams } from "@tanstack/react-router";
 import App from "@/App";
 
-// Distinct component makes route matching observable in the Phase 0a smoke test.
+// Phase 0a placeholder: all registered module slugs temporarily share the legacy dashboard.
+// Phase 1 will replace this wrapper with the actual feature-module route components.
+// Keeping projects/connections here also preserves the planned module URL contract.
 export default function ProjectModuleRoute() {
   const { projectId, module } = useParams({ from: "/projects/$projectId/$module" });
   return (
