@@ -71,6 +71,24 @@ describe("apiGet", () => {
     });
   });
 
+  it("uses a generic error for non-JSON upstream error pages", async () => {
+    const html = "<html><body><h1>502 Bad Gateway</h1><pre>internal proxy details</pre></body></html>";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(html, {
+        status: 502,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 502, detail: null });
+    expect((error as Error).message).toBe("API request failed (502)");
+    expect((error as Error).message).not.toContain("internal proxy details");
+  });
+
   it("rejects non-absolute API paths before issuing a request", async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);
