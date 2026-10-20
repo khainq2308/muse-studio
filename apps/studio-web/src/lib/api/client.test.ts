@@ -6,6 +6,7 @@ import {
   apiPatch,
   apiPost,
   apiPut,
+  apiGetText,
   downloadFile,
   encodePathSegment,
   normalizeApiBaseUrl,
@@ -38,9 +39,12 @@ describe("API base URL normalization", () => {
     );
   });
 
-  it("rejects protocol-relative and non-HTTP URLs", () => {
+  it("rejects protocol-relative, non-HTTP, and path-prefixed URLs", () => {
     expect(() => normalizeApiBaseUrl("//evil.test")).toThrow();
     expect(() => normalizeApiBaseUrl("file:///etc/passwd")).toThrow();
+    expect(() => normalizeApiBaseUrl("https://orchestrator.example.test/api/")).toThrow(
+      "origin only",
+    );
   });
 
   it("uses VITE_ORCHESTRATOR_URL when constructing request URLs", async () => {
@@ -128,6 +132,46 @@ describe("API client", () => {
     await expect(apiGet("/api/v1/example")).resolves.toEqual({ status: "ok" });
   });
 
+  it("uses a fallback for whitespace-only validation messages", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: [{ loc: ["body", "name"], msg: "   " }] }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as Error).message).toBe("API request failed (422)");
+  });
+
+  it("reads explicit text API responses without weakening the JSON client", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("# exported markdown", {
+        status: 200,
+        headers: { "content-type": "text/markdown; charset=utf-8" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiGetText("/api/v1/projects/project-1/shots/export")).resolves.toBe(
+      "# exported markdown",
+    );
+  });
+
+  it("rejects non-text responses from apiGetText", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiGetText("/api/v1/projects")).rejects.toMatchObject({
+      status: 200,
+      category: "invalid_response",
+      retryable: false,
+    });
+  });
+
   it("preserves structured validation details in ApiError", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -171,17 +215,22 @@ describe("API client", () => {
   });
 
   it("encodes API path parameters as one safe segment", () => {
-    expect(encodePathSegment("project/42 with space")).toBe("project%2F42%20with%20space");
-    expect(() => encodePathSegment("..")).toThrow("must not be '.' or '..'");
+    expect(encodePathSegment("project-42 with space")).toBe("project-42%20with%20space");
+    expect(() => encodePathSegment("..")).toThrow("path separators or dot segments");
+    expect(() => encodePathSegment("project/..")).toThrow("path separators or dot segments");
+    expect(() => encodePathSegment("project\\..")).toThrow("path separators or dot segments");
   });
 
-  it.each(["/api/v1/projects/../connections", "/api/v1/projects/%2e%2e/connections"])(
-    "rejects traversal path %s before fetching",
-    async (path) => {
+  it.each([
+    "/api/v1/projects/../connections",
+    "/api/v1/projects/%2e%2e/connections",
+    "/api/v1/projects/a%2F..",
+    "/api/v1//projects",
+  ])("rejects traversal or repeated-separator path %s before fetching", async (path) => {
       const fetchMock = vi.fn<typeof fetch>();
       vi.stubGlobal("fetch", fetchMock);
 
-      await expect(apiGet(path)).rejects.toThrow("dot segments");
+      await expect(apiGet(path)).rejects.toThrow(/dot segments|path separators|repeated separators/);
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
@@ -256,6 +305,41 @@ describe("API client", () => {
     expect(error).toMatchObject({ status: 502, detail: null });
     expect((error as Error).message).toBe("API request failed (502)");
     expect((error as Error).message).not.toContain("internal proxy details");
+  });
+
+  it("releases the blob URL when the browser download click throws", async () => {
+    const createObjectUrl = vi.fn<(object: Blob | MediaSource) => string>(
+      () => "blob:test-download-failure",
+    );
+    const revokeObjectUrl = vi.fn();
+    const NativeURL = globalThis.URL;
+    const MockURL = class extends NativeURL {
+      static createObjectURL = createObjectUrl;
+      static revokeObjectURL = revokeObjectUrl;
+    };
+    vi.stubGlobal("URL", MockURL);
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {
+        throw new Error("download click failed");
+      });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(new Blob(["video"]), {
+        status: 200,
+        headers: { "content-type": "video/mp4" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+
+    await expect(
+      downloadFile("/api/v1/assets/asset-1/download", "clip.mp4"),
+    ).rejects.toThrow("download click failed");
+
+    await vi.runAllTimersAsync();
+
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:test-download-failure");
   });
 
   it("accepts 204 No Content as an empty successful response", async () => {
