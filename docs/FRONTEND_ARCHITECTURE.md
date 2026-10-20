@@ -34,15 +34,15 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 
 ## 3. Contracts: sinh tự động từ OpenAPI — cấm viết tay
 
-- Nguồn sự thật duy nhất cho API types là OpenAPI schema của orchestrator. Schema phải lấy được **không cần chạy server**. Phase 0 sẽ bổ sung một script offline (dự kiến đặt tên scripts/export_openapi.py; hiện chưa có trong repository) để nạp đối tượng FastAPI app và ghi `app.openapi()` ra snapshot được commit tại `apps/orchestrator/openapi.json`. Việc nạp module app không chạy lifespan nên mục tiêu là không cần DB/Redis.
-- Lệnh chuẩn dưới đây là script **sẽ được bổ sung vào `apps/studio-web/package.json` ở Phase 0 — hiện tại nó chưa tồn tại** (package.json hiện chỉ có `dev`/`build`/`preview`, và thư mục frontend chưa có `package-lock.json`); đừng chạy khi chưa tới Phase 0. Khi đã có, lệnh đọc snapshot đã commit, không phụ thuộc server đang chạy:
+- Nguồn sự thật duy nhất cho API types là OpenAPI schema của orchestrator. Schema phải lấy được **không cần chạy server**. Phase 0 sẽ bổ sung một script export offline (dự kiến đặt tên scripts/export_openapi.py; hiện chưa có trong repository) để nạp đối tượng FastAPI app và ghi `app.openapi()` ra snapshot OpenAPI. Snapshot dự kiến đặt tại apps/orchestrator/openapi.json và cũng chưa được commit ở revision hiện tại. Việc nạp module app không chạy lifespan nên mục tiêu là không cần DB/Redis.
+- Lệnh chuẩn dưới đây là script **sẽ được bổ sung vào `apps/studio-web/package.json` ở Phase 0 — hiện tại nó chưa tồn tại** (package.json hiện chỉ có `dev`/`build`/`preview`, và thư mục frontend chưa có `package-lock.json`); đừng chạy khi chưa tới Phase 0. Khi đã có, lệnh đọc snapshot sau khi Phase 0 tạo và commit, không phụ thuộc server đang chạy:
 
   ```bash
   npm run gen:api   # openapi-typescript ../orchestrator/openapi.json -> src/lib/api/schema.d.ts
   ```
 
   File sinh ra có header "generated — do not edit", không bao giờ sửa tay. PR thay đổi hành vi API ở backend phải kèm snapshot và file generated đã cập nhật (hoặc ghi rõ vì sao chưa cần).
-- **CI chống drift là bắt buộc** (thêm ở Phase 0): một step chạy script xuất OpenAPI offline được bổ sung ở Phase 0 cùng `gen:api`, rồi `git diff --exit-code` trên cả snapshot lẫn `schema.d.ts`. Thiếu cơ chế này thì quy tắc trên chỉ là lời hứa.
+- **CI chống drift là bắt buộc** (thêm ở Phase 0): một step chạy script export offline và snapshot được bổ sung ở Phase 0 cùng `gen:api`, rồi `git diff --exit-code` trên cả snapshot lẫn `schema.d.ts`. Thiếu cơ chế này thì quy tắc trên chỉ là lời hứa.
 - Điều kiện tiên quyết ở backend: FastAPI chỉ sinh type tốt khi route khai báo `response_model`. Phase 0 phải gồm một bước **audit `response_model`** cho toàn bộ router (hiện nhiều endpoint thuộc queue/batch/workflows đang trả `dict` tự do) và bổ sung schema cho các endpoint còn thiếu. Cho tới khi audit xong, các bề mặt chưa có schema được liệt kê tường minh trong PR Phase 0 và là ngoại lệ tạm thời duy nhất của lệnh cấm `Record<string, unknown>` dưới đây.
 - Mọi response/request type trong features lấy từ `components['schemas'][...]` của generated schema. **Cấm** dùng `Record<string, unknown>` làm kiểu response trong features, và cấm định nghĩa interface payload/response song song trong file service.
 - `packages/contracts`: **giữ nguyên tại chỗ, không import mới** — bốn union type hiện có giữ nguyên cho tới khi có bản generated tương đương, sau đó package bị loại bỏ (việc loại bỏ là tiêu chí nghiệm thu của Phase 0). Lý do: package nằm ngoài Docker build context của studio-web và nội dung viết tay đã nhiều lần trôi khỏi API thật. Từ nay contracts sống trong `apps/studio-web/src/lib/api/` cùng với app duy nhất tiêu thụ chúng. Phương án thay thế "nới Docker build context lên root monorepo để giữ package" (đã thử ở PR #42) bị loại — xem ADR-007.
@@ -144,7 +144,7 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
 - Form dùng react-hook-form + zod; lỗi `422` từ API hiển thị gần field liên quan khi ánh xạ được.
 - Mọi hành động có thể phát sinh chi phí/quota ở provider thật (batch launch, enqueue render, workflow full-run, export) phải qua dialog xác nhận nêu rõ: provider + loại (mock/live), model, số lượng shot/task. Provider `mock` phải được ghi nhãn rõ là không tốn phí.
-- Các thao tác tạo tài nguyên phải tôn trọng **cơ chế idempotency thực tế của backend** (đối chiếu tại `main @ 65935655ad`), không suy diễn:
+- Các thao tác tạo tài nguyên phải tôn trọng **cơ chế idempotency thực tế của backend** (đối chiếu với route/service/test hiện hành trên main khi chuẩn bị tích hợp; xác minh lại nếu backend thay đổi), không suy diễn:
 
   | Endpoint | Cơ chế phía server | Việc phía client |
   |---|---|---|
