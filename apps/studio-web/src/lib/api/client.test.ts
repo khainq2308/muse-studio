@@ -7,6 +7,7 @@ import {
   apiPost,
   apiPut,
   downloadFile,
+  encodePathSegment,
   normalizeApiBaseUrl,
 } from "@/lib/api/client";
 import { useSessionStore } from "@/lib/stores/session-store";
@@ -169,7 +170,23 @@ describe("API client", () => {
     expect((error as Error).message).toBe("Access denied");
   });
 
-  it("rejects malformed JSON on successful responses", async () => {
+  it("encodes API path parameters as one safe segment", () => {
+    expect(encodePathSegment("project/42 with space")).toBe("project%2F42%20with%20space");
+    expect(() => encodePathSegment("..")).toThrow("must not be '.' or '..'");
+  });
+
+  it.each([
+    "/api/v1/projects/../connections",
+    "/api/v1/projects/%2e%2e/connections",
+  ])("rejects traversal path %s before fetching", async (path) => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiGet(path)).rejects.toThrow("dot segments");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed JSON on successful responses as a non-retryable ApiError", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response("{", {
         status: 200,
@@ -178,7 +195,27 @@ describe("API client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(apiGet("/api/v1/projects")).rejects.toThrow("Invalid JSON API response (200).");
+    const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 200, category: "invalid_response", retryable: false });
+    expect((error as Error).message).toBe("Invalid JSON API response (200).");
+  });
+
+  it("classifies a bodyless 201 JSON response as a non-retryable ApiError", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("", {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 201, category: "invalid_response", retryable: false });
+    expect((error as Error).message).toBe("Invalid JSON API response (201).");
   });
 
   it("rejects HTML returned with a successful API status", async () => {
