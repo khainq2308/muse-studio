@@ -23,7 +23,7 @@ Design banners across social, ads, web, and print formats. Generates multiple ar
 
 ## Prerequisites
 
-**Python:** This skill uses Python scripts. On Windows, use `python` instead of `python3` (e.g., `python scripts/search.py` instead of `python3 scripts/search.py`).
+**Python:** On Windows, use `python` instead of `python3` (e.g., `python <script>` instead of `python3 <script>`).
 
 ## Workflow
 

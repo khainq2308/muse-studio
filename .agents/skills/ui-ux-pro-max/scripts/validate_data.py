@@ -25,7 +25,6 @@ import re
 import statistics
 import sys
 from datetime import date
-from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from core import (CSV_CONFIG, STACK_CONFIG, STACK_CURRENT_APPLICABILITY,
