@@ -51,8 +51,10 @@ test("invalid project modules redirect instead of rendering the app shell", asyn
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
 });
 
-test("unknown routes do not masquerade as the dashboard", async ({ page }) => {
+test("unknown routes render an explicit 404 page", async ({ page }) => {
   await page.goto("/not-a-real-route");
 
+  await expect(page.getByRole("heading", { name: "404 - Page not found" })).toBeVisible();
+  await expect(page.getByText("The page you requested doesn't exist.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toHaveCount(0);
 });
