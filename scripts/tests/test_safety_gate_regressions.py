@@ -59,7 +59,7 @@ class DynamicShellExpansionGuardRegressionTests(unittest.TestCase):
 
     def risk(self, command: str):
         return self.guard.dynamic_shell_expansion_risk(
-            self.guard._shell_command_segments(command)
+            self.guard._shell_command_segments(command), command
         )
 
     def test_rejects_expansion_that_can_hide_protected_git_push(self):
@@ -76,6 +76,17 @@ class DynamicShellExpansionGuardRegressionTests(unittest.TestCase):
             'docker compose "$ACTION" "$OPTIONS"',
             'eval "$COMMAND"',
             'bash -c "$COMMAND"',
+            "git${IFS}push origin main",
+            'git ${IFS}push origin main',
+            "rm${IFS}-rf media",
+            'rm ${IFS}-rf media',
+            'bash -lc "$COMMAND"',
+            '/bin/sh -ec "$COMMAND"',
+            'env bash -lc "$COMMAND"',
+            'psql -c "$QUERY"',
+            'mysql --execute="$SQL"',
+            'printf "%s" "$QUERY" | psql -X',
+
         ]
         for command in commands:
             with self.subTest(command=command):
@@ -84,6 +95,8 @@ class DynamicShellExpansionGuardRegressionTests(unittest.TestCase):
     def test_allows_literal_feature_push_and_unrelated_expansion(self):
         self.assertIsNone(self.risk("git push origin fix/shell-guard"))
         self.assertIsNone(self.risk('printf "%s" "$HOME"'))
+        self.assertIsNone(self.risk('GIT_PAGER="$HOME" git status'))
+        self.assertIsNone(self.risk('git log "$REF"'))
 
 
 class LayeringCheckerRegressionTests(unittest.TestCase):
