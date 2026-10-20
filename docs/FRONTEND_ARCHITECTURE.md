@@ -17,6 +17,10 @@ Bảng này là nguồn trạng thái duy nhất cho các artifact frontend. M�
 | Frontend feature UI | Chưa triển khai theo kiến trúc mục tiêu | Chỉ đánh dấu theo evidence của từng phase feature |
 | Browser smoke test | Playwright smoke chạy trên Vite production preview; chưa kiểm thử Nginx production image | Playwright pass với API mock và deep link thật; thêm Nginx image smoke trước khi xác nhận proxy/try_files của production |
 
+## Local development API routing
+
+In the development Compose stack, the browser must call the Studio Web origin (`VITE_ORCHESTRATOR_URL=.`). Vite then proxies `/api/*` and `/healthz` from inside the `studio-web` container to `ORCHESTRATOR_PROXY_TARGET`, whose Compose default is `http://orchestrator-api:8000`. Do not set the browser-facing base URL to `http://localhost:8000` in Docker: `localhost` would refer to the user's browser machine and would bypass the same-origin proxy. Outside Compose, Vite defaults the upstream target to `http://127.0.0.1:8000`.
+
 ## 1. Nguyên tắc nền tảng
 
 1. **Media-first.** MuseStudio là studio sản xuất video: shot, take và asset phải được hiển thị bằng media thật (frame, video preview) chứ không phải bằng văn bản mô tả hay JSON thô.
