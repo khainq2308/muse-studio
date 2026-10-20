@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import os
 import hashlib
 import io
 import json
@@ -10,7 +11,6 @@ import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 from muse_orchestrator.services.asset_storage import LocalAssetStorage
@@ -239,8 +239,10 @@ class BackupService:
         zip_path = target_dir / filename
 
         media_files = 0
-        with TemporaryDirectory(prefix="muse_backup_") as tmp:
-            tmp_zip = Path(tmp) / filename
+        # Keep the ZIP on disk end-to-end. Reading the final archive with read_bytes()
+        # doubles peak memory for large projects and can OOM the API container.
+        tmp_zip = target_dir / f".{backup_id}.part"
+        try:
             with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as archive:
                 for key, rows in tables.items():
                     archive.writestr(f"data/{key}.json", json.dumps(rows, ensure_ascii=False))
@@ -255,22 +257,47 @@ class BackupService:
                         continue
                     archive.write(full, f"media/{rel_path}")
                     media_files += 1
+                    if tmp_zip.stat().st_size > BACKUP_MAX_BYTES:
+                        raise ApplicationError(413, "Generated backup exceeds the 500MB limit.")
                 manifest["media_files"] = media_files
                 archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
-            content = tmp_zip.read_bytes()
 
-        digest = hashlib.sha256(content).hexdigest()
-        zip_path.write_bytes(content)
+            size_bytes = tmp_zip.stat().st_size
+            if size_bytes > BACKUP_MAX_BYTES:
+                raise ApplicationError(413, "Generated backup exceeds the 500MB limit.")
+
+            hasher = hashlib.sha256()
+            with tmp_zip.open("rb") as source:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+
+            # Atomic promotion: a failed or interrupted backup is never exposed as complete.
+            os.replace(tmp_zip, zip_path)
+        except Exception:
+            try:
+                tmp_zip.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
         record = BackupRecord(
             id=backup_id,
             project_id=project_id,
             filename=filename,
             storage_rel_path=zip_path.relative_to(Path(settings.media_root).resolve()).as_posix(),
-            size_bytes=len(content),
-            sha256=digest,
+            size_bytes=size_bytes,
+            sha256=hasher.hexdigest(),
             manifest_json=manifest,
         )
-        record = await self.repository.create_backup_record(record)
+        try:
+            record = await self.repository.create_backup_record(record)
+        except Exception:
+            # Don't leave a completed archive with no corresponding DB record.
+            zip_path.unlink(missing_ok=True)
+            raise
         pruned = await self._prune_old_backups(project_id)
         await write_audit(
             self.repository,
@@ -327,14 +354,24 @@ class BackupService:
             raise ApplicationError(404, "Backup file is missing from disk.") from exc
 
     async def restore_backup(
-        self, zip_bytes: bytes, project_name: str | None = None
+        self, zip_source: bytes | Path, project_name: str | None = None
     ) -> tuple[Project, dict[str, Any]]:
-        """Restore a project from a backup ZIP. All IDs are remapped to fresh values."""
-        if len(zip_bytes) > BACKUP_MAX_BYTES:
-            raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
+        """Restore a project from bytes or a temporary ZIP path, remapping all IDs."""
+        if isinstance(zip_source, bytes):
+            if len(zip_source) > BACKUP_MAX_BYTES:
+                raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
+            archive_source: bytes | Path = io.BytesIO(zip_source)
+        else:
+            archive_source = Path(zip_source)
+            try:
+                archive_size = archive_source.stat().st_size
+            except OSError as exc:
+                raise ApplicationError(422, "Uploaded backup file is unavailable.") from exc
+            if archive_size > BACKUP_MAX_BYTES:
+                raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
         try:
-            archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
-        except zipfile.BadZipFile as exc:
+            archive = zipfile.ZipFile(archive_source)
+        except (zipfile.BadZipFile, OSError) as exc:
             raise ApplicationError(422, "Uploaded file is not a valid ZIP archive.") from exc
 
         with archive:
@@ -506,11 +543,11 @@ class BackupService:
         if entry not in archive.namelist():
             report["media_missing"].append(asset.filename)
             return
-        content = archive.read(entry)
         try:
-            saved = self.storage.save_bytes(
-                asset.project_id, asset.filename, content, asset.mime_type
-            )
+            with archive.open(entry, "r") as source:
+                saved = self.storage.save_stream(
+                    asset.project_id, asset.filename, source, asset.mime_type
+                )
         except Exception:
             report["media_missing"].append(asset.filename)
             return

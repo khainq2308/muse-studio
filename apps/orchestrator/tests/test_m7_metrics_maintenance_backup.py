@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import tempfile
@@ -15,10 +16,11 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m7_maint_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.core.database import get_db
+from muse_orchestrator.core.database import get_db  # noqa: E402
+from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage  # noqa: E402
 
-from muse_orchestrator.main import app
-from muse_orchestrator.models.domain import (
+from muse_orchestrator.main import app  # noqa: E402
+from muse_orchestrator.models.domain import (  # noqa: E402
     Asset,
     Base,
     GenerationTaskRecord,
@@ -136,6 +138,31 @@ async def test_orphan_scan_and_cleanup(client: AsyncClient):
     assert (media_root / referenced_rel).exists()
 
 
+def test_asset_storage_save_stream_hashes_and_validates_content(tmp_path: Path) -> None:
+    storage = LocalAssetStorage(str(tmp_path))
+    saved = storage.save_stream("proj-stream", "frame.png", io.BytesIO(PNG_BYTES), "image/png")
+
+    stored_path = storage.resolve_safe_path(saved.storage_rel_path)
+    assert stored_path.read_bytes() == PNG_BYTES
+    assert saved.size_bytes == len(PNG_BYTES)
+    assert saved.sha256 == hashlib.sha256(PNG_BYTES).hexdigest()
+    assert saved.detected_mime == "image/png"
+
+
+def test_asset_storage_save_stream_cleans_partial_file_on_size_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import muse_orchestrator.services.asset_storage as storage_module
+
+    monkeypatch.setattr(storage_module, "MAX_UPLOAD_SIZE_BYTES", len(PNG_BYTES) - 1)
+    storage = LocalAssetStorage(str(tmp_path))
+    with pytest.raises(AssetStorageError, match="dung lượng"):
+        storage.save_stream("proj-stream", "frame.png", io.BytesIO(PNG_BYTES), "image/png")
+
+    assert list(tmp_path.glob(".asset-*.part")) == []
+    assert list(tmp_path.rglob("*_frame.png")) == []
+
+
 async def test_backup_restore_roundtrip(client: AsyncClient):
     project = await _create_project(client, name="Backup Source")
     project_id = project["id"]
@@ -178,6 +205,8 @@ async def test_backup_restore_roundtrip(client: AsyncClient):
     downloaded = await client.get(f"/api/v1/backups/{backup['id']}/download")
     assert downloaded.status_code == 200
     assert downloaded.headers["content-type"] == "application/zip"
+    assert backup["size_bytes"] == len(downloaded.content)
+    assert backup["sha256"] == hashlib.sha256(downloaded.content).hexdigest()
     with zipfile.ZipFile(io.BytesIO(downloaded.content)) as archive:
         names = archive.namelist()
         assert "manifest.json" in names

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, UploadFile, status
@@ -92,18 +94,30 @@ async def restore_backup(
     service: BackupService = Depends(get_backup_service),
 ) -> dict[str, Any]:
     """M7: restore a project from an uploaded backup ZIP (IDs are remapped)."""
-    content = bytearray()
+    temporary_path: Path | None = None
     try:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            if len(content) + len(chunk) > BACKUP_MAX_BYTES:
-                raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
-            content.extend(chunk)
+        # Keep the upload on disk; calling bytes(content) after accumulating a bytearray
+        # creates another full-size copy of potentially 500MB in the API worker.
+        with NamedTemporaryFile(prefix="muse_restore_", suffix=".zip", delete=False) as target:
+            temporary_path = Path(target.name)
+            total = 0
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > BACKUP_MAX_BYTES:
+                    raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
+                target.write(chunk)
+
+        project, report = await service.restore_backup(temporary_path, project_name=project_name)
     finally:
         await file.close()
-    project, report = await service.restore_backup(bytes(content), project_name=project_name)
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     return {
         "project_id": project.id,
         "project_name": project.name,
