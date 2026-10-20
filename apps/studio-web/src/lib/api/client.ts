@@ -234,7 +234,9 @@ export async function apiGetText(
   path: string,
   options: Omit<ApiRequestOptions, "method" | "body"> = {},
 ): Promise<string> {
-  const response = await send(path, { ...options, method: "GET", headers: options.headers });
+  const headers = new Headers(options.headers);
+  if (!headers.has("Accept")) headers.set("Accept", "text/plain, text/markdown");
+  const response = await send(path, { ...options, method: "GET", headers });
   if (!response.ok) return throwApiError(response);
   if (response.status === 204) return "";
 
