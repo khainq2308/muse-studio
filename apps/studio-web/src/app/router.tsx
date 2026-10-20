@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
 import App from "@/App";
-import ProjectModuleRoute, { isProjectModule } from "@/app/project-module-route";
+import ProjectModuleRoute from "@/app/project-module-route";
+import { isProjectModule } from "@/app/project-modules";
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
