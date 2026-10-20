@@ -40,7 +40,9 @@ for (const file of collectFiles(srcRoot)) {
     !relative.endsWith(".test.tsx") &&
     /\b(?:window\.)?(?:localStorage|sessionStorage)\b/.test(source)
   ) {
-    failures.push(`${relative}: browser storage is forbidden for admin credentials; keep tokens memory-only.`);
+    failures.push(
+      `${relative}: browser storage is forbidden for admin credentials; keep tokens memory-only.`,
+    );
   }
 
   const sourceMatch = relative.match(/^(entities|features)\/([^/]+)\//);
