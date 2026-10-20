@@ -2,7 +2,7 @@ import { AlertCircle, Cable, CheckCircle2, Compass, Film, LoaderCircle, RefreshC
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useConnections } from "@/entities/connection/api";
-import { useHealth } from "./entities/system/api";
+import { useHealth } from "@/entities/system/api";
 import { useProjects } from "@/entities/project/api";
 import { ApiError } from "@/lib/api/client";
 import { useSessionStore } from "@/lib/stores/session-store";
