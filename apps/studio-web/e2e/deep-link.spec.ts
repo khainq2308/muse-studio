@@ -1,13 +1,12 @@
 import { expect, test } from "@playwright/test";
 
 test("production build deep link matches the registered project-module route", async ({ page }) => {
-  const requestedApiUrls: Array<{ origin: string; pathname: string }> = [];
+  const requestedFetchUrls: Array<{ origin: string; pathname: string }> = [];
 
   page.on("request", (request) => {
+    if (request.resourceType() !== "fetch" && request.resourceType() !== "xhr") return;
     const url = new URL(request.url());
-    if (url.pathname.includes("/api/") || url.pathname.includes("/healthz")) {
-      requestedApiUrls.push({ origin: url.origin, pathname: url.pathname });
-    }
+    requestedFetchUrls.push({ origin: url.origin, pathname: url.pathname });
   });
 
   await page.route("**/healthz", async (route) => {
@@ -33,12 +32,12 @@ test("production build deep link matches the registered project-module route", a
   await expect(route).toHaveAttribute("data-module", "queue-monitor");
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
   await expect
-    .poll(() => requestedApiUrls.map(({ pathname }) => pathname))
+    .poll(() => requestedFetchUrls.map(({ pathname }) => pathname))
     .toEqual(expect.arrayContaining(["/api/v1/projects", "/api/v1/connections"]));
 
   const appOrigin = new URL(page.url()).origin;
-  expect(requestedApiUrls.length).toBeGreaterThan(0);
-  for (const request of requestedApiUrls) {
+  expect(requestedFetchUrls.length).toBeGreaterThan(0);
+  for (const request of requestedFetchUrls) {
     expect(request.origin).toBe(appOrigin);
     expect(request.pathname === "/healthz" || request.pathname.startsWith("/api/")).toBe(true);
   }
@@ -48,6 +47,7 @@ test("invalid project modules redirect instead of rendering the app shell", asyn
   await page.goto("/projects/test-project/not-a-real-module");
 
   await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("project-module-route")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
 });
 
