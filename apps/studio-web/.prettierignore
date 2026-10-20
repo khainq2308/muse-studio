@@ -5,5 +5,3 @@ coverage/
 playwright-report/
 test-results/
 
-# Legacy dashboard formatting and DTO migration are deferred to the OpenAPI/frontend feature phases.
-src/App.tsx
