@@ -1,8 +1,8 @@
 FROM node:20-alpine AS builder
 
 WORKDIR /workspace/apps/studio-web
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY . .
 
 # "." makes browser requests same-origin; nginx proxies API calls to the orchestrator.
