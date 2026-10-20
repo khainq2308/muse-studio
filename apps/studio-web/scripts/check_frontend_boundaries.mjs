@@ -61,7 +61,7 @@ for (const file of collectFiles(srcRoot)) {
       targetMatch[2] !== sourceFeature
     ) {
       failures.push(
-        `${relative}: cross-feature import to "${match[1]}" is forbidden; move shared contracts into lib/.`,
+        `${relative}: cross-feature import to "${match[1]}" is forbidden; use lib/ for shared contracts.`,
       );
     }
   }
