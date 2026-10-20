@@ -241,7 +241,8 @@ describe("API client", () => {
       "download-token",
     );
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe("*/*");
-    expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob));
+    expect(createObjectUrl).toHaveBeenCalledTimes(1);
+    expect(createObjectUrl.mock.calls[0]?.[0]).toMatchObject({ type: "video/mp4" });
     expect(click).toHaveBeenCalledTimes(1);
 
     await vi.runAllTimersAsync();
