@@ -133,7 +133,7 @@ Quy tắc phụ thuộc:
 | `timeline-editor` | M6 | Assemble timeline, export job + polling + tải MP4 |
 | `system-ops` | M7 | Backups (tạo/list/tải/restore), quét & dọn orphan, metrics, diagnostics |
 
-Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): ESLint dùng `no-restricted-globals` để chặn truy cập trực tiếp tới `fetch` và browser storage. Script `apps/studio-web/scripts/check_frontend_boundaries.mjs` dùng TypeScript AST để kiểm tra import tĩnh/động, alias `@/` và `src/`, import ra ngoài `src/` (bao gồm `@muse-studio/contracts`), phân lớp entities/features/UI primitives, truy cập raw fetch/storage và JSON dump trong `<pre>`. Vì checker chạy trên AST nên comment/string không bị coi là hành vi thực thi. Các quy tắc chưa máy móc hoá được (hard-code hex, JSON dump biến thể) thuộc checklist review của PR và Definition of Done ở mục 7.
+Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): ESLint dùng `no-restricted-globals` để chặn truy cập trực tiếp tới `fetch` và browser storage. Script [AST boundary checker](../apps/studio-web/scripts/check_frontend_boundaries.mjs) kiểm tra import tĩnh/động, alias `@/` và `src/`, import ra ngoài `src/` (bao gồm `@muse-studio/contracts`), phân lớp entities/features/UI primitives, truy cập raw fetch/storage và JSON dump trong `<pre>`. Vì checker chạy trên AST nên comment/string không bị coi là hành vi thực thi. Các quy tắc chưa máy móc hoá được (hard-code hex, JSON dump biến thể) thuộc checklist review của PR và Definition of Done ở mục 7.
 
 ## 5. Quy tắc triển khai theo lớp
 
