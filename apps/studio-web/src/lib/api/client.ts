@@ -31,12 +31,16 @@ function errorMessage(detail: unknown, status: number): string {
   if (Array.isArray(detail)) {
     const messages = detail
       .map((item) => {
-        if (!isRecord(item)) return typeof item === "string" ? item : "";
-        return typeof item.msg === "string"
-          ? item.msg
-          : typeof item.message === "string"
-            ? item.message
-            : "";
+        const message = !isRecord(item)
+          ? typeof item === "string"
+            ? item
+            : ""
+          : typeof item.msg === "string"
+            ? item.msg
+            : typeof item.message === "string"
+              ? item.message
+              : "";
+        return message.trim() ? message : "";
       })
       .filter(Boolean);
     if (messages.length > 0) return messages.join("; ");
@@ -78,15 +82,23 @@ export function normalizeApiBaseUrl(value: string | undefined): string {
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error("VITE_ORCHESTRATOR_URL must not include credentials, a query, or a fragment.");
   }
+  if (parsed.pathname !== "/") {
+    throw new Error("VITE_ORCHESTRATOR_URL must contain an origin only, without a path.");
+  }
 
-  return parsed.href.replace(/\/+$/, "");
+  return parsed.origin;
 }
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_ORCHESTRATOR_URL);
 
 export function encodePathSegment(segment: string): string {
-  if (segment === "." || segment === "..") {
-    throw new Error("API path segments must not be '.' or '..'.");
+  if (
+    segment === "." ||
+    segment === ".." ||
+    segment.includes("/") ||
+    segment.includes("\\")
+  ) {
+    throw new Error("API path segments must not contain path separators or dot segments.");
   }
   return encodeURIComponent(segment);
 }
@@ -95,8 +107,13 @@ function buildUrl(path: string, query?: QueryParams): string {
   if (!path.startsWith("/") || path.startsWith("//")) {
     throw new Error("API paths must be absolute paths beginning with one '/'.");
   }
-  if (path.includes("\\") || path.includes("?") || path.includes("#")) {
-    throw new Error("API paths must not include backslashes, queries, or fragments.");
+  if (
+    path.includes("//") ||
+    path.includes("\\") ||
+    path.includes("?") ||
+    path.includes("#")
+  ) {
+    throw new Error("API paths must not contain repeated separators, backslashes, queries, or fragments.");
   }
   for (const segment of path.split("/")) {
     let decodedSegment: string;
@@ -105,8 +122,13 @@ function buildUrl(path: string, query?: QueryParams): string {
     } catch {
       throw new Error("API paths must use valid URL encoding.");
     }
-    if (decodedSegment === "." || decodedSegment === "..") {
-      throw new Error("API paths must not contain dot segments.");
+    if (
+      decodedSegment === "." ||
+      decodedSegment === ".." ||
+      decodedSegment.includes("/") ||
+      decodedSegment.includes("\\")
+    ) {
+      throw new Error("API paths must not contain dot segments or encoded path separators.");
     }
   }
 
@@ -207,6 +229,27 @@ export function apiGet<T>(path: string, options: Omit<ApiRequestOptions, "method
   return apiRequest<T>(path, { ...options, method: "GET" });
 }
 
+/** Read an explicitly textual API endpoint such as a Markdown export or Prometheus metrics. */
+export async function apiGetText(
+  path: string,
+  options: Omit<ApiRequestOptions, "method" | "body"> = {},
+): Promise<string> {
+  const response = await send(path, { ...options, method: "GET", headers: options.headers });
+  if (!response.ok) return throwApiError(response);
+  if (response.status === 204) return "";
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("text/")) {
+    throw new ApiError({
+      status: response.status,
+      detail: `Expected a text API response (${response.status}).`,
+      category: "invalid_response",
+      retryable: false,
+    });
+  }
+  return response.text();
+}
+
 export function apiPost<T>(
   path: string,
   body?: unknown,
@@ -250,15 +293,22 @@ export async function downloadFile(
   if (!response.ok) return throwApiError(response);
 
   const objectUrl = URL.createObjectURL(await response.blob());
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  anchor.hidden = true;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  // Let the browser consume the Blob URL before revoking it. The response is currently
-  // materialized as a Blob for cross-browser authenticated downloads; a streaming-to-disk
-  // path can be added for very large media in a later media-workflow phase.
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  let anchor: HTMLAnchorElement | null = null;
+  try {
+    anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.hidden = true;
+    document.body.append(anchor);
+    anchor.click();
+  } finally {
+    try {
+      anchor?.remove();
+    } finally {
+      // Let the browser consume the Blob URL before revoking it. The response is currently
+      // materialized as a Blob for cross-browser authenticated downloads; a streaming-to-disk
+      // path can be added for very large media in a later media-workflow phase.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    }
+  }
 }
