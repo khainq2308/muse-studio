@@ -63,68 +63,172 @@ def _shell_command_segments(command: str) -> list[str]:
 
 
 _DYNAMIC_SHELL_SYNTAX = re.compile(r"[$\x60]")
+_SHELL_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SHELL_NAMES = {"bash", "sh", "dash", "zsh", "ksh"}
+_WRAPPER_COMMANDS = {"env", "command", "exec", "nohup", "time"}
+_SQL_CLIENT_NAMES = {"psql", "mysql", "mariadb", "sqlite3", "sqlcmd"}
 
-def dynamic_shell_expansion_risk(segments: list[str]) -> str | None:
-    """Reject opaque shell expansion when it can alter a protected operation.
 
-    Dynamic arguments on sensitive commands are rejected conservatively: this guard
-    does not evaluate shell variables or substitutions, so it cannot prove that an
-    expanded destination, option, or subcommand is safe.
+def _has_short_shell_c_option(tokens: list[str]) -> bool:
+    """Recognize shell -c even when combined with other short options (e.g. -lc/-ec)."""
+    return any(
+        token.startswith("-") and not token.startswith("--") and "c" in token[1:]
+        for token in tokens
+    )
+
+
+def _command_start(tokens: list[str]) -> int:
+    """Skip leading shell assignment words before inspecting the executable."""
+    index = 0
+    while index < len(tokens) and _SHELL_ASSIGNMENT.match(tokens[index]):
+        index += 1
+    return index
+
+
+def _effective_command_index(tokens: list[str], index: int) -> int:
+    """Unwrap common command launchers so their child executable is checked too."""
+    while index < len(tokens):
+        wrapper = posixpath.basename(tokens[index]).lower()
+        if wrapper not in _WRAPPER_COMMANDS:
+            return index
+        index += 1
+
+        if wrapper == "env":
+            while index < len(tokens):
+                token = tokens[index]
+                if _SHELL_ASSIGNMENT.match(token):
+                    index += 1
+                    continue
+                if token in {"-u", "--unset", "-C", "--chdir"}:
+                    index += 2
+                    continue
+                if token.startswith(("--unset=", "--chdir=")):
+                    index += 1
+                    continue
+                if token.startswith("-") and token != "--":
+                    index += 1
+                    continue
+                break
+        elif wrapper == "command":
+            while index < len(tokens) and tokens[index] == "-p":
+                index += 1
+        elif wrapper == "exec":
+            while index < len(tokens):
+                token = tokens[index]
+                if token in {"-a", "--argv0"}:
+                    index += 2
+                elif token in {"-c", "-l"}:
+                    index += 1
+                else:
+                    break
+        elif wrapper == "time":
+            while index < len(tokens) and tokens[index] in {"-p"}:
+                index += 1
+
+        # A dynamic wrapped executable is rejected by the caller on the next pass.
+    return index
+
+
+def dynamic_shell_expansion_risk(
+    segments: list[str], raw_command: str | None = None
+) -> str | None:
+    """Fail closed when expansion can hide a protected command or destructive input.
+
+    This is a policy guard, not a shell interpreter. It permits ordinary argument
+    expansion (for example printf "$HOME") but rejects dynamic executable names,
+    dynamic git verbs/flags, destructive Docker arguments, recursive rm arguments,
+    opaque shell -c/eval, and dynamically supplied SQL.
     """
     for segment in segments:
         if not _DYNAMIC_SHELL_SYNTAX.search(segment):
             continue
 
-        lowered = segment.lower()
         try:
             tokens = shlex.split(segment, posix=True)
         except ValueError:
-            tokens = []
+            return "unparseable shell text contains expansion"
 
-        # These explicitly evaluate command strings rather than exposing a command
-        # for static policy checks. Dynamic command text cannot be proven safe here.
-        if re.search(r"\beval\b", segment, re.IGNORECASE):
+        command_index = _command_start(tokens)
+        if command_index >= len(tokens):
+            # A leading variable assignment by itself is not an executable command.
+            continue
+        command_index = _effective_command_index(tokens, command_index)
+        if command_index >= len(tokens):
+            continue
+
+        command_token = tokens[command_index]
+        command_name = posixpath.basename(command_token).lower()
+        args = tokens[command_index + 1 :]
+        relevant_text = " ".join(tokens[command_index:])
+
+        # A variable-constructed executable cannot be classified statically.
+        # This includes concatenations with IFS expansion in the command word.
+        if _DYNAMIC_SHELL_SYNTAX.search(command_token):
+            return "command executable uses shell expansion"
+
+        # Explicit evaluators must not receive opaque dynamically expanded text.
+        if re.search(r"\beval\b", relevant_text, re.IGNORECASE):
             return "eval can execute opaque shell command text"
-        if re.search(r"\b(?:bash|sh|dash|zsh)\b[^;&|]*\s-c(?:\s|$)", segment, re.IGNORECASE):
-            return "shell -c uses dynamically expanded command text"
 
-        # Reject every dynamically expanded git push, not just commands where a
-        # literal 'main' or '--force' happens to remain visible. The destination or
-        # option may be supplied entirely by a variable (e.g. "$TARGET" / "$FLAGS").
-        if re.search(r"\bgit\s+push\b", segment, re.IGNORECASE):
-            return "git push uses shell expansion"
+        # Recognize shell -c in combined options (-lc, -ec, -ce), including paths
+        # and common launchers such as env and busybox.
+        shell_index: int | None = command_index if command_name in _SHELL_NAMES else None
+        if command_name == "busybox" and args:
+            if posixpath.basename(args[0]).lower() in _SHELL_NAMES:
+                shell_index = command_index + 1
+        if shell_index is not None:
+            if _has_short_shell_c_option(tokens[shell_index + 1 :]):
+                return "shell -c uses dynamically expanded command text"
 
-        # Also catch a hidden executable such as '$cmd push ...' or 'g${IFS}it push'.
-        # If the first word is dynamically constructed, the verb alone is enough to
-        # make a sensitive git operation ambiguous.
-        if tokens and _DYNAMIC_SHELL_SYNTAX.search(tokens[0]):
-            if any(token.lower() in {"push", "reset", "clean"} for token in tokens[1:]):
-                return "dynamic executable can invoke a protected git operation"
+        dynamic_args = any(_DYNAMIC_SHELL_SYNTAX.search(token) for token in args)
 
-        # A variable or command substitution can hide a destructive flag even when
-        # the command name remains literal.
-        if re.search(r"\breset\b", lowered):
-            return "shell expansion can hide a destructive git reset"
-        if re.search(r"\bclean\b", lowered):
-            return "shell expansion can hide a destructive git clean"
+        if command_name == "git" and dynamic_args:
+            # The first argument is the subcommand. Expansion there can turn an
+            # apparently harmless invocation into push/reset/clean.
+            if args and _DYNAMIC_SHELL_SYNTAX.search(args[0]):
+                return "git subcommand uses shell expansion"
+            if any(token.lower() in {"push", "reset", "clean"} for token in args):
+                return "shell expansion can hide a protected git option or target"
 
-        # Docker subcommands/options are likewise ambiguous when expanded; reject
-        # dynamic docker-compose commands instead of trying to infer the expansion.
-        if re.search(r"\bdocker\s+compose\b", lowered):
-            return "shell expansion can hide a destructive docker compose operation"
-        if re.search(r"\bdocker\s+volume\b", lowered):
-            return "shell expansion can hide a destructive docker volume operation"
+        if command_name == "docker" and dynamic_args:
+            if not args or _DYNAMIC_SHELL_SYNTAX.search(args[0]):
+                return "Docker subcommand uses shell expansion"
+            first = args[0].lower()
+            second = args[1].lower() if len(args) > 1 else ""
+            destructive = (
+                first in {"compose", "volume", "rm", "rmi", "prune", "system"}
+                or (first in {"image", "container"} and second in {"rm", "prune"})
+            )
+            if destructive:
+                return "shell expansion can hide a destructive Docker operation"
 
-        if re.search(r"\b(drop\s+(?:table|database|schema)|truncate\s+table)\b", segment, re.IGNORECASE):
-            return "shell expansion appears in destructive SQL"
+        # rm option parsing is sensitive to IFS splitting and globbing. The tokenizer
+        # no longer retains quoting, so dynamic args cannot be proven to be safe.
+        if command_name == "rm" and dynamic_args:
+            return "rm arguments use shell expansion"
 
-        # A dynamic executable combined with recursive-delete flags or a broad target
-        # cannot be classified safely (e.g. a variable command followed by -rf /).
-        if tokens and _DYNAMIC_SHELL_SYNTAX.search(tokens[0]):
-            if _recursive_flags(tokens[1:]) or any(
-                token in {"/", "~", "..", "./", "../"} for token in tokens[1:]
-            ):
-                return "dynamic shell command with recursive-delete flags or a broad target"
+        # Do not allow a dynamically supplied SQL statement to reach common SQL CLIs.
+        if command_name in _SQL_CLIENT_NAMES and dynamic_args:
+            return "SQL client arguments use shell expansion"
+
+    # Pipelines can place the expansion and SQL client in different normalized
+    # segments; check the complete command for execution flags and data flow.
+    complete_command = raw_command if raw_command is not None else "\n".join(segments)
+    if _DYNAMIC_SHELL_SYNTAX.search(complete_command) and re.search(
+        r"\b(?:psql|mysql|mariadb|sqlite3|sqlcmd)\b", complete_command, re.IGNORECASE
+    ):
+        sql_execution = re.search(
+            r"\b(?:psql|mysql|mariadb|sqlite3|sqlcmd)\b[^;&|]*(?:--command\b|--execute\b|(?:^|\s)-[ce](?:\s|=))",
+            complete_command,
+            re.IGNORECASE,
+        )
+        sql_pipeline = re.search(
+            r"\|[^;&|]*\b(?:psql|mysql|mariadb|sqlite3|sqlcmd)\b",
+            complete_command,
+            re.IGNORECASE,
+        )
+        if sql_execution or sql_pipeline:
+            return "SQL client receives dynamically supplied command text"
 
     return None
 
@@ -226,7 +330,7 @@ def main() -> None:
         if re.search(r"\bgit\s+push\b|\bdocker\s+compose\s+down\b|\bDROP\s+(TABLE|DATABASE|SCHEMA)\b", command, re.IGNORECASE):
             block("[guard_bash:parse] Refusing an unparseable command containing a protected operation.")
 
-    dynamic_risk = dynamic_shell_expansion_risk(normalized_segments)
+    dynamic_risk = dynamic_shell_expansion_risk(normalized_segments, command)
     if dynamic_risk:
         block(
             f"[guard_bash:dynamic-shell] Refusing ambiguous protected operation: {dynamic_risk}. "
