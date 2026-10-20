@@ -1,27 +1,26 @@
 from __future__ import annotations
-import asyncio
 import functools as _p3_functools
 import inspect as _p3_inspect
 import json as _p3_json
-import os
 import uuid
-from datetime import datetime, timezone
+from dataclasses import asdict
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse as _P3JSONResponse
 from pydantic import BaseModel, Field
 
+from muse_orchestrator.api.arq_dispatch import schedule_export_job
 from muse_orchestrator.api.dependencies import get_studio_repository
-from muse_orchestrator.core.config import SecretRedactor, settings
+from muse_orchestrator.core.config import settings
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import (
-    Asset, TimelineSequenceRecord, TimelineTrackRecord, TimelineClipRecord,
+    TimelineSequenceRecord, TimelineTrackRecord, TimelineClipRecord,
     ExportJobRecord, ExportJobState
 )
 from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage
 from muse_orchestrator.services.timeline_service import (
-    ExportClip, ExportError, TimelineValidationService
+    ExportClip, TimelineValidationService
 )
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/timeline", tags=["M6 Timeline Editor & FFmpeg Export"])
@@ -308,17 +307,20 @@ def _unsupported_export_features(seq: TimelineSequenceRecord) -> list[str]:
     return features
 
 
-@router.post("/exports", status_code=status.HTTP_201_CREATED)
+@router.post("/exports", status_code=status.HTTP_202_ACCEPTED)
 async def launch_ffmpeg_export(
     project_id: str,
     payload: ExportLaunchIn,
+    request: Request,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
     """
-    Render the timeline's real clips to MP4 (H.264 + AAC) with FFmpeg, verify the file with FFprobe
-    and store it in the Asset Library. A failed render or a failed verification is recorded as a
-    FAILED export job and returned as an error; no asset is created for it.
+    Validate the timeline, persist a QUEUED export job and hand the render to the
+    ARQ worker (process_export_job in workers/queue_worker.py). The FFmpeg render
+    no longer runs inside this request; poll GET /exports/{export_id} for the
+    result. A failed render is recorded as a FAILED export job by the worker; no
+    asset is created for it.
     """
     if payload.sequence_id:
         seq = await repository.get_timeline_sequence(payload.sequence_id)
@@ -341,100 +343,71 @@ async def launch_ffmpeg_export(
     unsupported = _unsupported_export_features(seq)
 
     export_id = f"exp_{uuid.uuid4().hex[:10]}"
-    out_dir = os.path.join(settings.media_root, project_id, "exports")
-
-    try:
-        # FFmpeg is a blocking subprocess; keep it off the event loop.
-        out_path, size_bytes, sha256_hex, ffmpeg_args, probe_meta = await asyncio.to_thread(
-            TimelineValidationService.render_and_probe_mp4,
-            output_dir=out_dir,
-            export_id=export_id,
-            fps=fps,
-            resolution=res,
-            clips=clips,
-        )
-        if not probe_meta.get("valid"):
-            raise ExportError(
-                "File export không vượt qua kiểm tra FFprobe.",
-                ffmpeg_args=ffmpeg_args,
-                probe_meta=probe_meta,
-            )
-    except ExportError as exc:
-        message = SecretRedactor.redact_text(exc.message)
-        failed_job = ExportJobRecord(
-            id=export_id,
-            project_id=project_id,
-            sequence_id=seq.id,
-            state=ExportJobState.FAILED,
-            aspect_ratio=aspect,
-            fps=fps,
-            resolution=res,
-            video_codec="h264",
-            audio_codec="aac",
-            ffmpeg_args_json=exc.ffmpeg_args,
-            manifest_snapshot_json=seq.manifest_json,
-            ffprobe_verification_json=exc.probe_meta,
-            error_message_redacted=message,
-            finished_at=datetime.now(timezone.utc),
-        )
-        await repository.create_export_job(failed_job)
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail={
-                "export_id": export_id,
-                "state": ExportJobState.FAILED.value,
-                "message": message,
-                "unsupported_features": unsupported,
-            },
-        ) from exc
-
-    probe_meta["unsupported_features"] = unsupported
-    asset_id = f"ast_exp_{uuid.uuid4().hex[:8]}"
-    rel_path = os.path.relpath(out_path, settings.media_root)
-    asset = Asset(
-        id=asset_id,
-        project_id=project_id,
-        asset_type="video",
-        filename=f"{project_id}_{export_id}.mp4",
-        storage_rel_path=rel_path,
-        mime_type="video/mp4",
-        size_bytes=size_bytes,
-        sha256=sha256_hex,
-        is_locked_reference=False,
-    )
     job = ExportJobRecord(
         id=export_id,
         project_id=project_id,
         sequence_id=seq.id,
-        state=ExportJobState.SUCCEEDED,
+        state=ExportJobState.QUEUED,
         aspect_ratio=aspect,
         fps=fps,
         resolution=res,
         video_codec="h264",
         audio_codec="aac",
-        ffmpeg_args_json=ffmpeg_args,
-        manifest_snapshot_json=seq.manifest_json,
-        output_asset_id=asset_id,
-        ffprobe_verification_json=probe_meta,
-        finished_at=datetime.now(timezone.utc),
+        manifest_snapshot_json={
+            **(seq.manifest_json or {}),
+            # The worker renders from this resolved plan instead of re-reading
+            # the timeline; a clip file deleted after launch fails the render.
+            "resolved_clips": [asdict(clip) for clip in clips],
+            "unsupported_features": unsupported,
+        },
     )
-    await repository.create_export_result(asset, job)
+    await repository.create_export_job(job)
+    # On dispatch failure this raises 503; the job stays QUEUED and the worker's
+    # recovery cron re-enqueues it once Redis is reachable.
+    await schedule_export_job(request, export_id)
 
     return {
-        "export_id": job.id,
+        "export_id": export_id,
         "sequence_id": seq.id,
+        "state": ExportJobState.QUEUED.value,
+        "aspect_ratio": aspect,
+        "fps": fps,
+        "resolution": res,
+        "unsupported_features": unsupported,
+    }
+
+
+@router.get("/exports/{export_id}")
+async def get_export_job_status(
+    project_id: str,
+    export_id: str,
+    repository: StudioRepository = Depends(get_studio_repository),
+    actor: str = Depends(verify_single_admin),
+) -> dict[str, Any]:
+    """Poll one export job: queued/running until the worker records succeeded/failed."""
+    job = await repository.get_export_job(export_id)
+    if not job or job.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Export Job.")
+
+    result: dict[str, Any] = {
+        "export_id": job.id,
+        "sequence_id": job.sequence_id,
         "state": job.state.value,
         "aspect_ratio": job.aspect_ratio,
         "fps": job.fps,
         "resolution": job.resolution,
         "video_codec": job.video_codec,
         "audio_codec": job.audio_codec,
-        "output_asset_id": asset_id,
-        "download_url": f"/api/v1/assets/{asset_id}/download",
-        "ffmpeg_args": ffmpeg_args,
-        "ffprobe_verification": probe_meta,
-        "unsupported_features": unsupported,
+        "unsupported_features": (job.manifest_snapshot_json or {}).get("unsupported_features", []),
     }
+    if job.state == ExportJobState.SUCCEEDED:
+        result["output_asset_id"] = job.output_asset_id
+        result["download_url"] = f"/api/v1/assets/{job.output_asset_id}/download"
+        result["ffmpeg_args"] = job.ffmpeg_args_json
+        result["ffprobe_verification"] = job.ffprobe_verification_json
+    elif job.state == ExportJobState.FAILED:
+        result["message"] = job.error_message_redacted
+    return result
 
 # --- P3 HARDENING: PRESERVE ROUTE SIGNATURE & INCLUDE unsupported_features IN ALL 422 RESPONSES ---
 def _install_p3_timeline_api_patch() -> None:

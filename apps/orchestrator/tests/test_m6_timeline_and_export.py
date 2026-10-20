@@ -6,9 +6,10 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-_TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m6_test_")
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
-os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
+# Expression statements (not assignments) so Ruff E402 stays quiet for the
+# imports below, matching the pattern used by the other API test modules.
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="muse_m6_test_"))
 
 from muse_orchestrator.main import app
 from muse_orchestrator.core.database import get_db
@@ -27,10 +28,39 @@ async def client():
         async with TestSessionLocal() as session:
             yield session
 
+    # Export jobs are rendered by the ARQ worker; point it at the test database
+    # and give the API a fake pool so launches work without Redis (M4/M5 pattern).
+    from muse_orchestrator.workers import queue_worker
+
+    class _FakeArqPool:
+        def __init__(self) -> None:
+            self.jobs: list[tuple[str, tuple, dict]] = []
+
+        async def enqueue_job(self, function: str, *args, **kwargs):
+            self.jobs.append((function, args, kwargs))
+            return object()
+
+    previous_session_local = queue_worker.AsyncSessionLocal
+    queue_worker.AsyncSessionLocal = TestSessionLocal
+    previous_pool = getattr(app.state, "arq_pool", None)
+    app.state.arq_pool = _FakeArqPool()
     app.dependency_overrides[get_db] = override_get_db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
         yield ac
     app.dependency_overrides.clear()
+    queue_worker.AsyncSessionLocal = previous_session_local
+    if previous_pool is None:
+        if hasattr(app.state, "arq_pool"):
+            delattr(app.state, "arq_pool")
+    else:
+        app.state.arq_pool = previous_pool
+
+
+async def _drive_export(export_id: str):
+    """Run the export worker inline (tests have no real ARQ worker process)."""
+    from muse_orchestrator.workers.queue_worker import process_export_job
+
+    return await process_export_job({}, export_id)
 
 
 TIMELINE_SCRIPT = """
@@ -164,8 +194,18 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
         f"/api/v1/projects/{proj_id}/timeline/exports",
         json={"sequence_id": tl["sequence_id"], "aspect_ratio": "9:16", "fps": 30},
     )
-    assert exp_res.status_code == 201, exp_res.text
-    exp = exp_res.json()
+    # The render runs in the ARQ worker: launch returns 202 + a QUEUED job.
+    assert exp_res.status_code == 202, exp_res.text
+    launched = exp_res.json()
+    assert launched["state"] == "queued"
+    export_id = launched["export_id"]
+
+    worker_result = await _drive_export(export_id)
+    assert worker_result["state"] == "succeeded"
+
+    status_res = await client.get(f"/api/v1/projects/{proj_id}/timeline/exports/{export_id}")
+    assert status_res.status_code == 200, status_res.text
+    exp = status_res.json()
     assert exp["state"] == "succeeded"
     assert exp["video_codec"] == "h264"
     assert exp["audio_codec"] == "aac"
@@ -284,8 +324,18 @@ async def test_timeline_export_resolution_defaults_and_custom_override(
             f"/api/v1/projects/{project_id}/timeline/exports",
             json=payload,
         )
-        assert response.status_code == 201, response.text
-        export = response.json()
+        # The render runs in the ARQ worker: launch returns 202 + a QUEUED job.
+        assert response.status_code == 202, response.text
+        export_id = response.json()["export_id"]
+
+        worker_result = await _drive_export(export_id)
+        assert worker_result["state"] == "succeeded"
+
+        status_response = await client.get(
+            f"/api/v1/projects/{project_id}/timeline/exports/{export_id}"
+        )
+        assert status_response.status_code == 200, status_response.text
+        export = status_response.json()
         assert export["state"] == "succeeded"
         assert export["resolution"] == expected_resolution
         assert export["ffprobe_verification"]["width"] == expected_width

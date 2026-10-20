@@ -1,6 +1,7 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+import logging
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import Depends, FastAPI, Request, status
@@ -29,9 +30,22 @@ from muse_orchestrator.api.maintenance import router as maintenance_router
 from muse_orchestrator.api.backups import router as backups_router
 from muse_orchestrator.api.system import router as system_router
 
+logger = logging.getLogger("muse_orchestrator")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    if settings.insecure_dev_defaults:
+        logger.warning(
+            "\n"
+            "================================================================================\n"
+            "SECURITY WARNING: MuseStudio is running with INSECURE DEVELOPMENT DEFAULTS.\n"
+            "The admin API is unauthenticated while STUDIO_ADMIN_TOKEN is unset, and\n"
+            "provider secrets are encrypted with a PUBLICLY KNOWN development key.\n"
+            "Do NOT expose this instance beyond your own machine. Set ENVIRONMENT to a\n"
+            "non-development value with real secrets before deploying anywhere.\n"
+            "================================================================================"
+        )
     await init_db()
     arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     app.state.arq_pool = arq_pool

@@ -98,6 +98,15 @@ class StudioRepository:
         await self.session.refresh(job)
         return job
 
+    async def get_export_job(self, export_id: str) -> ExportJobRecord | None:
+        return await self.session.get(ExportJobRecord, export_id)
+
+    async def update_export_job(self, job: ExportJobRecord) -> ExportJobRecord:
+        self.session.add(job)
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
+
     # --- M3 workflow persistence ---
 
     async def get_workflow_definition(self, workflow_id: str) -> WorkflowDefinition | None:
@@ -184,7 +193,7 @@ class StudioRepository:
         return await self.session.get(GenerationTaskRecord, task_id)
 
     async def list_active_generation_tasks(
-        self, project_id: str, connection_id: str | None = None
+        self, project_id: str, connection_id: str | None = None, limit: int | None = None
     ) -> list[GenerationTaskRecord]:
         stmt = (
             select(GenerationTaskRecord)
@@ -199,6 +208,8 @@ class StudioRepository:
         )
         if connection_id:
             stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 

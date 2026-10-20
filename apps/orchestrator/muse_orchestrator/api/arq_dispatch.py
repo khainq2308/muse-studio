@@ -5,7 +5,7 @@ import logging
 from fastapi import HTTPException, Request, status
 
 from muse_orchestrator.models.domain import GenerationTaskRecord, QueueTaskState
-from muse_orchestrator.services.arq_dispatch import enqueue_generation_step
+from muse_orchestrator.services.arq_dispatch import enqueue_export_job, enqueue_generation_step
 
 logger = logging.getLogger(__name__)
 
@@ -44,5 +44,40 @@ async def schedule_generation_task(request: Request, task: GenerationTaskRecord)
                 "code": "queue_dispatch_unavailable",
                 "task_id": task.id,
                 "message": "Task is saved, but Redis scheduling failed. Background recovery will retry after Redis is reachable; do not create a new generation just to reschedule.",
+            },
+        ) from exc
+
+
+async def schedule_export_job(request: Request, export_id: str) -> None:
+    """Publish an already-persisted QUEUED export job; expose a safe 503 if Redis cannot schedule it.
+
+    The job row stays QUEUED on failure and the worker's recovery cron re-enqueues it
+    once Redis is reachable again, so a 503 here never loses the export.
+    """
+    redis = getattr(request.app.state, "arq_pool", None)
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "queue_dispatch_unavailable",
+                "export_id": export_id,
+                "message": "Export is saved as QUEUED, but the ARQ scheduler is not initialized. Background recovery will retry after Redis is reachable; do not create a new export just to reschedule.",
+            },
+        )
+
+    try:
+        await enqueue_export_job(redis, export_id)
+    except Exception as exc:
+        logger.error(
+            "Could not schedule export job %s in ARQ (error type %s)",
+            export_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "queue_dispatch_unavailable",
+                "export_id": export_id,
+                "message": "Export is saved as QUEUED, but Redis scheduling failed. Background recovery will retry after Redis is reachable; do not create a new export just to reschedule.",
             },
         ) from exc

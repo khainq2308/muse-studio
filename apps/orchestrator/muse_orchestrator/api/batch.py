@@ -1,7 +1,7 @@
 from __future__ import annotations
 import uuid
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.api.dependencies import get_studio_repository
@@ -152,6 +152,7 @@ async def tick_project_batch_queue(
     project_id: str,
     request: Request,
     connection_id: str | None = None,
+    max_steps: int = Query(default=50, ge=1, le=200),
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> dict[str, Any]:
@@ -160,8 +161,12 @@ async def tick_project_batch_queue(
     - Tôn trọng tuyệt đối max_concurrency của từng Connection.
     - Lỗi ở 1 shot không làm ảnh hưởng đến tiến độ của các shot khác.
     - Khi 1 shot hoàn tất và mở khoá Frame Chain cho shot kế tiếp, tự động enqueue shot kế tiếp.
+    - Mỗi tick chỉ bước tối đa `max_steps` task (mặc định 50) để một request không
+      làm I/O provider không giới hạn; phần còn lại để tick sau xử lý.
     """
-    active_tasks = await repository.list_active_generation_tasks(project_id, connection_id)
+    active_tasks = await repository.list_active_generation_tasks(
+        project_id, connection_id, limit=max_steps
+    )
 
     # Ưu tiên bước Poll cho các task đang RUNNING trước, sau đó mới Dispatch các task QUEUED theo slot trống
     running_tasks = [t for t in active_tasks if t.state == QueueTaskState.RUNNING]
@@ -214,6 +219,8 @@ async def tick_project_batch_queue(
         "stepped_count": len(stepped_results),
         "stepped_tasks": stepped_results,
         "queue_summary": counts,
+        "tick_limit": max_steps,
+        "active_tasks_fetched": len(active_tasks),
     }
 
 
