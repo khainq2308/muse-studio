@@ -171,22 +171,20 @@ describe("API client", () => {
   });
 
   it("encodes API path parameters as one safe segment", () => {
-    expect(encodePathSegment("project/42 with space")).toBe(
-      "project%2F42%20with%20space",
-    );
+    expect(encodePathSegment("project/42 with space")).toBe("project%2F42%20with%20space");
     expect(() => encodePathSegment("..")).toThrow("must not be '.' or '..'");
   });
 
-  it.each([
-    "/api/v1/projects/../connections",
-    "/api/v1/projects/%2e%2e/connections",
-  ])("rejects traversal path %s before fetching", async (path) => {
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
+  it.each(["/api/v1/projects/../connections", "/api/v1/projects/%2e%2e/connections"])(
+    "rejects traversal path %s before fetching",
+    async (path) => {
+      const fetchMock = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", fetchMock);
 
-    await expect(apiGet(path)).rejects.toThrow("dot segments");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+      await expect(apiGet(path)).rejects.toThrow("dot segments");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects malformed JSON on successful responses as a non-retryable ApiError", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
