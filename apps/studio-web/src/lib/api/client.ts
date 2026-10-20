@@ -92,12 +92,7 @@ export function normalizeApiBaseUrl(value: string | undefined): string {
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_ORCHESTRATOR_URL);
 
 export function encodePathSegment(segment: string): string {
-  if (
-    segment === "." ||
-    segment === ".." ||
-    segment.includes("/") ||
-    segment.includes("\\")
-  ) {
+  if (segment === "." || segment === ".." || segment.includes("/") || segment.includes("\\")) {
     throw new Error("API path segments must not contain path separators or dot segments.");
   }
   return encodeURIComponent(segment);
@@ -107,13 +102,10 @@ function buildUrl(path: string, query?: QueryParams): string {
   if (!path.startsWith("/") || path.startsWith("//")) {
     throw new Error("API paths must be absolute paths beginning with one '/'.");
   }
-  if (
-    path.includes("//") ||
-    path.includes("\\") ||
-    path.includes("?") ||
-    path.includes("#")
-  ) {
-    throw new Error("API paths must not contain repeated separators, backslashes, queries, or fragments.");
+  if (path.includes("//") || path.includes("\\") || path.includes("?") || path.includes("#")) {
+    throw new Error(
+      "API paths must not contain repeated separators, backslashes, queries, or fragments.",
+    );
   }
   for (const segment of path.split("/")) {
     let decodedSegment: string;
