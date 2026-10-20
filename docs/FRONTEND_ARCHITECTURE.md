@@ -34,7 +34,7 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 
 ## 3. Contracts: sinh tự động từ OpenAPI — cấm viết tay
 
-- Nguồn sự thật duy nhất cho API types là OpenAPI schema của orchestrator. Schema phải lấy được **không cần chạy server**: script `scripts/export_openapi.py` nạp đối tượng FastAPI app và ghi `app.openapi()` ra snapshot được commit tại `apps/orchestrator/openapi.json`. (Nạp module app không chạy lifespan nên không cần DB/Redis.)
+- Nguồn sự thật duy nhất cho API types là OpenAPI schema của orchestrator. Schema phải lấy được **không cần chạy server**. Phase 0 sẽ bổ sung một script offline (dự kiến đặt tên scripts/export_openapi.py; hiện chưa có trong repository) để nạp đối tượng FastAPI app và ghi `app.openapi()` ra snapshot được commit tại `apps/orchestrator/openapi.json`. Việc nạp module app không chạy lifespan nên mục tiêu là không cần DB/Redis.
 - Lệnh chuẩn dưới đây là script **sẽ được bổ sung vào `apps/studio-web/package.json` ở Phase 0 — hiện tại nó chưa tồn tại** (package.json hiện chỉ có `dev`/`build`/`preview`, và thư mục frontend chưa có `package-lock.json`); đừng chạy khi chưa tới Phase 0. Khi đã có, lệnh đọc snapshot đã commit, không phụ thuộc server đang chạy:
 
   ```bash
@@ -42,7 +42,7 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
   ```
 
   File sinh ra có header "generated — do not edit", không bao giờ sửa tay. PR thay đổi hành vi API ở backend phải kèm snapshot và file generated đã cập nhật (hoặc ghi rõ vì sao chưa cần).
-- **CI chống drift là bắt buộc** (thêm ở Phase 0): một step chạy `export_openapi.py` + `gen:api` rồi `git diff --exit-code` trên cả snapshot lẫn `schema.d.ts`. Thiếu cơ chế này thì quy tắc trên chỉ là lời hứa.
+- **CI chống drift là bắt buộc** (thêm ở Phase 0): một step chạy script xuất OpenAPI offline được bổ sung ở Phase 0 cùng `gen:api`, rồi `git diff --exit-code` trên cả snapshot lẫn `schema.d.ts`. Thiếu cơ chế này thì quy tắc trên chỉ là lời hứa.
 - Điều kiện tiên quyết ở backend: FastAPI chỉ sinh type tốt khi route khai báo `response_model`. Phase 0 phải gồm một bước **audit `response_model`** cho toàn bộ router (hiện nhiều endpoint thuộc queue/batch/workflows đang trả `dict` tự do) và bổ sung schema cho các endpoint còn thiếu. Cho tới khi audit xong, các bề mặt chưa có schema được liệt kê tường minh trong PR Phase 0 và là ngoại lệ tạm thời duy nhất của lệnh cấm `Record<string, unknown>` dưới đây.
 - Mọi response/request type trong features lấy từ `components['schemas'][...]` của generated schema. **Cấm** dùng `Record<string, unknown>` làm kiểu response trong features, và cấm định nghĩa interface payload/response song song trong file service.
 - `packages/contracts`: **giữ nguyên tại chỗ, không import mới** — bốn union type hiện có giữ nguyên cho tới khi có bản generated tương đương, sau đó package bị loại bỏ (việc loại bỏ là tiêu chí nghiệm thu của Phase 0). Lý do: package nằm ngoài Docker build context của studio-web và nội dung viết tay đã nhiều lần trôi khỏi API thật. Từ nay contracts sống trong `apps/studio-web/src/lib/api/` cùng với app duy nhất tiêu thụ chúng. Phương án thay thế "nới Docker build context lên root monorepo để giữ package" (đã thử ở PR #42) bị loại — xem ADR-007.
@@ -64,21 +64,36 @@ apps/studio-web/src/
     take/               #   nhiều feature (vd connections, projects, shots).
     task/
   features/
-    projects/           # Mỗi feature gồm: api.ts (query/mutation hooks), components/,
-    connections/        #   pages/ (component cấp route), index.ts (public surface)
+    projects/
+    connections/
     script-studio/
     shot-board/
+      api.ts            # Query/mutation hooks của feature; không gọi fetch trực tiếp
+      components/       # UI con chỉ thuộc shot-board
+      pages/            # Component cấp route
+      index.ts          # Public surface của feature
     workflow-canvas/
     queue-monitor/
     timeline-editor/
     system-ops/
   lib/
-    api/                # http client (fetch wrapper), schema.d.ts (generated), queryKeys.ts
+    api/
+      client.ts         # HTTP transport duy nhất được phép gọi fetch
+      schema.d.ts       # OpenAPI-generated; không sửa tay
+      queryKeys.ts      # Query keys dùng thống nhất
     stores/             # Zustand stores
     utils.ts            # cn() và helpers thuần
   styles/
     globals.css         # Tailwind entry + theme tokens duy nhất
 ```
+
+Cách chia trách nhiệm:
+
+- `lib/api/client.ts` là lớp transport dùng chung: base URL, header xác thực, query params, `AbortSignal`, chuẩn hoá lỗi và tải file có xác thực. Nó không chứa logic nghiệp vụ của riêng domain.
+- `features/<feature>/api.ts` chứa các TanStack Query hooks và mutation của đúng feature; các hooks gọi `lib/api/client.ts`, không gọi `fetch` trực tiếp.
+- `entities/<entity>/api.ts` chỉ dành cho query/mutation hooks được dùng thật sự bởi từ hai feature trở lên. Không chuyển mọi request vào một service tổng hợp hoặc tạo entity chỉ để gom file.
+- `components/ui/` chứa primitive UI không biết domain; `components/shared/` chứa component tái sử dụng nhưng vẫn nhận props đã typed. Phần ghép state/domain vào giao diện nằm ở feature.
+- Không tạo `src/services/` như một lớp monolithic API client. Cũng không tự dựng `useAsyncData`/`usePolling`; dùng TanStack Query để quản lý cache, hủy request, invalidate và polling.
 
 Quy tắc phụ thuộc:
 
@@ -121,8 +136,8 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
 ### 5.3 Media
 
-- Shot/take/asset phải render thumbnail hoặc video preview thật qua endpoint download có auth (`GET /api/v1/assets/{id}/download`, `GET /api/v1/backups/{id}/download`). Không có asset thì hiển thị placeholder rõ ràng kèm trạng thái generation của shot.
-- Cơ chế blob + object URL (tải file kèm header auth rồi tạo URL tạm) là giải pháp v1 và có **giới hạn phải tôn trọng**: nó tải toàn bộ file vào bộ nhớ, không seek/range, nên chỉ dùng cho ảnh và preview theo yêu cầu từng item. **Cấm** dùng nó để tải hàng loạt video cho lưới thumbnail. Hướng xử lý đúng cho lưới và video dài: dùng poster/thumbnail asset do media-engine tách frame sẵn (khả năng đã có ở backend theo ADR-005), và endpoint streaming có range + URL ký ngắn hạn là việc backend cần bổ sung sau — cho tới lúc đó, lưới hiển thị poster frame, video chỉ tải khi người dùng mở xem một item.
+- Shot/take/asset phải render thumbnail hoặc video preview thật qua endpoint asset download có auth (`GET /api/v1/assets/{asset_id}/download`). Endpoint backup download (`GET /api/v1/backups/{backup_id}/download`) trả file ZIP và chỉ dành cho luồng system-ops; không dùng nó để preview media. Không có asset thì hiển thị placeholder rõ ràng kèm trạng thái generation của shot.
+- Cơ chế blob + object URL (tải file kèm header auth rồi tạo URL tạm) là giải pháp v1 và có **giới hạn phải tôn trọng**: nó tải toàn bộ file vào bộ nhớ, không seek/range, nên chỉ dùng cho ảnh và preview theo yêu cầu từng item. **Cấm** dùng nó để tải hàng loạt video cho lưới thumbnail. ADR-005 mô tả trích xuất boundary frames để nối shot; không tự suy ra từ ADR này rằng đã có endpoint poster/thumbnail chuyên dụng. Trước khi có nguồn poster đã được xác minh, không tải hàng loạt video để tạo thumbnail ở client. Poster asset/endpoint streaming có range + URL ký ngắn hạn là năng lực backend cần thiết kế và kiểm chứng riêng — cho tới lúc đó, lưới dùng placeholder hoặc poster asset đã tồn tại và video chỉ tải khi người dùng mở xem một item.
 - Duyệt take phải có chế độ so sánh A/B đặt hai take cạnh nhau bằng media thật, kèm thao tác chọn take và gắn cờ continuity — đây là nghiệp vụ lõi của shot-board, không phải trang trí.
 
 ### 5.4 Forms, hành động tốn quota & idempotency
@@ -176,7 +191,7 @@ Mỗi phase là một PR riêng; không gộp refactor nền móng với viết 
 
 > **Quan hệ với PR #42:** PR #42 (`feat/studio-web-workspace`) triển khai một workspace nhiều module theo hướng ngược với tài liệu này — nới Docker build context lên root monorepo, mở rộng contracts viết tay, CSS viết tay, hiển thị JSON thô. PR #42 **bị supersede bởi tài liệu này và không được merge ở dạng hiện tại**; phạm vi chức năng của nó (các module và luồng người dùng đã làm) là đầu vào yêu cầu cho Phase 1–2, nhưng mã của nó không được dùng làm nền. Xem thêm ADR-007.
 
-- **Phase 0 — Nền móng:** thêm Tailwind + shadcn/ui + lucide-react + TanStack Query + Zustand + TanStack Router + react-hook-form/zod, ESLint/Prettier kèm các rule thực thi ở mục 4, `package-lock.json` **và cập nhật cả hai Dockerfile của studio-web sang dùng `package-lock.json` + `npm ci`** (hiện chúng đang `npm install` không khoá phiên bản); dựng `lib/api` (http client + generated schema + `gen:api` từ snapshot), `scripts/export_openapi.py` + CI chống drift, audit `response_model` ở backend (mục 3), app shell + theme + Playwright smoke test, và loại bỏ `packages/contracts` sau khi generated types thay thế xong. Chưa viết lại feature nào.
+- **Phase 0 — Nền móng:** thêm Tailwind + shadcn/ui + lucide-react + TanStack Query + Zustand + TanStack Router + react-hook-form/zod, ESLint/Prettier kèm các rule thực thi ở mục 4, `package-lock.json` **và cập nhật cả hai Dockerfile của studio-web sang dùng `package-lock.json` + `npm ci`** (hiện chúng đang `npm install` không khoá phiên bản); dựng `lib/api` (HTTP client + generated schema + `gen:api` từ snapshot), bổ sung script xuất OpenAPI offline (dự kiến tên scripts/export_openapi.py), CI chống drift, audit `response_model` ở backend (mục 3), app shell + theme + Playwright smoke test, và loại bỏ `packages/contracts` sau khi generated types thay thế xong. Chưa viết lại feature nào.
 - **Phase 1 — Vòng sản xuất lõi:** shot-board (media preview + duyệt take A/B) và queue-monitor (polling bằng TanStack Query).
 - **Phase 2 — Quản trị:** script-studio, projects, connections, system-ops theo chuẩn form ở mục 5.4.
 - **Phase 3 — Workflow canvas:** dựng lại bằng @xyflow/react theo mục 5.5.
