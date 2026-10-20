@@ -213,7 +213,7 @@ describe("API client", () => {
   });
 
   it("downloads an authenticated file and revokes its blob URL", async () => {
-    const createObjectUrl = vi.fn(() => "blob:test-download");
+    const createObjectUrl = vi.fn<(object: Blob | MediaSource) => string>(() => "blob:test-download");
     const revokeObjectUrl = vi.fn();
     const NativeURL = globalThis.URL;
     const MockURL = class extends NativeURL {
