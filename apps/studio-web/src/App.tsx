@@ -11,6 +11,11 @@ function isAuthenticationError(error: unknown): boolean {
   return error instanceof ApiError && [401, 403].includes(error.status);
 }
 
+function authenticationErrorMessage(activeAdminToken: string, resource: string): string {
+  if (!activeAdminToken) return `Admin token required to read ${resource}.`;
+  return `The configured admin token was rejected or lacks permission to read ${resource}. Update the token and reconnect.`;
+}
+
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div role="alert" className="flex flex-col items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
@@ -42,7 +47,9 @@ export function App() {
     isAuthenticationError(projectQuery.error) || isAuthenticationError(connectionQuery.error);
 
   const apiStatus = authenticationRequired
-    ? "Admin token required"
+    ? activeAdminToken
+      ? "Admin token rejected"
+      : "Admin token required"
     : healthQuery.isPending
       ? "Checking..."
       : healthQuery.isError
@@ -53,9 +60,11 @@ export function App() {
 
   const statusClass = apiStatus === "Online"
     ? "text-success"
-    : authenticationRequired
-      ? "text-warning"
-      : "text-destructive";
+    : apiStatus === "Checking..."
+      ? "text-muted-foreground"
+      : authenticationRequired
+        ? "text-warning"
+        : "text-destructive";
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -142,7 +151,7 @@ export function App() {
             ) : projectQuery.isError ? (
               <LoadError
                 message={isAuthenticationError(projectQuery.error)
-                  ? "Admin token required to read projects."
+                  ? authenticationErrorMessage(activeAdminToken, "projects")
                   : "Could not load projects. Check the Orchestrator and retry."}
                 onRetry={() => void projectQuery.refetch()}
               />
@@ -197,7 +206,7 @@ export function App() {
             ) : connectionQuery.isError ? (
               <LoadError
                 message={isAuthenticationError(connectionQuery.error)
-                  ? "Admin token required to read provider connections."
+                  ? authenticationErrorMessage(activeAdminToken, "provider connections")
                   : "Could not load provider connections. Check the Orchestrator and retry."}
                 onRetry={() => void connectionQuery.refetch()}
               />
