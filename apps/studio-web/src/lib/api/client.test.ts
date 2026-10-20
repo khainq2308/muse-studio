@@ -72,7 +72,8 @@ describe("apiGet", () => {
   });
 
   it("uses a generic error for non-JSON upstream error pages", async () => {
-    const html = "<html><body><h1>502 Bad Gateway</h1><pre>internal proxy details</pre></body></html>";
+    const html =
+      "<html><body><h1>502 Bad Gateway</h1><pre>internal proxy details</pre></body></html>";
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(html, {
         status: 502,
