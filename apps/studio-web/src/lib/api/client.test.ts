@@ -21,6 +21,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   useSessionStore.getState().clearAdminToken();
 });
@@ -39,6 +40,21 @@ describe("API base URL normalization", () => {
   it("rejects protocol-relative and non-HTTP URLs", () => {
     expect(() => normalizeApiBaseUrl("//evil.test")).toThrow();
     expect(() => normalizeApiBaseUrl("file:///etc/passwd")).toThrow();
+  });
+
+  it("uses VITE_ORCHESTRATOR_URL when constructing request URLs", async () => {
+    vi.stubEnv("VITE_ORCHESTRATOR_URL", "https://orchestrator.example.test/");
+    vi.resetModules();
+
+    const { apiGet: apiGetWithConfiguredBase } = await import("@/lib/api/client");
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ status: "ok" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiGetWithConfiguredBase("/api/v1/projects");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://orchestrator.example.test/api/v1/projects",
+    );
   });
 });
 
