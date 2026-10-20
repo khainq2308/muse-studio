@@ -8,8 +8,6 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger("muse_orchestrator")
-
 from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.core.config import SecretRedactor, settings
 from muse_orchestrator.core.database import init_db
@@ -31,6 +29,8 @@ from muse_orchestrator.api.metrics import router as metrics_router
 from muse_orchestrator.api.maintenance import router as maintenance_router
 from muse_orchestrator.api.backups import router as backups_router
 from muse_orchestrator.api.system import router as system_router
+
+logger = logging.getLogger("muse_orchestrator")
 
 
 @asynccontextmanager

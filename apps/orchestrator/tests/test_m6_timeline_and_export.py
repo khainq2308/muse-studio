@@ -6,9 +6,10 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-_TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m6_test_")
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
-os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
+# Expression statements (not assignments) so Ruff E402 stays quiet for the
+# imports below, matching the pattern used by the other API test modules.
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="muse_m6_test_"))
 
 from muse_orchestrator.main import app
 from muse_orchestrator.core.database import get_db
