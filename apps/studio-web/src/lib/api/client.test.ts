@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiGet, normalizeApiBaseUrl } from "./client";
-import { useSessionStore } from "../../stores/session-store";
+import { ApiError, apiGet, downloadFile, normalizeApiBaseUrl } from "@/lib/api/client";
+import { useSessionStore } from "@/lib/stores/session-store";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   useSessionStore.getState().clearAdminToken();
 });
 
@@ -24,7 +26,7 @@ describe("API base URL normalization", () => {
   });
 });
 
-describe("apiGet", () => {
+describe("API responses", () => {
   it("uses absolute API paths and attaches the admin token without persisting it", async () => {
     useSessionStore.getState().setAdminToken("test-admin-token");
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
@@ -34,33 +36,38 @@ describe("apiGet", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-
     await apiGet<Array<{ id: string }>>("/api/v1/projects", {
       query: { limit: 10, archived: false, omitted: null },
     });
-
     const [requestedUrl, init] = fetchMock.mock.calls[0]!;
     expect(String(requestedUrl)).toContain("/api/v1/projects?limit=10&archived=false");
     expect(new Headers(init?.headers).get("X-Studio-Admin-Token")).toBe("test-admin-token");
     expect(window.localStorage.length).toBe(0);
   });
 
-  it("preserves structured validation details in ApiError", async () => {
+  it("parses JSON content types case-insensitively", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          detail: [{ loc: ["body", "name"], msg: "Field required" }],
-          category: "validation",
-          retryable: false,
-        }),
-        {
-          status: 422,
-          headers: { "content-type": "application/json" },
-        },
-      ),
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "content-type": "Application/JSON; charset=utf-8" },
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
+    await expect(apiGet("/api/v1/example")).resolves.toEqual({ status: "ok" });
+  });
 
+  it("preserves structured validation details in ApiError", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        detail: [{ loc: ["body", "name"], msg: "Field required" }],
+        category: "validation",
+        retryable: false,
+      }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({
@@ -71,30 +78,101 @@ describe("apiGet", () => {
     });
   });
 
-  it("uses a generic error for non-JSON upstream error pages", async () => {
-    const html =
-      "<html><body><h1>502 Bad Gateway</h1><pre>internal proxy details</pre></body></html>";
+  it("uses an object detail message without rendering [object Object]", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(html, {
-        status: 502,
+      new Response(JSON.stringify({ detail: { message: "Access denied", code: "denied" } }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as Error).message).toBe("Access denied");
+  });
+
+  it("does not convert malformed JSON on a successful response into empty data", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("{", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(apiGet("/api/v1/projects")).rejects.toThrow("Invalid JSON API response (200).");
+  });
+
+  it("rejects HTML returned with a successful API status", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("<html><body>proxy page</body></html>", {
+        status: 200,
         headers: { "content-type": "text/html; charset=utf-8" },
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
+    await expect(apiGet("/api/v1/projects")).rejects.toThrow("Expected JSON API response (200).");
+  });
 
+  it("uses a generic error for non-JSON upstream error pages", async () => {
+    const html = "<html><body><h1>502 Bad Gateway</h1><pre>internal proxy details</pre></body></html>";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(html, { status: 502, headers: { "content-type": "text/html; charset=utf-8" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
-
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 502, detail: null });
     expect((error as Error).message).toBe("API request failed (502)");
     expect((error as Error).message).not.toContain("internal proxy details");
   });
 
+  it("accepts 204 No Content as an empty successful response", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(apiGet("/api/v1/projects")).resolves.toBeNull();
+  });
+
+  it("passes AbortSignal through to fetch", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await apiGet("/api/v1/projects", { signal: controller.signal });
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
   it("rejects non-absolute API paths before issuing a request", async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);
-
     await expect(apiGet("api/v1/projects")).rejects.toThrow("absolute paths");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("downloads a file with authentication and revokes its blob URL", async () => {
+    const createObjectUrl = vi.fn(() => "blob:test-download");
+    const revokeObjectUrl = vi.fn();
+    const NativeURL = globalThis.URL;
+    const MockURL = class extends NativeURL {
+      static createObjectURL = createObjectUrl;
+      static revokeObjectURL = revokeObjectUrl;
+    };
+    vi.stubGlobal("URL", MockURL);
+    useSessionStore.getState().setAdminToken("download-token");
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(new Blob(["video"]), { status: 200, headers: { "content-type": "video/mp4" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+    await downloadFile("/api/v1/assets/asset-1/download", "clip.mp4");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("X-Studio-Admin-Token")).toBe(
+      "download-token",
+    );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe("*/*");
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob));
+    expect(click).toHaveBeenCalledTimes(1);
+    await vi.runAllTimersAsync();
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:test-download");
   });
 });

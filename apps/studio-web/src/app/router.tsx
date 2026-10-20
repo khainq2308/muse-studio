@@ -1,6 +1,6 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
-import App from "../App";
-import ProjectModuleRoute from "./project-module-route";
+import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
+import App from "@/App";
+import ProjectModuleRoute, { isProjectModule } from "@/app/project-module-route";
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -15,6 +15,11 @@ const indexRoute = createRoute({
 const projectModuleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects/$projectId/$module",
+  beforeLoad: ({ params }) => {
+    if (!isProjectModule(params.module)) {
+      throw redirect({ to: "/" });
+    }
+  },
   component: ProjectModuleRoute,
 });
 

@@ -1,4 +1,4 @@
-import { useSessionStore } from "../../stores/session-store";
+import { useSessionStore } from "@/lib/stores/session-store";
 
 export type QueryValue = string | number | boolean | null | undefined;
 export type QueryParams = Record<string, QueryValue>;
@@ -22,6 +22,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(detail: unknown, status: number): string {
   if (typeof detail === "string" && detail.trim()) return detail;
+  if (isRecord(detail)) {
+    const message = [detail.message, detail.msg, detail.error].find(
+      (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+    if (message) return message;
+  }
   if (Array.isArray(detail)) {
     const messages = detail
       .map((item) => {
@@ -35,7 +41,7 @@ function errorMessage(detail: unknown, status: number): string {
       .filter(Boolean);
     if (messages.length > 0) return messages.join("; ");
   }
-  return "API request failed (" + status + ")";
+  return `API request failed (${status})`;
 }
 
 export class ApiError extends Error implements ApiErrorBody {
@@ -123,20 +129,21 @@ async function send(path: string, options: ApiRequestOptions = {}): Promise<Resp
   return fetch(buildUrl(path, query), { ...init, headers, body: requestBody });
 }
 
+function isJsonContentType(contentType: string): boolean {
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  return mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
 async function parseResponse(response: Response): Promise<unknown> {
   if (response.status === 204) return null;
   const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("json")) {
-    try {
-      return await response.json();
-    } catch {
-      return null;
-    }
+  if (!isJsonContentType(contentType)) {
+    throw new Error(`Expected JSON API response (${response.status}).`);
   }
   try {
-    return await response.text();
+    return await response.json();
   } catch {
-    return null;
+    throw new Error(`Invalid JSON API response (${response.status}).`);
   }
 }
 
@@ -144,7 +151,14 @@ async function throwApiError(response: Response): Promise<never> {
   // Only trust structured error fields from JSON. Proxies often return HTML for 502/503;
   // forwarding that body into Error.message would leak a raw upstream page into future UI.
   const contentType = response.headers.get("content-type") ?? "";
-  const payload = contentType.toLowerCase().includes("json") ? await parseResponse(response) : null;
+  let payload: unknown = null;
+  if (isJsonContentType(contentType)) {
+    try {
+      payload = await response.json();
+    } catch {
+      // Invalid error JSON should degrade to a generic ApiError, not mask the HTTP status.
+    }
+  }
   const record = isRecord(payload) ? payload : undefined;
   const detail = record && "detail" in record ? record.detail : payload;
   const category = typeof record?.category === "string" ? record.category : undefined;

@@ -1,7 +1,14 @@
 import { expect, test } from "@playwright/test";
 
 test("production build deep link matches the registered project-module route", async ({ page }) => {
-  const requestedApiPaths: string[] = [];
+  const requestedApiUrls: Array<{ origin: string; pathname: string }> = [];
+
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.includes("/api/") || url.pathname.includes("/healthz")) {
+      requestedApiUrls.push({ origin: url.origin, pathname: url.pathname });
+    }
+  });
 
   await page.route("**/healthz", async (route) => {
     await route.fulfill({
@@ -11,17 +18,7 @@ test("production build deep link matches the registered project-module route", a
     });
   });
 
-  await page.route("**/api/v1/projects", async (route) => {
-    requestedApiPaths.push(new URL(route.request().url()).pathname);
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([]),
-    });
-  });
-
-  await page.route("**/api/v1/connections", async (route) => {
-    requestedApiPaths.push(new URL(route.request().url()).pathname);
+  await page.route("**/api/**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -36,9 +33,22 @@ test("production build deep link matches the registered project-module route", a
   await expect(route).toHaveAttribute("data-module", "queue-monitor");
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
   await expect
-    .poll(() => requestedApiPaths)
+    .poll(() => requestedApiUrls.map(({ pathname }) => pathname))
     .toEqual(expect.arrayContaining(["/api/v1/projects", "/api/v1/connections"]));
-  expect(requestedApiPaths.every((path) => path.startsWith("/api/"))).toBe(true);
+
+  const appOrigin = new URL(page.url()).origin;
+  expect(requestedApiUrls.length).toBeGreaterThan(0);
+  for (const request of requestedApiUrls) {
+    expect(request.origin).toBe(appOrigin);
+    expect(request.pathname === "/healthz" || request.pathname.startsWith("/api/")).toBe(true);
+  }
+});
+
+test("invalid project modules redirect instead of rendering the app shell", async ({ page }) => {
+  await page.goto("/projects/test-project/not-a-real-module");
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
 });
 
 test("unknown routes do not masquerade as the dashboard", async ({ page }) => {

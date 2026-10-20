@@ -1,11 +1,11 @@
 import { AlertCircle, Cable, CheckCircle2, Compass, Film, LoaderCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
-import { Button } from "./components/ui/button";
-import { useConnections } from "./entities/connections/api";
+import { Button } from "@/components/ui/button";
+import { useConnections } from "@/entities/connection/api";
 import { useHealth } from "./entities/system/api";
-import { useProjects } from "./entities/projects/api";
-import { ApiError } from "./lib/api/client";
-import { useSessionStore } from "./stores/session-store";
+import { useProjects } from "@/entities/project/api";
+import { ApiError } from "@/lib/api/client";
+import { useSessionStore } from "@/lib/stores/session-store";
 
 function isAuthenticationError(error: unknown): boolean {
   return error instanceof ApiError && [401, 403].includes(error.status);
@@ -52,10 +52,10 @@ export function App() {
           : "Unknown";
 
   const statusClass = apiStatus === "Online"
-    ? "text-emerald-400"
+    ? "text-success"
     : authenticationRequired
-      ? "text-amber-300"
-      : "text-rose-400";
+      ? "text-warning"
+      : "text-destructive";
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -107,7 +107,7 @@ export function App() {
 
             <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs">
               {apiStatus === "Online" ? (
-                <CheckCircle2 className="size-4 text-emerald-400" aria-hidden="true" />
+                <CheckCircle2 className="size-4 text-success" aria-hidden="true" />
               ) : (
                 <span className="size-2 rounded-full bg-current" aria-hidden="true" />
               )}

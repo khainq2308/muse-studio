@@ -61,7 +61,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/entities/projects/**/*.{ts,tsx}"],
+    files: ["src/entities/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -69,11 +69,13 @@ export default tseslint.config(
           patterns: [
             {
               group: [
-                "../connections/**",
-                "../../entities/connections/**",
-                "@/entities/connections/**",
+                "@/features/**",
+                "../features/**",
+                "../../features/**",
+                "../../../features/**",
+                "../../../../features/**",
               ],
-              message: "Cross-entity imports are forbidden; move shared contracts into lib.",
+              message: "Entities must not depend on features; place shared hooks in entities or lib.",
             },
           ],
         },
@@ -81,15 +83,31 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/entities/connections/**/*.{ts,tsx}"],
+    files: ["src/components/ui/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
           patterns: [
             {
-              group: ["../projects/**", "../../entities/projects/**", "@/entities/projects/**"],
-              message: "Cross-entity imports are forbidden; move shared contracts into lib.",
+              group: [
+                "@/features/**",
+                "@/entities/**",
+                "@/lib/api/**",
+                "../features/**",
+                "../../features/**",
+                "../../../features/**",
+                "../../../../features/**",
+                "../entities/**",
+                "../../entities/**",
+                "../../../entities/**",
+                "../../../../entities/**",
+                "../lib/api/**",
+                "../../lib/api/**",
+                "../../../lib/api/**",
+                "../../../../lib/api/**",
+              ],
+              message: "UI primitives must remain domain-agnostic and must not access API transport.",
             },
           ],
         },

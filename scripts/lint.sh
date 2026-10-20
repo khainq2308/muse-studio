@@ -44,11 +44,11 @@ else
 fi
 
 echo "==> Studio Web lint and formatting"
-if [ ! -d apps/studio-web/node_modules ]; then
-  ( cd apps/studio-web && npm ci --no-audit --no-fund ) || rc=1
-fi
-if [ -d apps/studio-web/node_modules ]; then
+if ( cd apps/studio-web && npm ci --no-audit --no-fund ); then
   ( cd apps/studio-web && npm run lint && npm run format:check ) || rc=1
+else
+  echo "Frontend dependency install failed; skipping lint and format checks." >&2
+  rc=1
 fi
 
 python3 scripts/check_layering.py || rc=1

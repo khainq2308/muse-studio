@@ -40,7 +40,7 @@ Bảng này là nguồn trạng thái duy nhất cho các artifact frontend. M�
 | Kéo–thả | **dnd-kit** | Sắp xếp shot trên board, clip trên timeline. |
 | Bảng / danh sách dài | TanStack Table / @tanstack/react-virtual | Chỉ thêm khi một màn hình thực sự cần. |
 | Test | **Vitest** + Testing Library + MSW (handler qua `openapi-msw` từ cùng snapshot OpenAPI) + **Playwright** smoke test | Xem mục 7. |
-| Lint / format | ESLint + Prettier cho frontend | ESLint chặn raw `fetch`/browser storage và import chéo giữa các entity hiện có; frontend boundary checker kiểm tra cross-feature imports, raw fetch/storage và JSON dump trong `<pre>`. Mọi feature mới phải mở rộng rule nếu thêm module mới. |
+| Lint / format | ESLint + Prettier cho frontend | ESLint chặn raw `fetch`/browser storage và các alias import vi phạm layering; AST-based boundary checker kiểm tra import tĩnh/động, cross-layer/cross-feature imports, import ra ngoài `src/`, raw fetch/storage và JSON dump trong `<pre>`. Mọi feature mới phải giữ các rule này trong CI. |
 | Lockfile | `package-lock.json` | Bắt buộc commit; cài đặt trong CI/Docker bằng `npm ci`. Cấm sửa lockfile bằng tay (theo `AGENTS.md`). |
 
 Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ thể của một feature và được nêu lý do trong PR. Không thêm thư viện "để dành".
@@ -48,7 +48,7 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 ## 3. Contracts: sinh tự động từ OpenAPI — cấm viết tay
 
 - Nguồn sự thật duy nhất cho API types là OpenAPI schema của orchestrator. Schema phải lấy được **không cần chạy server**. Phase 0 sẽ bổ sung một script export offline (dự kiến đặt tên scripts/export_openapi.py; hiện chưa có trong repository) để nạp đối tượng FastAPI app và ghi `app.openapi()` ra snapshot OpenAPI. Snapshot dự kiến đặt tại apps/orchestrator/openapi.json và cũng chưa được commit ở revision hiện tại. Việc nạp module app không chạy lifespan nên mục tiêu là không cần DB/Redis.
-- Lệnh chuẩn dưới đây là script **sẽ được bổ sung vào `apps/studio-web/package.json` ở Phase 0 — hiện tại nó chưa tồn tại** (package.json hiện chỉ có `dev`/`build`/`preview`, và thư mục frontend chưa có `package-lock.json`); đừng chạy khi chưa tới Phase 0. Khi đã có, lệnh đọc snapshot sau khi Phase 0 tạo và commit, không phụ thuộc server đang chạy:
+- Lệnh `npm run gen:api` dưới đây vẫn là hạng mục của Phase 0b; PR #49 đã thiết lập các script frontend hiện tại và commit `package-lock.json`, nhưng chưa tạo snapshot OpenAPI hoặc generated schema. Khi Phase 0b được triển khai, lệnh sẽ đọc snapshot đã commit và không phụ thuộc server đang chạy:
 
   ```bash
   npm run gen:api   # openapi-typescript ../orchestrator/openapi.json -> src/lib/api/schema.d.ts

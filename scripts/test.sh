@@ -27,7 +27,7 @@ run_web() {
   echo "==> Studio Web: unit tests"
   ( cd "$ROOT/apps/studio-web" && npm test ) || rc=1
   echo "==> Studio Web: typecheck + production build"
-  ( cd "$ROOT/apps/studio-web" && npm run build ) || rc=1
+  ( cd "$ROOT/apps/studio-web" && VITE_ORCHESTRATOR_URL="." npm run build ) || rc=1
   if command -v npx >/dev/null 2>&1; then
     echo "==> Studio Web: Playwright Chromium smoke"
     ( cd "$ROOT/apps/studio-web" && npx playwright install chromium && npm run test:e2e ) || rc=1
