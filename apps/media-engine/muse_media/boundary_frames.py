@@ -45,7 +45,6 @@ def _extract_frame(
         "-y",
         "-i", str(source),
         "-vf", select_filter,
-        "-vsync", "0",
         "-frames:v", "1",
         str(output),
     ]

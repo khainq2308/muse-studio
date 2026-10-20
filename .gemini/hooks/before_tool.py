@@ -121,6 +121,7 @@ def check_many_file_paths(args: dict) -> int:
         return 2
 
     # Explicit targeting is blocked regardless of ignore rules.
+    root_resolved = ROOT.resolve()
     for pattern in patterns:
         if pattern_targets_secret(pattern):
             print(
@@ -132,7 +133,7 @@ def check_many_file_paths(args: dict) -> int:
         resolved = candidate if candidate.is_absolute() else ROOT / candidate
         try:
             resolved_path = resolved.resolve()
-            resolved_path.relative_to(ROOT)
+            resolved_path.relative_to(root_resolved)
         except (OSError, RuntimeError, ValueError):
             print(
                 "[gemini safety guard] read_many_files pattern resolves outside the repository.",
@@ -153,8 +154,9 @@ def check_many_file_paths(args: dict) -> int:
                 continue
 
             try:
-                candidate.resolve().relative_to(ROOT)
-                relative = candidate.absolute().relative_to(ROOT).as_posix()
+                candidate.resolve().relative_to(root_resolved)
+                target_rel = candidate.resolve().relative_to(root_resolved).as_posix()
+                symlink_rel = Path(os.path.relpath(candidate, ROOT)).as_posix()
             except (OSError, RuntimeError, ValueError):
                 print(
                     "[gemini safety guard] Cannot safely resolve a potential secret path.",
@@ -162,8 +164,14 @@ def check_many_file_paths(args: dict) -> int:
                 )
                 return 2
 
-            included = any(pattern_matches(relative, pattern) for pattern in patterns)
-            excluded = any(pattern_matches(relative, pattern) for pattern in exclusions)
+            included = any(
+                pattern_matches(target_rel, pattern) or pattern_matches(symlink_rel, pattern)
+                for pattern in patterns
+            )
+            excluded = any(
+                pattern_matches(target_rel, pattern) or pattern_matches(symlink_rel, pattern)
+                for pattern in exclusions
+            )
             if not included or excluded:
                 continue
 
@@ -190,7 +198,7 @@ def check_grep_search_paths(args: dict) -> int:
     candidate = supplied_path if supplied_path.is_absolute() else ROOT / supplied_path
     try:
         resolved = candidate.resolve()
-        rel = resolved.relative_to(ROOT).as_posix()
+        rel = resolved.relative_to(ROOT.resolve()).as_posix()
     except (OSError, RuntimeError, ValueError):
         print("[gemini safety guard] grep_search path resolves outside the repository.", file=sys.stderr)
         return 2
