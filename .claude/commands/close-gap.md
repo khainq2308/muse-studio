@@ -10,8 +10,8 @@ Gap goals:
 - arq-worker: worker processes generation and cleanup tasks; API enqueues and re-enqueues jobs.
 - alembic: versioned schema and documented existing-install upgrade path.
 - boundary-frames: real PNGs via media-engine; no fake PNG outside an explicit test seam.
-- web-foundation: typed API client, modular UI, routing and shared contracts.
-- contracts: real web imports from packages/contracts.
+- web-foundation: implement the assigned Phase 0a frontend foundation from docs/FRONTEND_ARCHITECTURE.md.
+- generated-api-contracts: offline OpenAPI snapshot/export, generated web types, drift check, and router-by-router response_model audit; remove packages/contracts only after every consumer has migrated.
 - ci-hardening: CI runs lint, layering, docs and agent-kit validation.
 - docker-prod: hardened production image and environment-driven CORS.
 

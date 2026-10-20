@@ -29,7 +29,7 @@ The same instruction prose is not enough to make hooks portable: each host has i
 
 Delegate only when the host actually offers subagents. Assign independent tasks such as:
 - `backend-dev`: API/application/repository/service behavior and backend tests.
-- `frontend-dev`: UI, API client and shared TypeScript contracts.
+- `frontend-dev`: UI, shared API transport and generated OpenAPI types under the mandatory frontend architecture.
 - `test-writer`: regression and negative tests.
 - `code-reviewer`: read-only review of behavior, security, architecture and coverage.
 - `security-auditor`: read-only security analysis.

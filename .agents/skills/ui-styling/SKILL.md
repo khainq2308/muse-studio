@@ -210,7 +210,7 @@ Covers:
 
 ## Utility Scripts
 
-**Python automation for component installation and configuration generation.**
+**Python automation for component installation.**
 
 ### shadcn_add.py
 Add shadcn/ui components with dependency handling:
@@ -218,11 +218,8 @@ Add shadcn/ui components with dependency handling:
 python scripts/shadcn_add.py button card dialog
 ```
 
-### tailwind_config_gen.py
-Generate tailwind.config.js with custom theme:
-```bash
-python scripts/tailwind_config_gen.py --colors brand:blue --fonts display:Inter
-```
+### MuseStudio token rule (mandatory)
+MuseStudio uses Tailwind CSS v4's CSS-first theme. Define and consume application tokens only through `apps/studio-web/src/styles/globals.css` and shadcn semantic CSS variables. Do not generate or add `tailwind.config.js/ts`; do not use a Tailwind config generator for this repository. The generic Tailwind customization references may apply to other repos/legacy Tailwind versions, not this app.
 
 ## Best Practices
 
@@ -254,7 +251,6 @@ python scripts/tailwind_config_gen.py --colors brand:blue --fonts display:Inter
 
 **Automation**
 - `scripts/shadcn_add.py` - Component installation
-- `scripts/tailwind_config_gen.py` - Config generation
 
 ## Common Patterns
 
