@@ -230,13 +230,12 @@ describe("API client", () => {
     "/api/v1/projects/a%2F..",
     "/api/v1//projects",
   ])("rejects traversal or repeated-separator path %s before fetching", async (path) => {
-      const fetchMock = vi.fn<typeof fetch>();
-      vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
 
-      await expect(apiGet(path)).rejects.toThrow(/dot segments|path separators|repeated separators/);
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
+    await expect(apiGet(path)).rejects.toThrow(/dot segments|path separators|repeated separators/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it("rejects malformed JSON on successful responses as a non-retryable ApiError", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
@@ -321,11 +320,9 @@ describe("API client", () => {
       static revokeObjectURL = revokeObjectUrl;
     };
     vi.stubGlobal("URL", MockURL);
-    const click = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => {
-        throw new Error("download click failed");
-      });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {
+      throw new Error("download click failed");
+    });
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(new Blob(["video"]), {
         status: 200,
@@ -335,9 +332,9 @@ describe("API client", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.useFakeTimers();
 
-    await expect(
-      downloadFile("/api/v1/assets/asset-1/download", "clip.mp4"),
-    ).rejects.toThrow("download click failed");
+    await expect(downloadFile("/api/v1/assets/asset-1/download", "clip.mp4")).rejects.toThrow(
+      "download click failed",
+    );
 
     await vi.runAllTimersAsync();
 
