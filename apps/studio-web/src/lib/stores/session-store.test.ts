@@ -16,6 +16,24 @@ describe("admin session state", () => {
     expect(window.sessionStorage.length).toBe(0);
   });
 
+  it("does not advance the session version when the token is unchanged", () => {
+    const initialVersion = useSessionStore.getState().sessionVersion;
+
+    useSessionStore.getState().setAdminToken("");
+    expect(useSessionStore.getState().sessionVersion).toBe(initialVersion);
+
+    useSessionStore.getState().setAdminToken(" same-token ");
+    const connectedVersion = useSessionStore.getState().sessionVersion;
+    useSessionStore.getState().setAdminToken("same-token");
+
+    expect(useSessionStore.getState().sessionVersion).toBe(connectedVersion);
+    useSessionStore.getState().clearAdminToken();
+    const disconnectedVersion = useSessionStore.getState().sessionVersion;
+    useSessionStore.getState().clearAdminToken();
+
+    expect(useSessionStore.getState().sessionVersion).toBe(disconnectedVersion);
+  });
+
   it("clears the secret and advances the cache version on disconnect", () => {
     useSessionStore.getState().setAdminToken("super-secret");
     const versionBeforeClear = useSessionStore.getState().sessionVersion;
