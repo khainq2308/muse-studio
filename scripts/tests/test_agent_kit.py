@@ -147,6 +147,15 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(denied.returncode, 2, denied.stderr)
             self.assertIn("real .env files", denied.stderr)
 
+            # The shell concatenates adjacent quoted fragments before opening a path.
+            # Ensure the guard inspects normalized tokens, not only raw command text.
+            concatenated = self.run_hook(
+                HOOKS / "guard_bash.py", root,
+                {"tool_name": "Bash", "tool_input": {"command": 'cat .e"nv"'}},
+            )
+            self.assertEqual(concatenated.returncode, 2, concatenated.stderr)
+            self.assertIn("real .env files", concatenated.stderr)
+
             for secret_name in (".envrc", ".env.example.local", ".ENVrc", ".ENV.example.local"):
                 secret_command = f"python3 -c \"print(open('{secret_name}').read())\""
                 result = self.run_hook(
