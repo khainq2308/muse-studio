@@ -117,19 +117,6 @@ jobs:
       - name: Lint frontend
         working-directory: apps/studio-web
         run: npm run lint
-      - name: Temporary formatter capture
-        working-directory: apps/studio-web
-        run: |
-          npx prettier --write scripts/check_frontend_boundaries.mjs src/lib/api/client.ts src/lib/api/client.test.ts
-          echo "PRETTIER_BOUNDARY_BEGIN"
-          cat scripts/check_frontend_boundaries.mjs
-          echo "PRETTIER_BOUNDARY_END"
-          echo "PRETTIER_CLIENT_BEGIN"
-          cat src/lib/api/client.ts
-          echo "PRETTIER_CLIENT_END"
-          echo "PRETTIER_TEST_BEGIN"
-          cat src/lib/api/client.test.ts
-          echo "PRETTIER_TEST_END"
       - name: Check frontend formatting
         working-directory: apps/studio-web
         run: npm run format:check
