@@ -159,6 +159,9 @@ describe("API client", () => {
     await expect(apiGetText("/api/v1/projects/project-1/shots/export")).resolves.toBe(
       "# exported markdown",
     );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe(
+      "text/plain, text/markdown",
+    );
   });
 
   it("rejects non-text responses from apiGetText", async () => {
