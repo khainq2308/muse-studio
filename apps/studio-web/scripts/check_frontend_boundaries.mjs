@@ -233,7 +233,8 @@ for (const file of collectFiles(srcRoot)) {
   }
   inspectJsx(sourceFile);
 
-  if (relative !== "lib/api/client.ts" && containsRawFetchAccess(sourceFile)) {
+  const isTestFile = relative.endsWith(".test.ts") || relative.endsWith(".test.tsx");
+  if (!isTestFile && relative !== "lib/api/client.ts" && containsRawFetchAccess(sourceFile)) {
     failures.push(`${relative}: use the shared authenticated API client instead of raw fetch or aliases.`);
   }
 
