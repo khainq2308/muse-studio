@@ -367,7 +367,9 @@ def main() -> None:
     if bad:
         block(f"[guard_bash:rm] Refusing recursive delete of '{bad}'. Delete specific files inside the project instead.")
 
-    if SECRET_PATH.search(command):
+    # Inspect normalized tokens as well as the raw command. Shell quote concatenation
+    # such as `cat .e"nv"` executes against `.env`, but a raw-only regex misses it.
+    if any(SECRET_PATH.search(candidate) for candidate in candidates):
         block("[guard_bash:secrets] Do not access real .env files from the shell. Use .env.example for variable names/placeholders.")
 
 
