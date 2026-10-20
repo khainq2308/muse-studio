@@ -13,7 +13,14 @@ export const useSessionStore = create<SessionState>((set) => ({
   adminToken: "",
   sessionVersion: 0,
   setAdminToken: (token) =>
-    set((state) => ({ adminToken: token.trim(), sessionVersion: state.sessionVersion + 1 })),
+    set((state) => {
+      const normalizedToken = token.trim();
+      if (normalizedToken === state.adminToken) return state;
+      return { adminToken: normalizedToken, sessionVersion: state.sessionVersion + 1 };
+    }),
   clearAdminToken: () =>
-    set((state) => ({ adminToken: "", sessionVersion: state.sessionVersion + 1 })),
+    set((state) => {
+      if (!state.adminToken) return state;
+      return { adminToken: "", sessionVersion: state.sessionVersion + 1 };
+    }),
 }));
