@@ -46,4 +46,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/studio-web
           git commit -m "style(frontend): apply Prettier formatting"
+          git pull --rebase origin "${TARGET_BRANCH}"
           git push origin "HEAD:${TARGET_BRANCH}"
