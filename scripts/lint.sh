@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/lint.sh [--fix|--all]
-# Default: check correctness-critical Ruff rules on changed Python files and run the layering ratchet.
-# The legacy app tree has pre-existing Ruff debt; --all reports it without reformatting.
+# Python correctness checks, frontend lint/format, and the DB layering ratchet.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v ruff >/dev/null || { echo "ruff not installed: pip install ruff" >&2; exit 127; }
@@ -42,6 +41,14 @@ else
     echo "No changed Python files; skipping Ruff check."
   fi
   rm -f "$temp_list"
+fi
+
+echo "==> Studio Web lint and formatting"
+if [ ! -d apps/studio-web/node_modules ]; then
+  ( cd apps/studio-web && npm ci --no-audit --no-fund ) || rc=1
+fi
+if [ -d apps/studio-web/node_modules ]; then
+  ( cd apps/studio-web && npm run lint && npm run format:check ) || rc=1
 fi
 
 python3 scripts/check_layering.py || rc=1
