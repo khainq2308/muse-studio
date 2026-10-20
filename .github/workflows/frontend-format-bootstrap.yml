@@ -1,0 +1,49 @@
+name: Temporary frontend format bootstrap
+
+on:
+  push:
+    branches:
+      - feat/frontend-foundation-phase-0a
+    paths:
+      - "apps/studio-web/**"
+      - ".github/workflows/frontend-format-bootstrap.yml"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - "apps/studio-web/**"
+      - ".github/workflows/frontend-format-bootstrap.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  format-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install locked frontend dependencies and format
+        working-directory: apps/studio-web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run format
+      - name: Commit formatter output to the feature branch
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          if [ -z "$(git status --porcelain -- apps/studio-web)" ]; then
+            echo "All frontend files are already formatted."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/studio-web
+          git commit -m "style(frontend): apply Prettier formatting"
+          git push origin "HEAD:${TARGET_BRANCH}"
