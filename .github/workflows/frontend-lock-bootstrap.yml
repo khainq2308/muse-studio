@@ -36,7 +36,7 @@ jobs:
         env:
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
-          if git diff --quiet -- apps/studio-web/package-lock.json; then
+          if [ -z "$(git status --porcelain -- apps/studio-web/package-lock.json)" ]; then
             echo "No lockfile changes to commit."
             exit 0
           fi
