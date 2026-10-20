@@ -33,6 +33,62 @@ export default tseslint.config(
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "error",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: "Use the shared authenticated API client." },
+        { name: "localStorage", message: "Admin credentials must remain memory-only." },
+        { name: "sessionStorage", message: "Admin credentials must remain memory-only." },
+      ],
+    },
+  },
+  {
+    files: ["src/lib/api/client.ts"],
+    rules: {
+      // This is the sole module that should issue raw fetch requests.
+      "no-restricted-globals": [
+        "error",
+        { name: "localStorage", message: "Admin credentials must remain memory-only." },
+        { name: "sessionStorage", message: "Admin credentials must remain memory-only." },
+      ],
+    },
+  },
+  {
+    files: ["src/entities/projects/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["../connections/**", "../../entities/connections/**", "@/entities/connections/**"],
+              message: "Entity modules must not import from another entity; use a shared lib contract.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/entities/connections/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["../projects/**", "../../entities/projects/**", "@/entities/projects/**"],
+              message: "Entity modules must not import from another entity; use a shared lib contract.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["**/*.test.{ts,tsx}", "e2e/**/*.{ts,tsx}"],
+    rules: {
+      // Tests intentionally inspect storage to prove secrets are not persisted.
+      "no-restricted-globals": "off",
     },
   },
   prettier,
