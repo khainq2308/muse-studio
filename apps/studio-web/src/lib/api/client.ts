@@ -141,7 +141,10 @@ async function parseResponse(response: Response): Promise<unknown> {
 }
 
 async function throwApiError(response: Response): Promise<never> {
-  const payload = await parseResponse(response);
+  // Only trust structured error fields from JSON. Proxies often return HTML for 502/503;
+  // forwarding that body into Error.message would leak a raw upstream page into future UI.
+  const contentType = response.headers.get("content-type") ?? "";
+  const payload = contentType.toLowerCase().includes("json") ? await parseResponse(response) : null;
   const record = isRecord(payload) ? payload : undefined;
   const detail = record && "detail" in record ? record.detail : payload;
   const category = typeof record?.category === "string" ? record.category : undefined;
