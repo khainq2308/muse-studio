@@ -2,6 +2,8 @@
 
 > Last updated: 2026-10-20
 > Status: Draft
+> Scope: general brand direction only; this draft is not an approved runtime frontend token definition.
+> Frontend source of truth: `docs/FRONTEND_ARCHITECTURE.md` defines the dark-default shadcn design system, and `apps/studio-web/src/styles/globals.css` owns runtime CSS tokens. Do not copy the draft light background, hex values or font into components. Reconcile any approved brand adoption via the architecture/ADR before changing runtime tokens.
 
 ## Quick Reference
 
