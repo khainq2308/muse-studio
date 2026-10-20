@@ -171,7 +171,9 @@ describe("API client", () => {
   });
 
   it("encodes API path parameters as one safe segment", () => {
-    expect(encodePathSegment("project/42 with space")).toBe("project%2F42%20with%20space");
+    expect(encodePathSegment("project/42 with space")).toBe(
+      "project%2F42%20with%20space",
+    );
     expect(() => encodePathSegment("..")).toThrow("must not be '.' or '..'");
   });
 
@@ -198,7 +200,11 @@ describe("API client", () => {
     const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({ status: 200, category: "invalid_response", retryable: false });
+    expect(error).toMatchObject({
+      status: 200,
+      category: "invalid_response",
+      retryable: false,
+    });
     expect((error as Error).message).toBe("Invalid JSON API response (200).");
   });
 
@@ -214,7 +220,11 @@ describe("API client", () => {
     const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({ status: 201, category: "invalid_response", retryable: false });
+    expect(error).toMatchObject({
+      status: 201,
+      category: "invalid_response",
+      retryable: false,
+    });
     expect((error as Error).message).toBe("Invalid JSON API response (201).");
   });
 
