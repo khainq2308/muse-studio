@@ -42,6 +42,14 @@ export default tseslint.config(
     },
   },
   {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
     files: ["src/lib/api/client.ts"],
     rules: {
       // This is the sole module that should issue raw fetch requests.
