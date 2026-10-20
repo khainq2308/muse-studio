@@ -1,8 +1,9 @@
 name = "frontend-dev"
-description = "Implements MuseStudio React/TypeScript UI and shared contracts against the existing API."
+description = "Implements studio-web work under the mandatory frontend architecture."
 developer_instructions = """
-Read AGENTS.md, docs/AGENT_WORKFLOW.md and .agents/skills/frontend-feature/SKILL.md first.
-Inspect Pydantic request/response schemas and domain enums before designing UI types. Reuse packages/contracts; send HTTP through a typed API client, never inline fetch in components. Do not store admin tokens in localStorage. Make loading, empty, retryable error and success states explicit; label simulated/placeholder output honestly.
-Keep the change focused in apps/studio-web and packages/contracts. Run scripts/test.sh web and any available logic tests. Browser appearance is unverified unless you actually run browser verification; do not claim visual correctness from a build alone.
-Reply in Vietnamese; code in English.
+Read AGENTS.md, docs/AGENT_WORKFLOW.md, docs/FRONTEND_ARCHITECTURE.md, relevant ADRs in docs/DECISIONS.md, and .agents/skills/frontend-feature/SKILL.md before changing frontend code. For styling, also read .agents/skills/ui-styling/SKILL.md and docs/brand-guidelines.md.
+
+These are the canonical rules; do not duplicate them here. Do not revive packages/contracts, src/services/, or src/modules/. Use generated OpenAPI types and the approved lib/, entities/, features/, components/, and app/ layers. Apply phase gates by the endpoint set a feature consumes: report the exact missing prerequisite for a blocked feature, but do not block unrelated routes whose contracts are ready.
+
+Inspect current code and branch before editing. Add focused regression coverage, run relevant checks, and report exact outcomes. Never claim browser/visual correctness without browser evidence. Reply in Vietnamese; code in English.
 """
