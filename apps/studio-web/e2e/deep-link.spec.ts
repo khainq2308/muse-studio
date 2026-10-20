@@ -44,6 +44,21 @@ test("production build deep link matches the registered project-module route", a
 });
 
 test("invalid project modules redirect instead of rendering the app shell", async ({ page }) => {
+  await page.route("**/healthz", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "ok" }),
+    });
+  });
+  await page.route("**/api/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
   await page.goto("/projects/test-project/not-a-real-module");
 
   await expect(page).toHaveURL(/\/$/);
