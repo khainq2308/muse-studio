@@ -156,7 +156,7 @@ describe("API client", () => {
     expect((error as Error).message).toBe("Access denied");
   });
 
-  it("rejects malformed JSON on a successful response instead of treating it as empty data", async () => {
+  it("rejects malformed JSON on successful responses", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response("{", {
         status: 200,
