@@ -4,6 +4,19 @@ Tài liệu này là **chuẩn bắt buộc** cho mọi thay đổi trong `apps/
 
 Bối cảnh: backend (M1–M7) hiện đã có các API phục vụ các luồng chính, trong khi frontend từng chỉ là một file `App.tsx` placeholder và nhiều bản giao diện sinh tự động (hand-rolled CSS, không thư viện component/icon, tự chế data-fetching, contracts viết tay trôi khỏi API thật, hiển thị JSON thô thay cho media). Lưu ý theo kỷ luật bằng chứng của `AGENTS.md`: "có endpoint" không đồng nghĩa "capability đã được kiểm chứng" — từng capability vẫn phải được xác minh theo OpenAPI, implementation và test tương ứng (xem `docs/MUSE2API_CAPABILITY_MATRIX.md`). Tài liệu này khoá các quyết định để tình trạng của frontend không lặp lại.
 
+## Trạng thái triển khai hiện tại
+
+Bảng này là nguồn trạng thái duy nhất cho các artifact frontend. Mỗi PR Phase 0/1/2/3/4 phải cập nhật bảng dựa trên file, test và CI thực tế; không suy ra trạng thái từ việc tài liệu đã mô tả thiết kế.
+
+| Hạng mục | Trạng thái ở revision hiện tại | Điều kiện đổi trạng thái |
+|---|---|---|
+| Chuẩn kiến trúc frontend | Đã đặc tả; chưa đồng nghĩa runtime đã được viết lại | Kiểm chứng các artifact trong PR phase tương ứng |
+| Foundation frontend (dependencies, lockfile, client, router, theme, lint) | Chưa hoàn thành Phase 0a | Build, typecheck, lint và test chạy trên dependency đã khóa |
+| OpenAPI export/snapshot/drift check | Chưa có đủ pipeline Phase 0b | Export offline tái lập, snapshot + generated schema được commit và CI phát hiện drift |
+| Typed backend routes | Chưa audit đầy đủ; phải bao gồm pipeline, queue, batch/takes, workflows, timeline và các router khác | Re-run response-model audit và kiểm tra schema enum/payload trên từng router |
+| Frontend feature UI | Chưa triển khai theo kiến trúc mục tiêu | Chỉ đánh dấu theo evidence của từng phase feature |
+| Browser smoke test | Chưa có smoke test production build/deep-link theo chuẩn này | Playwright pass với API mock và deep link thật trên bản build |
+
 ## 1. Nguyên tắc nền tảng
 
 1. **Media-first.** MuseStudio là studio sản xuất video: shot, take và asset phải được hiển thị bằng media thật (frame, video preview) chứ không phải bằng văn bản mô tả hay JSON thô.
@@ -43,7 +56,7 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 
   File sinh ra có header "generated — do not edit", không bao giờ sửa tay. PR thay đổi hành vi API ở backend phải kèm snapshot và file generated đã cập nhật (hoặc ghi rõ vì sao chưa cần).
 - **CI chống drift là bắt buộc** (thêm ở Phase 0): một step chạy script export offline và snapshot được bổ sung ở Phase 0 cùng `gen:api`, rồi `git diff --exit-code` trên cả snapshot lẫn `schema.d.ts`. Thiếu cơ chế này thì quy tắc trên chỉ là lời hứa.
-- Điều kiện tiên quyết ở backend: FastAPI chỉ sinh type tốt khi route khai báo `response_model`. Phase 0 phải gồm một bước **audit `response_model`** cho toàn bộ router (hiện nhiều endpoint thuộc queue/batch/workflows đang trả `dict` tự do) và bổ sung schema cho các endpoint còn thiếu. Cho tới khi audit xong, các bề mặt chưa có schema được liệt kê tường minh trong PR Phase 0 và là ngoại lệ tạm thời duy nhất của lệnh cấm `Record<string, unknown>` dưới đây.
+- Điều kiện tiên quyết ở backend: FastAPI chỉ sinh type tốt khi route khai báo `response_model`. **Phase 0c phải audit toàn bộ router**, không chỉ queue/batch/workflows: gồm pipeline (shots, Story Bible, import script), queue, batch/takes, workflows, timeline/export và các router còn lại. Baseline trong review tại revision này là 41/55 route thiếu `response_model`, trong đó 34 route trả `dict[str, Any]`; re-run audit ở Phase 0c thay vì đóng đinh số liệu này nếu source đã đổi. Mỗi endpoint chưa typed phải được ghi rõ và là blocker cho feature tiêu thụ endpoint đó; không được dùng `Record<string, unknown>` như một cách né contract gap.
 - Mọi response/request type trong features lấy từ `components['schemas'][...]` của generated schema. **Cấm** dùng `Record<string, unknown>` làm kiểu response trong features, và cấm định nghĩa interface payload/response song song trong file service.
 - `packages/contracts`: **giữ nguyên tại chỗ, không import mới** — bốn union type hiện có giữ nguyên cho tới khi có bản generated tương đương, sau đó package bị loại bỏ (việc loại bỏ là tiêu chí nghiệm thu của Phase 0). Lý do: package nằm ngoài Docker build context của studio-web và nội dung viết tay đã nhiều lần trôi khỏi API thật. Từ nay contracts sống trong `apps/studio-web/src/lib/api/` cùng với app duy nhất tiêu thụ chúng. Phương án thay thế "nới Docker build context lên root monorepo để giữ package" (đã thử ở PR #42) bị loại — xem ADR-007.
 
@@ -122,9 +135,9 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
 ### 5.1 API client & data fetching
 
-- Http client (`lib/api`) chịu trách nhiệm: gắn header `X-Studio-Admin-Token` (lấy từ store), chuẩn hoá lỗi thành `ApiError` gồm `status` + `detail` (đã qua redaction ở backend — không tự log thêm nội dung nhạy cảm), hỗ trợ huỷ bằng `AbortSignal` của TanStack Query, và tải file có auth qua blob + object URL (nhớ `revokeObjectURL`).
+- HTTP client (`lib/api/client.ts`) chịu trách nhiệm: gắn header `X-Studio-Admin-Token` (lấy từ store), chuẩn hoá lỗi thành `ApiError` gồm `status: number`, `detail: unknown`, `category?: string`, `retryable?: boolean`; backend có thể trả `detail` dạng string, object hoặc array (ví dụ lỗi validation 422). Giữ nguyên các field backend thực sự cung cấp, không ép mọi `detail` thành string và không log nội dung nhạy cảm. Client hỗ trợ huỷ bằng `AbortSignal` của TanStack Query và tải file có auth qua blob + object URL (nhớ `revokeObjectURL`).
 - Query key theo mẫu `['<feature>', ...ids, paramsObject]`, khai báo tập trung ở `lib/api/queryKeys.ts`.
-- Polling chỉ qua `refetchInterval` và phải dừng ở trạng thái terminal. Tập terminal **suy từ enum trong generated schema theo từng domain** — generation task: `succeeded | failed | canceled`; export job: `succeeded | failed | canceled` — và được gói trong một helper `isTerminal...` ở `lib/` để mọi feature dùng chung, không liệt kê rời rạc từng nơi. Polling phải có backoff (ví dụ 2s → 5s → 10s) và trần thời gian (ví dụ 30 phút); quá trần thì dừng poll, giữ trạng thái cuối và cho phép làm mới thủ công. Cấm tự chế hook kiểu `useAsyncData`/`usePolling` bằng `useEffect` + `setInterval` — mẫu này đã gây lỗi race/abort trong các bản sinh tự động trước đây.
+- Polling chỉ qua `refetchInterval` và phải dừng theo enum của **đúng resource**. `QueueTaskState` hiện gồm `queued | paused | running | succeeded | failed | poll_timeout | canceled`: terminal là `succeeded | failed | poll_timeout | canceled`; `paused` không terminal nhưng phải dừng polling/re-enqueue tự động cho tới khi người dùng resume, còn `poll_timeout` là kết thúc và không được poll tiếp như `running`. `ExportJobState` terminal là `succeeded | failed | canceled`. Tập trạng thái này phải trở thành enum trong response model/OpenAPI thay vì một trường `dict[str, Any]`/string không mô tả; sinh helper `isTerminal...` từ generated schema theo từng domain. Polling phải có backoff (ví dụ 2s → 5s → 10s) và trần thời gian (ví dụ 30 phút); quá trần thì dừng poll, giữ trạng thái gần nhất và cho phép làm mới thủ công. Cấm tự chế hook kiểu `useAsyncData`/`usePolling` bằng `useEffect` + `setInterval`.
 - Mutation thành công phải invalidate đúng query keys liên quan; lỗi mutation phải hiển thị cho người dùng, không nuốt lỗi.
 - Admin token chỉ giữ **trong bộ nhớ** (Zustand store, không persist). Cấm lưu vào `localStorage`/`sessionStorage`.
 
@@ -138,6 +151,7 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
 - Shot/take/asset phải render thumbnail hoặc video preview thật qua endpoint asset download có auth (`GET /api/v1/assets/{asset_id}/download`). Endpoint backup download (`GET /api/v1/backups/{backup_id}/download`) trả file ZIP và chỉ dành cho luồng system-ops; không dùng nó để preview media. Không có asset thì hiển thị placeholder rõ ràng kèm trạng thái generation của shot.
 - Cơ chế blob + object URL (tải file kèm header auth rồi tạo URL tạm) là giải pháp v1 và có **giới hạn phải tôn trọng**: nó tải toàn bộ file vào bộ nhớ, không seek/range, nên chỉ dùng cho ảnh và preview theo yêu cầu từng item. **Cấm** dùng nó để tải hàng loạt video cho lưới thumbnail. ADR-005 mô tả trích xuất boundary frames để nối shot; không tự suy ra từ ADR này rằng đã có endpoint poster/thumbnail chuyên dụng. Trước khi có nguồn poster đã được xác minh, không tải hàng loạt video để tạo thumbnail ở client. Poster asset/endpoint streaming có range + URL ký ngắn hạn là năng lực backend cần thiết kế và kiểm chứng riêng — cho tới lúc đó, lưới dùng placeholder hoặc poster asset đã tồn tại và video chỉ tải khi người dùng mở xem một item.
+- API takes hiện có các field `first_frame_asset_id` và `last_frame_asset_id`; chúng có thể null. Khi có ID, frontend tải ảnh PNG đầy đủ qua endpoint asset download dùng chung và chỉ lazy-load khi item sắp hiển thị/được mở. Đây là asset frame hiện có, không phải một endpoint poster chuyên dụng; không tải hàng loạt file ảnh/video về memory.
 - Duyệt take phải có chế độ so sánh A/B đặt hai take cạnh nhau bằng media thật, kèm thao tác chọn take và gắn cờ continuity — đây là nghiệp vụ lõi của shot-board, không phải trang trí.
 
 ### 5.4 Forms, hành động tốn quota & idempotency
@@ -148,8 +162,8 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
   | Endpoint | Cơ chế phía server | Việc phía client |
   |---|---|---|
-  | `POST /api/v1/queue/tasks` | Nhận field `idempotency_key` trong body; response kèm `created_new` (`false` = request trùng, trả lại task cũ) | Giữ key theo ý định bằng `useRef`: giữ nguyên khi retry cùng ý định, sinh key mới khi tham số đổi; hiển thị đúng trạng thái từ `created_new` |
-  | `POST /api/v1/projects/{id}/batch/launch` | Không nhận key từ client; service tự suy key theo nội dung cho từng task | Chống gửi trùng bằng trạng thái mutation (disable khi đang gửi) + dialog xác nhận |
+  | `POST /api/v1/queue/tasks` | `idempotency_key` là optional; khi bỏ key, backend tự chọn key theo nội dung. Response kèm `created_new` (`false` = request trùng, trả lại task cũ). `force_retry` yêu cầu một lần chạy/take mới. | Mặc định **bỏ field `idempotency_key`** và để backend chống trùng. Không tự sinh key ngẫu nhiên ở client. Chỉ gửi `force_retry: true` sau dialog xác nhận tạo take mới/tốn quota; không dùng nó cho retry mạng cùng một ý định. Hiển thị đúng `created_new`. |
+  | `POST /api/v1/projects/{id}/batch/launch` | Không nhận key từ client; service tự suy key theo nội dung cho từng task; `only_changed=false` yêu cầu chạy lại cả những shot không đổi | Chống gửi trùng khi mutation đang chạy. Dialog phải hiển thị rõ số lượng shot, cảnh báo quota, và lựa chọn **“Run all regardless of changes”** khi `only_changed=false`; yêu cầu xác nhận riêng trước khi gửi |
   | `POST /api/v1/projects/{id}/timeline/exports` | Chưa hỗ trợ idempotency key | Disable nút khi đang gửi; dựa vào trạng thái job để hiển thị tiến trình, không tự gửi lại |
 
   Không gửi `Idempotency-Key` header với kỳ vọng server sẽ đọc — hiện backend không đọc header này ở các endpoint trên.
@@ -157,7 +171,8 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 ### 5.5 Workflow canvas (M3)
 
 - Dùng `@xyflow/react` với custom node components typed theo generated schema; trạng thái node ánh xạ từ `NodeExecutionState` sang theme tokens.
-- Chế độ chạy mặc định là `dry_run`; chuyển sang chạy thật phải qua xác nhận ở mục 5.4. Thao tác approve manual gate là hành động first-class trên chính node đang `waiting_approval`, không phải form nhập ID rời rạc.
+- Dù API hiện mặc định `run_mode` là `full`, UI phải gửi tường minh `run_mode: "dry_run"` cho thao tác mặc định. Chỉ gửi `run_mode: "full"` sau xác nhận ở mục 5.4; không dựa vào default phía server để ngầm chạy thật. `run_mode` phải được biểu diễn bằng enum trong request/response schema để generated types bắt được hai mode.
+- Thao tác approve manual gate là hành động first-class trên chính node đang `waiting_approval`, không phải form nhập ID rời rạc.
 
 ### 5.6 Timeline & export (M6)
 
@@ -166,7 +181,8 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
 ### 5.7 Styling & icons
 
-- Viết style bằng Tailwind utilities và component shadcn; màu sắc/spacing lấy từ theme tokens (CSS variables). Cấm hard-code mã hex rải rác trong component và cấm thêm file CSS toàn cục mới ngoài `styles/globals.css`.
+- Viết style bằng Tailwind utilities và component shadcn; màu sắc/spacing lấy từ theme tokens (CSS variables) trong `styles/globals.css`, là nguồn token runtime duy nhất. Tailwind CSS v4 theo CSS-first config: cấm tạo `tailwind.config.js/ts` hoặc chạy `tailwind_config_gen.py` cho MuseStudio. `docs/brand-guidelines.md` đang là Draft và không ghi đè theme dark + semantic shadcn tokens; mọi quyết định adoption palette/font brand phải được reconcile trong tài liệu này/ADR trước khi đưa vào runtime.
+Cấm hard-code mã hex rải rác trong component và cấm thêm file CSS toàn cục mới ngoài `styles/globals.css`.
 - Mọi nút bấm có icon từ lucide-react đi kèm nhãn chữ hoặc `aria-label` (với nút chỉ-icon). Badge trạng thái dùng token màu + chữ, ánh xạ nhất quán từ các state union của domain (approval/generation/node/health).
 
 ### 5.8 Accessibility
@@ -177,12 +193,13 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
 - Cả hai Dockerfile của studio-web build với context là `apps/studio-web`: mọi import phải resolve bên trong thư mục này (hệ quả trực tiếp của nguyên tắc 4, mục 1).
 - Dependency khai báo trong `apps/studio-web/package.json` và khoá bằng `package-lock.json`; thay đổi dependency phải đi qua package manager.
-- `VITE_ORCHESTRATOR_URL` giữ cơ chế hiện tại: `.` cho bản prod (same-origin qua nginx) và URL tuyệt đối cho dev. Không hard-code host/port trong code feature.
+- `VITE_ORCHESTRATOR_URL` dùng `.` cho production same-origin qua nginx và URL tuyệt đối cho dev. `lib/api/client.ts` bắt buộc chuẩn hoá `.` hoặc `/` thành base rỗng; mọi API path phải là đường dẫn tuyệt đối bắt đầu bằng `/api/` (ví dụ `/api/v1/projects`). Cấm ghép thành `./api/...` hay chuỗi URL tương đối vì khi đang ở deep link như `/projects/abc/queue-monitor`, trình duyệt sẽ gọi nhầm `/projects/abc/api/...` và nginx có thể trả `index.html`.
+Không hard-code host/port trong code feature.
 
 ## 7. Kiểm thử & Definition of Done cho một feature
 
 - Vitest + Testing Library cho component/hook; MSW với handler sinh qua `openapi-msw` từ chính snapshot OpenAPI đã commit (không viết mock tay trôi khỏi schema) cho tầng api của feature. Ít nhất: test cho query/mutation hooks chính và cho các component có logic trạng thái (badge mapping, confirm dialog, A/B compare).
-- Playwright smoke test là bắt buộc từ Phase 0: app khởi động trước một orchestrator mock, các route chính render được và không vỡ layout ở viewport chuẩn. Nhóm lỗi lịch sử của frontend phần lớn là "không chạy được / giao diện vỡ" — unit test không bắt được nhóm này.
+- Playwright smoke test là bắt buộc từ Phase 0a. Smoke mặc định **không chạy orchestrator/DB/Redis thật**: dùng `page.route()`/`route.fulfill()` để mock các request `/api/v1/**` bằng fixture hợp lệ với OpenAPI snapshot, trong khi app được build và serve như production. Test ít nhất một deep link thật như `/projects/test-project/queue-monitor`, kiểm tra SPA fallback render app và API request vẫn nhắm tới đường dẫn tuyệt đối `/api/...` chứ không thành `/projects/test-project/api/...`. Integration test với orchestrator thật + provider mock + DB/Redis disposable là suite riêng, không gọi đó là Playwright smoke mặc định.
 - Một feature chỉ "xong" khi đồng thời: `tsc` + `vite build` pass; đủ bốn trạng thái hiển thị; không JSON dump; có media preview thật ở nơi có media; test của feature pass; lint pass; không vi phạm các mục 3–6 của tài liệu này. PR thay đổi giao diện phải kèm **ảnh chụp màn hình** các màn hình chính đã thay đổi (trước/sau nếu là viết lại) trong mô tả PR.
 
 ## 8. Lộ trình chuyển đổi từ trạng thái hiện tại
@@ -191,11 +208,13 @@ Mỗi phase là một PR riêng; không gộp refactor nền móng với viết 
 
 > **Quan hệ với PR #42:** PR #42 (`feat/studio-web-workspace`) triển khai một workspace nhiều module theo hướng ngược với tài liệu này — nới Docker build context lên root monorepo, mở rộng contracts viết tay, CSS viết tay, hiển thị JSON thô. PR #42 **bị supersede bởi tài liệu này và không được merge ở dạng hiện tại**; phạm vi chức năng của nó (các module và luồng người dùng đã làm) là đầu vào yêu cầu cho Phase 1–2, nhưng mã của nó không được dùng làm nền. Xem thêm ADR-007.
 
-- **Phase 0 — Nền móng:** thêm Tailwind + shadcn/ui + lucide-react + TanStack Query + Zustand + TanStack Router + react-hook-form/zod, ESLint/Prettier kèm các rule thực thi ở mục 4, `package-lock.json` **và cập nhật cả hai Dockerfile của studio-web sang dùng `package-lock.json` + `npm ci`** (hiện chúng đang `npm install` không khoá phiên bản); dựng `lib/api` (HTTP client + generated schema + `gen:api` từ snapshot), bổ sung script xuất OpenAPI offline (dự kiến tên scripts/export_openapi.py), CI chống drift, audit `response_model` ở backend (mục 3), app shell + theme + Playwright smoke test, và loại bỏ `packages/contracts` sau khi generated types thay thế xong. Chưa viết lại feature nào.
-- **Phase 1 — Vòng sản xuất lõi:** shot-board (media preview + duyệt take A/B) và queue-monitor (polling bằng TanStack Query).
-- **Phase 2 — Quản trị:** script-studio, projects, connections, system-ops theo chuẩn form ở mục 5.4.
-- **Phase 3 — Workflow canvas:** dựng lại bằng @xyflow/react theo mục 5.5.
-- **Phase 4 — Timeline editor:** dựng theo mục 5.6, gồm export job polling.
+- **Phase 0a — Frontend foundation:** cài stack đã chốt; commit `package-lock.json`; đổi cả hai Dockerfile frontend sang `npm ci`; dựng `lib/api/client.ts`, router/app shell, theme token trong `styles/globals.css`, ESLint/Prettier và rule layering; đưa frontend lint vào `scripts/lint.sh` và CI; giữ `scripts/test.sh web` làm gate typecheck/build và cập nhật job `frontend-build` để cache theo lockfile, chạy `npm ci`, test deep-link bằng Playwright production build. Chưa viết lại feature.
+- **Phase 0b — OpenAPI pipeline:** thêm `scripts/export_openapi.py`, snapshot `apps/orchestrator/openapi.json`, `gen:api` tạo `src/lib/api/schema.d.ts`, và CI drift check. Exporter phải đặt `ENVIRONMENT=development` tường minh **trước khi import Settings/FastAPI app**, để không bị cấu hình production hoặc thiếu secret làm hỏng export; xác định repo root bằng `Path(__file__)` để không phụ thuộc current working directory. Drift job phải cài Python dependency riêng (ví dụ `uv sync --locked --project apps/orchestrator --extra dev` rồi `uv run --locked --project apps/orchestrator ...`) và cài Node/frontend dependency riêng (`npm ci` trước `npm run gen:api`); không giả định dependency giữa các CI job được chia sẻ.
+- **Phase 0c — Typed API theo router:** re-run audit và thêm Pydantic `response_model` + enum cho mọi route được đưa vào schema; bao gồm pipeline (shots, Story Bible, script import), queue, batch/takes, workflows, timeline/export và các router còn lại. Không chỉ kiểm tra queue/batch/workflows. Chỉ xoá `packages/contracts` ở bước cuối sau khi generated types cover toàn bộ consumer và không còn import cũ. Phase 0a/0b là prerequisite chung; gate typed theo route: queue-monitor có thể bắt đầu khi queue đủ typed; shot-board chỉ khi pipeline + queue + batch/takes đủ typed; các phase sau mở khi những route chúng dùng đã typed. Không chặn feature của router đã sẵn sàng chỉ vì router không liên quan còn thiếu response model.
+- **Phase 1 — Vòng sản xuất lõi:** queue-monitor khi queue typed; shot-board (media preview + duyệt take A/B) sau khi pipeline + queue + batch/takes typed.
+- **Phase 2 — Quản trị:** script-studio, projects, connections, system-ops sau khi các router tương ứng đã typed.
+- **Phase 3 — Workflow canvas:** dựng lại bằng @xyflow/react sau khi workflow request/response schema đã typed theo mục 5.5.
+- **Phase 4 — Timeline editor:** dựng theo mục 5.6 khi timeline/export schema đã typed, gồm export job polling.
 
 ## 9. Anti-patterns bị cấm (rút từ các bản sinh tự động đã bị loại)
 
