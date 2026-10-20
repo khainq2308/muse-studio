@@ -34,3 +34,18 @@ async def enqueue_generation_step(
         _defer_by=delay,
     )
     return job is not None
+
+
+def export_job_id(export_id: str) -> str:
+    """Stable ARQ job ID for one export; re-enqueueing the same export dedupes."""
+    return f"export-job:{export_id}"
+
+
+async def enqueue_export_job(redis: Any, export_id: str) -> bool:
+    """Schedule the FFmpeg export worker for a persisted QUEUED export job."""
+    job = await redis.enqueue_job(
+        "process_export_job",
+        export_id,
+        _job_id=export_job_id(export_id),
+    )
+    return job is not None

@@ -19,6 +19,13 @@ WORKDIR /workspace/apps/orchestrator
 RUN pip install --no-cache-dir "uv==0.10.0" \
     && uv sync --locked --project /workspace/apps/orchestrator
 
+# Run as a non-root user; /data/media is pre-created with this owner so the
+# named media volume inherits it on first use.
+RUN groupadd -r appuser && useradd -r -g appuser -m -d /home/appuser appuser \
+    && mkdir -p /data/media \
+    && chown -R appuser:appuser /workspace /opt/venv /data/media /home/appuser
+USER appuser
+
 EXPOSE 8000
 
 CMD ["uvicorn", "muse_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8000"]

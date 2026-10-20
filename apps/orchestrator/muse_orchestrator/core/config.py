@@ -71,6 +71,22 @@ class Settings(BaseSettings):
                 )
         return self
 
+    @property
+    def insecure_dev_defaults(self) -> bool:
+        """True when the process runs with development defaults that are unsafe to expose.
+
+        In a development environment the API is unauthenticated while no admin
+        token is set, and provider secrets are encrypted with a publicly known
+        key. Both are convenient on a developer machine and dangerous anywhere
+        else, so the startup path warns loudly whenever they are in effect.
+        """
+        if self.environment.strip().lower() not in _DEV_ENVIRONMENTS:
+            return False
+        return (
+            not (self.studio_admin_token or "").strip()
+            or self.secret_encryption_key == _DEVELOPMENT_ENCRYPTION_KEY
+        )
+
 
 settings = Settings()
 

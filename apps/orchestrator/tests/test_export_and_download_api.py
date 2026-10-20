@@ -21,6 +21,17 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"asset-download-test
 MP4_PLACEHOLDER = b"\x00\x00\x00\x18ftypmp42" + b"placeholder, not decodable"
 
 
+class _FakeArqPool:
+    """Records enqueued ARQ jobs instead of talking to Redis (same pattern as M4/M5)."""
+
+    def __init__(self) -> None:
+        self.jobs: list[tuple[str, tuple, dict]] = []
+
+    async def enqueue_job(self, function: str, *args, **kwargs):
+        self.jobs.append((function, args, kwargs))
+        return object()
+
+
 @pytest.fixture()
 async def client():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
@@ -32,10 +43,24 @@ async def client():
         async with session_factory() as session:
             yield session
 
+    # Export jobs are rendered by the ARQ worker; point it at the test database
+    # and give the API a fake pool so launches can be asserted without Redis.
+    from muse_orchestrator.workers import queue_worker
+
+    previous_session_local = queue_worker.AsyncSessionLocal
+    queue_worker.AsyncSessionLocal = session_factory
+    previous_pool = getattr(app.state, "arq_pool", None)
+    app.state.arq_pool = _FakeArqPool()
     app.dependency_overrides[get_db] = override_get_db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
         yield ac
     app.dependency_overrides.clear()
+    queue_worker.AsyncSessionLocal = previous_session_local
+    if previous_pool is None:
+        if hasattr(app.state, "arq_pool"):
+            delattr(app.state, "arq_pool")
+    else:
+        app.state.arq_pool = previous_pool
 
 
 async def _project(client: AsyncClient, name: str = "Export API") -> str:
@@ -110,13 +135,22 @@ async def test_export_of_undecodable_clip_fails_and_creates_no_output(client: As
     video = await _upload(client, project_id, "clip.mp4", MP4_PLACEHOLDER, "video/mp4")
     await _assemble(client, project_id, [{"asset_id": video["id"], "order_index": 1, "source_duration_seconds": 3.0}])
 
+    # The render runs in the ARQ worker now: launching returns 202 + a QUEUED job,
+    # and the failure is recorded on the job instead of the launch response.
     response = await client.post(f"/api/v1/projects/{project_id}/timeline/exports", json={})
+    assert response.status_code == 202, response.text
+    export_id = response.json()["export_id"]
+    assert export_id.startswith("exp_")
+    assert response.json()["state"] == "queued"
 
-    # 422 when FFmpeg rejects the placeholder, 503 on a machine without FFmpeg; never 201.
-    assert response.status_code in (422, 503), response.text
-    body = response.json()
-    assert body["state"] == "failed"
-    assert body["export_id"].startswith("exp_")
+    from muse_orchestrator.workers.queue_worker import process_export_job
+
+    result = await process_export_job({}, export_id)
+    assert result["state"] == "failed"
+
+    status_response = await client.get(f"/api/v1/projects/{project_id}/timeline/exports/{export_id}")
+    assert status_response.status_code == 200, status_response.text
+    assert status_response.json()["state"] == "failed"
     exports_dir = Path(settings.media_root) / project_id / "exports"
     assert not list(exports_dir.glob("*.mp4"))
 
@@ -158,14 +192,26 @@ async def test_export_that_fails_verification_is_not_stored_as_an_asset(
 
     monkeypatch.setattr(TimelineValidationService, "render_and_probe_mp4", render_with_bad_probe)
 
+    # The render runs in the ARQ worker: launch returns 202, the worker records
+    # the failed verification on the job, and no output asset is created.
     response = await client.post(f"/api/v1/projects/{project_id}/timeline/exports", json={})
+    assert response.status_code == 202, response.text
+    export_id = response.json()["export_id"]
 
-    assert response.status_code == 422
-    assert response.json()["state"] == "failed"
+    from muse_orchestrator.workers.queue_worker import process_export_job
+
+    result = await process_export_job({}, export_id)
+    assert result["state"] == "failed"
+
+    status_response = await client.get(f"/api/v1/projects/{project_id}/timeline/exports/{export_id}")
+    assert status_response.status_code == 200, status_response.text
+    body = status_response.json()
+    assert body["state"] == "failed"
+    assert "output_asset_id" not in body
 
 
 @pytest.mark.asyncio
-async def test_export_error_status_code_is_passed_through(
+async def test_export_error_is_recorded_on_the_job(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_id = await _project(client)
@@ -176,13 +222,24 @@ async def test_export_error_status_code_is_passed_through(
 
     monkeypatch.setattr(TimelineValidationService, "render_and_probe_mp4", render_unavailable)
 
+    # Render errors surface on the export job (polled via GET), not on the launch call.
     response = await client.post(f"/api/v1/projects/{project_id}/timeline/exports", json={})
+    assert response.status_code == 202, response.text
+    export_id = response.json()["export_id"]
+    # The "not rendered yet" contract also holds on the launch response.
+    assert "clip_audio" in response.json()["unsupported_features"]
 
-    assert response.status_code == 503
-    detail = response.json()["detail"]
-    assert detail["message"] == "FFmpeg chưa được cài."
-    # The "not rendered yet" contract also holds when the render fails.
-    assert "clip_audio" in detail["unsupported_features"]
+    from muse_orchestrator.workers.queue_worker import process_export_job
+
+    result = await process_export_job({}, export_id)
+    assert result["state"] == "failed"
+
+    status_response = await client.get(f"/api/v1/projects/{project_id}/timeline/exports/{export_id}")
+    assert status_response.status_code == 200, status_response.text
+    body = status_response.json()
+    assert body["state"] == "failed"
+    assert body["message"] == "FFmpeg chưa được cài."
+    assert "clip_audio" in body["unsupported_features"]
 
 @pytest.mark.asyncio
 async def test_p1_and_p3_short_source_video_rejected_and_early_422_includes_unsupported_features(client, tmp_path):
@@ -276,6 +333,21 @@ async def test_p1_and_p3_short_source_video_rejected_and_early_422_includes_unsu
             headers=headers,
             json={"sequence_id": tl_p1["sequence_id"]},
         )
-        assert exp_p1.status_code == 422
+        # The duration check lives in the render path, which now runs in the ARQ
+        # worker: launch returns 202 and the rejection is recorded on the job.
+        assert exp_p1.status_code == 202
         assert "unsupported_features" in exp_p1.json()
-        assert "output_asset_id" not in exp_p1.json()
+        export_id = exp_p1.json()["export_id"]
+
+        from muse_orchestrator.workers.queue_worker import process_export_job
+
+        worker_result = await process_export_job({}, export_id)
+        assert worker_result["state"] == "failed"
+
+        status_p1 = await client.get(
+            f"/api/v1/projects/{proj_id}/timeline/exports/{export_id}",
+            headers=headers,
+        )
+        assert status_p1.status_code == 200
+        assert status_p1.json()["state"] == "failed"
+        assert "output_asset_id" not in status_p1.json()

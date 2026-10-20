@@ -451,7 +451,24 @@ class GenerationQueueService:
         )
         shot.generation_state = ShotGenerationState.QUEUED
         db.add(task)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Lost a concurrent-enqueue race: two requests computed the same
+            # idempotency_key and both passed the pre-check above, so the UNIQUE
+            # constraint rejected this insert. Roll back and return the task the
+            # winning request created instead of surfacing a 500.
+            await db.rollback()
+            existing = (
+                await db.execute(
+                    select(GenerationTaskRecord).where(
+                        GenerationTaskRecord.idempotency_key == computed_idem
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return existing, False
+            raise
         await db.refresh(task)
         return task, True
 
