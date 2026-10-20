@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("production build deep link matches the registered project-module route", async ({
-  page,
-}) => {
+test("production build deep link matches the registered project-module route", async ({ page }) => {
   const requestedApiPaths: string[] = [];
 
   await page.route("**/healthz", async (route) => {
