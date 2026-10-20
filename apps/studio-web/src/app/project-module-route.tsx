@@ -5,11 +5,7 @@ import App from "../App";
 export default function ProjectModuleRoute() {
   const { projectId, module } = useParams({ from: "/projects/$projectId/$module" });
   return (
-    <div
-      data-testid="project-module-route"
-      data-project-id={projectId}
-      data-module={module}
-    >
+    <div data-testid="project-module-route" data-project-id={projectId} data-module={module}>
       <App />
     </div>
   );
