@@ -34,8 +34,8 @@ test("production SPA fallback renders a project-module deep link with absolute A
   await page.goto("/projects/test-project/queue-monitor");
 
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
-  await expect.poll(() => requestedApiPaths).toEqual(
-    expect.arrayContaining(["/api/v1/projects", "/api/v1/connections"]),
-  );
+  await expect
+    .poll(() => requestedApiPaths)
+    .toEqual(expect.arrayContaining(["/api/v1/projects", "/api/v1/connections"]));
   expect(requestedApiPaths.every((path) => path.startsWith("/api/"))).toBe(true);
 });

@@ -149,19 +149,13 @@ async function throwApiError(response: Response): Promise<never> {
   throw new ApiError({ status: response.status, detail, category, retryable });
 }
 
-export async function apiRequest<T>(
-  path: string,
-  options: ApiRequestOptions = {},
-): Promise<T> {
+export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const response = await send(path, options);
   if (!response.ok) return throwApiError(response);
   return (await parseResponse(response)) as T;
 }
 
-export function apiGet<T>(
-  path: string,
-  options: Omit<ApiRequestOptions, "method" | "body"> = {},
-) {
+export function apiGet<T>(path: string, options: Omit<ApiRequestOptions, "method" | "body"> = {}) {
   return apiRequest<T>(path, { ...options, method: "GET" });
 }
 
