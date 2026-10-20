@@ -49,6 +49,61 @@ class RecursiveDeleteGuardRegressionTests(unittest.TestCase):
         self.assertIsNotNone(self.guard.rm_is_dangerous("rm -rf 'unterminated"))
 
 
+class DynamicShellExpansionGuardRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.guard = load_module(
+            "test_dynamic_shell_expansion_guard",
+            HOOKS / "guard_bash.py",
+        )
+
+    def risk(self, command: str):
+        return self.guard.dynamic_shell_expansion_risk(
+            self.guard._shell_command_segments(command), command
+        )
+
+    def test_rejects_expansion_that_can_hide_protected_git_push(self):
+        commands = [
+            'git push origin "$(printf main)"',
+            'git push origin "$BRANCH"',
+            "g${IFS}it push origin main",
+            "cmd=git; $cmd push origin main",
+            'cmd=git; $cmd push origin "$TARGET"',
+            'g${IFS}it push origin fix/$BRANCH',
+            'git push origin feature `echo --force`',
+            'git reset "$OPTIONS"',
+            'git clean "$OPTIONS"',
+            'docker compose "$ACTION" "$OPTIONS"',
+            'eval "$COMMAND"',
+            'bash -c "$COMMAND"',
+            "git${IFS}push origin main",
+            'git ${IFS}push origin main',
+            "rm${IFS}-rf media",
+            'rm ${IFS}-rf media',
+            'bash -lc "$COMMAND"',
+            '/bin/sh -ec "$COMMAND"',
+            'env bash -lc "$COMMAND"',
+            'env -- "$COMMAND" push origin main',
+            'command -- "$COMMAND" push origin main',
+            'nohup -- "$COMMAND" push origin main',
+            'time -p "$COMMAND" push origin main',
+            'docker --context "$CTX" compose down -v',
+            'psql -c "$QUERY"',
+            'mysql --execute="$SQL"',
+            'printf "%s" "$QUERY" | psql -X',
+
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.risk(command), command)
+
+    def test_allows_literal_feature_push_and_unrelated_expansion(self):
+        self.assertIsNone(self.risk("git push origin fix/shell-guard"))
+        self.assertIsNone(self.risk('printf "%s" "$HOME"'))
+        self.assertIsNone(self.risk('GIT_PAGER="$HOME" git status'))
+        self.assertIsNone(self.risk('git log "$REF"'))
+
+
 class LayeringCheckerRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
