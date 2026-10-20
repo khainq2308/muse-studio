@@ -96,6 +96,9 @@ def _effective_command_index(tokens: list[str], index: int) -> int:
         if wrapper == "env":
             while index < len(tokens):
                 token = tokens[index]
+                if token == "--":
+                    index += 1
+                    break
                 if _SHELL_ASSIGNMENT.match(token):
                     index += 1
                     continue
@@ -110,8 +113,14 @@ def _effective_command_index(tokens: list[str], index: int) -> int:
                     continue
                 break
         elif wrapper == "command":
-            while index < len(tokens) and tokens[index] == "-p":
-                index += 1
+            while index < len(tokens):
+                if tokens[index] == "-p":
+                    index += 1
+                elif tokens[index] == "--":
+                    index += 1
+                    break
+                else:
+                    break
         elif wrapper == "exec":
             while index < len(tokens):
                 token = tokens[index]
@@ -119,10 +128,13 @@ def _effective_command_index(tokens: list[str], index: int) -> int:
                     index += 2
                 elif token in {"-c", "-l"}:
                     index += 1
+                elif token == "--":
+                    index += 1
+                    break
                 else:
                     break
-        elif wrapper == "time":
-            while index < len(tokens) and tokens[index] in {"-p"}:
+        elif wrapper in {"nohup", "time"}:
+            if index < len(tokens) and tokens[index] == "--":
                 index += 1
 
         # A dynamic wrapped executable is rejected by the caller on the next pass.
@@ -193,6 +205,10 @@ def dynamic_shell_expansion_risk(
         if command_name == "docker" and dynamic_args:
             if not args or _DYNAMIC_SHELL_SYNTAX.search(args[0]):
                 return "Docker subcommand uses shell expansion"
+            # Global Docker flags can precede the subcommand; refuse dynamic
+            # invocations in this form rather than mistaking a flag for the verb.
+            if args[0].startswith("-"):
+                return "Docker global options use shell expansion"
             first = args[0].lower()
             second = args[1].lower() if len(args) > 1 else ""
             destructive = (
