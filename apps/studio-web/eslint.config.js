@@ -75,7 +75,8 @@ export default tseslint.config(
                 "../../../features/**",
                 "../../../../features/**",
               ],
-              message: "Entities must not depend on features; place shared hooks in entities or lib.",
+              message:
+                "Entities must not depend on features; place shared hooks in entities or lib.",
             },
           ],
         },
@@ -107,7 +108,8 @@ export default tseslint.config(
                 "../../../lib/api/**",
                 "../../../../lib/api/**",
               ],
-              message: "UI primitives must remain domain-agnostic and must not access API transport.",
+              message:
+                "UI primitives must remain domain-agnostic and must not access API transport.",
             },
           ],
         },

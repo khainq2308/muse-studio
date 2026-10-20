@@ -58,14 +58,17 @@ describe("API responses", () => {
 
   it("preserves structured validation details in ApiError", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({
-        detail: [{ loc: ["body", "name"], msg: "Field required" }],
-        category: "validation",
-        retryable: false,
-      }), {
-        status: 422,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          detail: [{ loc: ["body", "name"], msg: "Field required" }],
+          category: "validation",
+          retryable: false,
+        }),
+        {
+          status: 422,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
     const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
@@ -111,7 +114,8 @@ describe("API responses", () => {
   });
 
   it("uses a generic error for non-JSON upstream error pages", async () => {
-    const html = "<html><body><h1>502 Bad Gateway</h1><pre>internal proxy details</pre></body></html>";
+    const html =
+      "<html><body><h1>502 Bad Gateway</h1><pre>internal proxy details</pre></body></html>";
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(html, { status: 502, headers: { "content-type": "text/html; charset=utf-8" } }),
     );
@@ -159,9 +163,14 @@ describe("API responses", () => {
     };
     vi.stubGlobal("URL", MockURL);
     useSessionStore.getState().setAdminToken("download-token");
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(new Blob(["video"]), { status: 200, headers: { "content-type": "video/mp4" } }),
+      new Response(new Blob(["video"]), {
+        status: 200,
+        headers: { "content-type": "video/mp4" },
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
     vi.useFakeTimers();
