@@ -40,7 +40,7 @@ Bảng này là nguồn trạng thái duy nhất cho các artifact frontend. M�
 | Kéo–thả | **dnd-kit** | Sắp xếp shot trên board, clip trên timeline. |
 | Bảng / danh sách dài | TanStack Table / @tanstack/react-virtual | Chỉ thêm khi một màn hình thực sự cần. |
 | Test | **Vitest** + Testing Library + MSW (handler qua `openapi-msw` từ cùng snapshot OpenAPI) + **Playwright** smoke test | Xem mục 7. |
-| Lint / format | ESLint + Prettier cho frontend | ESLint chặn raw `fetch`/browser storage và import chéo giữa các entity hiện có; `scripts/check_frontend_boundaries.mjs` kiểm tra cross-feature imports, raw fetch/storage và JSON dump trong `<pre>`. Mọi feature mới phải mở rộng rule nếu thêm module mới. |
+| Lint / format | ESLint + Prettier cho frontend | ESLint chặn raw `fetch`/browser storage và import chéo giữa các entity hiện có; `apps/studio-web/scripts/check_frontend_boundaries.mjs` kiểm tra cross-feature imports, raw fetch/storage và JSON dump trong `<pre>`. Mọi feature mới phải mở rộng rule nếu thêm module mới. |
 | Lockfile | `package-lock.json` | Bắt buộc commit; cài đặt trong CI/Docker bằng `npm ci`. Cấm sửa lockfile bằng tay (theo `AGENTS.md`). |
 
 Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ thể của một feature và được nêu lý do trong PR. Không thêm thư viện "để dành".
