@@ -84,7 +84,7 @@ export function App() {
               <input
                 aria-label="Studio admin token"
                 type="password"
-                autoComplete="current-password"
+                autoComplete="off"
                 placeholder="Studio admin token"
                 value={draftAdminToken}
                 onChange={(event) => setDraftAdminToken(event.target.value)}
