@@ -1,4 +1,12 @@
-import { AlertCircle, Cable, CheckCircle2, Compass, Film, LoaderCircle, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  Cable,
+  CheckCircle2,
+  Compass,
+  Film,
+  LoaderCircle,
+  RefreshCw,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useConnections } from "@/entities/connection/api";
@@ -18,7 +26,10 @@ function authenticationErrorMessage(activeAdminToken: string, resource: string):
 
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div role="alert" className="flex flex-col items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+    <div
+      role="alert"
+      className="flex flex-col items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4"
+    >
       <div className="flex items-start gap-2 text-sm text-muted-foreground">
         <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
         <p>{message}</p>
@@ -58,13 +69,14 @@ export function App() {
           ? "Online"
           : "Unknown";
 
-  const statusClass = apiStatus === "Online"
-    ? "text-success"
-    : apiStatus === "Checking..."
-      ? "text-muted-foreground"
-      : authenticationRequired
-        ? "text-warning"
-        : "text-destructive";
+  const statusClass =
+    apiStatus === "Online"
+      ? "text-success"
+      : apiStatus === "Checking..."
+        ? "text-muted-foreground"
+        : authenticationRequired
+          ? "text-warning"
+          : "text-destructive";
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -121,7 +133,9 @@ export function App() {
                 <span className="size-2 rounded-full bg-current" aria-hidden="true" />
               )}
               <span className="text-muted-foreground">API</span>
-              <span className={statusClass} aria-live="polite">{apiStatus}</span>
+              <span className={statusClass} aria-live="polite">
+                {apiStatus}
+              </span>
             </div>
           </div>
         </header>
@@ -150,9 +164,11 @@ export function App() {
               </p>
             ) : projectQuery.isError ? (
               <LoadError
-                message={isAuthenticationError(projectQuery.error)
-                  ? authenticationErrorMessage(activeAdminToken, "projects")
-                  : "Could not load projects. Check the Orchestrator and retry."}
+                message={
+                  isAuthenticationError(projectQuery.error)
+                    ? authenticationErrorMessage(activeAdminToken, "projects")
+                    : "Could not load projects. Check the Orchestrator and retry."
+                }
                 onRetry={() => void projectQuery.refetch()}
               />
             ) : projects.length === 0 ? (
@@ -165,7 +181,10 @@ export function App() {
             ) : (
               <ul className="divide-y divide-border">
                 {projects.map((project) => (
-                  <li key={project.id} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                  <li
+                    key={project.id}
+                    className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"
+                  >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{project.name}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -205,9 +224,11 @@ export function App() {
               </p>
             ) : connectionQuery.isError ? (
               <LoadError
-                message={isAuthenticationError(connectionQuery.error)
-                  ? authenticationErrorMessage(activeAdminToken, "provider connections")
-                  : "Could not load provider connections. Check the Orchestrator and retry."}
+                message={
+                  isAuthenticationError(connectionQuery.error)
+                    ? authenticationErrorMessage(activeAdminToken, "provider connections")
+                    : "Could not load provider connections. Check the Orchestrator and retry."
+                }
                 onRetry={() => void connectionQuery.refetch()}
               />
             ) : connections.length === 0 ? (
@@ -220,10 +241,15 @@ export function App() {
             ) : (
               <ul className="divide-y divide-border">
                 {connections.map((connection) => (
-                  <li key={connection.id} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                  <li
+                    key={connection.id}
+                    className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"
+                  >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{connection.name}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{connection.provider_type}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {connection.provider_type}
+                      </p>
                     </div>
                     <div className="shrink-0 text-right text-xs text-muted-foreground">
                       <p>{connection.health_state}</p>
@@ -236,32 +262,47 @@ export function App() {
           </article>
         </section>
 
-        <section aria-labelledby="roadmap-title" className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <section
+          aria-labelledby="roadmap-title"
+          className="rounded-xl border border-border bg-card p-5 shadow-sm"
+        >
           <div className="mb-4 flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <Compass className="size-5" aria-hidden="true" />
             </div>
             <div>
-              <h2 id="roadmap-title" className="font-semibold">Frontend roadmap</h2>
-              <p className="text-sm text-muted-foreground">Foundation first; feature modules follow as separate phases.</p>
+              <h2 id="roadmap-title" className="font-semibold">
+                Frontend roadmap
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Foundation first; feature modules follow as separate phases.
+              </p>
             </div>
           </div>
           <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <li className="rounded-lg border border-primary/30 bg-primary/5 p-3">
               <p className="text-sm font-medium">Phase 0a · Foundation</p>
-              <p className="mt-1 text-xs text-muted-foreground">API client, router, theme, locked dependencies, and test gates.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                API client, router, theme, locked dependencies, and test gates.
+              </p>
             </li>
             <li className="rounded-lg border border-border p-3">
               <p className="text-sm font-medium">Phase 0b · OpenAPI</p>
-              <p className="mt-1 text-xs text-muted-foreground">Offline schema export, generated types, and drift checks.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Offline schema export, generated types, and drift checks.
+              </p>
             </li>
             <li className="rounded-lg border border-border p-3">
               <p className="text-sm font-medium">Phase 0c · Typed routes</p>
-              <p className="mt-1 text-xs text-muted-foreground">Audit response models and enum contracts by router.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Audit response models and enum contracts by router.
+              </p>
             </li>
             <li className="rounded-lg border border-border p-3">
               <p className="text-sm font-medium">Phase 1 · Production workspace</p>
-              <p className="mt-1 text-xs text-muted-foreground">Shot board, media previews, and queue monitor.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Shot board, media previews, and queue monitor.
+              </p>
             </li>
           </ol>
         </section>
