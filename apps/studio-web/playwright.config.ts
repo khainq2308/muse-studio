@@ -14,9 +14,11 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
   },
   webServer: {
-    command: "npm run preview -- --host 127.0.0.1",
+    // Always rebuild so standalone local runs cannot reuse a stale dist/ bundle.
+    command: "npm run build && npm run preview -- --host 127.0.0.1 --port 4173 --strictPort",
     url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
+    env: { VITE_ORCHESTRATOR_URL: "." },
+    reuseExistingServer: false,
+    timeout: 60_000,
   },
 });
