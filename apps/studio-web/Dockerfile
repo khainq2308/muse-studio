@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:24-alpine
 # Run as the image's built-in non-root "node" user.
 RUN mkdir -p /workspace/apps/studio-web && chown node:node /workspace/apps/studio-web
 USER node
