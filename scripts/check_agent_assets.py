@@ -100,6 +100,18 @@ def check_code_paths(paths: list[Path]) -> list[str]:
                     # For patterns like .gemini/agents/*.md, verify the literal parent directory.
                     prefix = path_ref.split("*", 1)[0].split("?", 1)[0].split("[", 1)[0]
                     candidate = ROOT / prefix.rstrip("/")
+                if not candidate.exists():
+                    # Skill-local scripts and references: check relative to parent skill directory
+                    for parent in (source.parent, *source.parents):
+                        if parent == ROOT:
+                            break
+                        alt = parent / path_ref
+                        if any(char in path_ref for char in "*?["):
+                            prefix = path_ref.split("*", 1)[0].split("?", 1)[0].split("[", 1)[0]
+                            alt = parent / prefix.rstrip("/")
+                        if alt.exists():
+                            candidate = alt
+                            break
                 try:
                     candidate.relative_to(ROOT)
                 except ValueError:

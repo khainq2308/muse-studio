@@ -25,6 +25,7 @@ else
     git ls-files --others --exclude-standard
   } | sort -u | while IFS= read -r file; do
     case "$file" in
+      */skills/*) ;;
       *.py) printf '%s\n' "$file" ;;
     esac
   done > "$temp_list"
