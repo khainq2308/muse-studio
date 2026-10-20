@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("production SPA fallback renders a project-module deep link with absolute API paths", async ({
+test("production build deep link matches the registered project-module route", async ({
   page,
 }) => {
   const requestedApiPaths: string[] = [];
@@ -33,9 +33,18 @@ test("production SPA fallback renders a project-module deep link with absolute A
 
   await page.goto("/projects/test-project/queue-monitor");
 
+  const route = page.getByTestId("project-module-route");
+  await expect(route).toHaveAttribute("data-project-id", "test-project");
+  await expect(route).toHaveAttribute("data-module", "queue-monitor");
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
   await expect
     .poll(() => requestedApiPaths)
     .toEqual(expect.arrayContaining(["/api/v1/projects", "/api/v1/connections"]));
   expect(requestedApiPaths.every((path) => path.startsWith("/api/"))).toBe(true);
+});
+
+test("unknown routes do not masquerade as the dashboard", async ({ page }) => {
+  await page.goto("/not-a-real-route");
+
+  await expect(page.getByRole("heading", { name: "MuseStudio" })).toHaveCount(0);
 });
