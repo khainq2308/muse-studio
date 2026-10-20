@@ -133,7 +133,12 @@ def _effective_command_index(tokens: list[str], index: int) -> int:
                     break
                 else:
                     break
-        elif wrapper in {"nohup", "time"}:
+        elif wrapper == "nohup":
+            if index < len(tokens) and tokens[index] == "--":
+                index += 1
+        elif wrapper == "time":
+            while index < len(tokens) and tokens[index] == "-p":
+                index += 1
             if index < len(tokens) and tokens[index] == "--":
                 index += 1
 
