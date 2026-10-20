@@ -67,16 +67,20 @@ function rootIdentifier(node) {
 
 function isGlobalBrowserProperty(node, names) {
   if (ts.isPropertyAccessExpression(node)) {
-    return names.includes(node.name.text) &&
-      ["window", "globalThis", "self"].includes(rootIdentifier(node.expression));
+    return (
+      names.includes(node.name.text) &&
+      ["window", "globalThis", "self"].includes(rootIdentifier(node.expression))
+    );
   }
   if (
     ts.isElementAccessExpression(node) &&
     node.argumentExpression &&
     ts.isStringLiteralLike(node.argumentExpression)
   ) {
-    return names.includes(node.argumentExpression.text) &&
-      ["window", "globalThis", "self"].includes(rootIdentifier(node.expression));
+    return (
+      names.includes(node.argumentExpression.text) &&
+      ["window", "globalThis", "self"].includes(rootIdentifier(node.expression))
+    );
   }
   return false;
 }
@@ -94,12 +98,9 @@ function isIdentifierDeclarationName(node) {
       ts.isPropertySignature(parent) ||
       ts.isMethodSignature(parent)) &&
       parent.name === node) ||
-    ((ts.isImportSpecifier(parent) ||
-      ts.isImportClause(parent) ||
-      ts.isNamespaceImport(parent)) &&
+    ((ts.isImportSpecifier(parent) || ts.isImportClause(parent) || ts.isNamespaceImport(parent)) &&
       parent.name === node) ||
-    ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) &&
-      parent.name === node) ||
+    ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) && parent.name === node) ||
     (ts.isPropertyAccessExpression(parent) && parent.name === node)
   );
 }
@@ -127,7 +128,9 @@ function containsRawFetchAccess(sourceFile) {
   let found = false;
   function visit(node) {
     if (
-      (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "fetch") ||
+      (ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "fetch") ||
       isGlobalBrowserProperty(node, ["fetch"])
     ) {
       found = true;
@@ -235,7 +238,9 @@ for (const file of collectFiles(srcRoot)) {
 
   const isTestFile = relative.endsWith(".test.ts") || relative.endsWith(".test.tsx");
   if (!isTestFile && relative !== "lib/api/client.ts" && containsRawFetchAccess(sourceFile)) {
-    failures.push(`${relative}: use the shared authenticated API client instead of raw fetch or aliases.`);
+    failures.push(
+      `${relative}: use the shared authenticated API client instead of raw fetch or aliases.`,
+    );
   }
 
   if (
@@ -256,7 +261,10 @@ for (const file of collectFiles(srcRoot)) {
     const targetPath = resolveLocalImport(file, specifier);
     if (!targetPath) continue;
 
-    const targetRelative = path.relative(srcRoot, path.resolve(targetPath)).split(path.sep).join("/");
+    const targetRelative = path
+      .relative(srcRoot, path.resolve(targetPath))
+      .split(path.sep)
+      .join("/");
     if (isOutsideSrc(targetRelative)) {
       failures.push(
         `${relative}: import "${specifier}" resolves outside src/; keep imports inside apps/studio-web.`,
