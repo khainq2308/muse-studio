@@ -7,6 +7,12 @@ on:
     paths:
       - "apps/studio-web/package.json"
       - ".github/workflows/frontend-lock-bootstrap.yml"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - "apps/studio-web/package.json"
+      - ".github/workflows/frontend-lock-bootstrap.yml"
 
 permissions:
   contents: write
@@ -17,6 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -26,6 +33,8 @@ jobs:
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Commit the generated lockfile to this feature branch
         shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
           if git diff --quiet -- apps/studio-web/package-lock.json; then
             echo "No lockfile changes to commit."
@@ -35,4 +44,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/studio-web/package-lock.json
           git commit -m "chore(frontend): generate npm lockfile"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${TARGET_BRANCH}"
