@@ -25,10 +25,11 @@ const queryClient = new QueryClient({
   },
 });
 
-// Authenticated server data must not outlive the token that fetched it.
+// Only authenticated resource data is session-scoped. Keep health/status queries intact.
 useSessionStore.subscribe((state, previousState) => {
   if (state.sessionVersion !== previousState.sessionVersion) {
-    queryClient.clear();
+    queryClient.removeQueries({ queryKey: ["projects"] });
+    queryClient.removeQueries({ queryKey: ["connections"] });
   }
 });
 
