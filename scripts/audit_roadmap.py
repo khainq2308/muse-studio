@@ -41,11 +41,15 @@ def web_has(pattern: str) -> bool:
     )
 
 
-def contracts_used() -> bool:
-    return any(
-        "@muse-studio/contracts" in path.read_text(encoding="utf-8", errors="ignore")
-        for path in web_files()
-        if path.suffix in {".ts", ".tsx"}
+def generated_api_contracts_ready() -> bool:
+    """Signal when the generated OpenAPI contract pipeline exists end to end."""
+    package_json = read("apps/studio-web/package.json")
+    return (
+        exists_any("scripts/export_openapi.py")
+        and exists_any("apps/orchestrator/openapi.json")
+        and exists_any("apps/studio-web/src/lib/api/schema.d.ts")
+        and '"gen:api"' in package_json
+        and "openapi-typescript" in package_json
     )
 
 
@@ -102,9 +106,9 @@ RULES = [
         in read("apps/orchestrator/muse_orchestrator/services/generation_queue.py"),
     ),
     (
-        "packages/contracts consumed by web",
-        "web imports shared contracts signal",
-        contracts_used,
+        "Web API types generated from OpenAPI",
+        "export script + committed snapshot + generated schema + generator signal",
+        generated_api_contracts_ready,
     ),
     (
         "Web banner updated",
