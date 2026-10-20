@@ -34,7 +34,7 @@ if [ "$#" -gt 0 ]; then
   exit 2
 fi
 
-if [ "$mode" != "--fix" ] && [ "$mode" != "--all" ] && [ "$python_only" -eq 0 ]; then
+if [ "$mode" != "--fix" ] && [ "$mode" != "--all" ]; then
   base="$(printenv LINT_BASE_REF 2>/dev/null || echo origin/main)"
   temp_list="/tmp/musestudio-lint-files-$$"
   {
