@@ -94,9 +94,9 @@ describe("API client", () => {
       "DELETE",
     ]);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: "Created" });
-    expect(
-      new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Content-Type"),
-    ).toBe("application/json");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Content-Type")).toBe(
+      "application/json",
+    );
   });
 
   it("parses JSON content types case-insensitively", async () => {
@@ -140,13 +140,10 @@ describe("API client", () => {
 
   it("formats an object detail message without rendering [object Object]", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({ detail: { message: "Access denied", code: "denied" } }),
-        {
-          status: 403,
-          headers: { "content-type": "application/json" },
-        },
-      ),
+      new Response(JSON.stringify({ detail: { message: "Access denied", code: "denied" } }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -201,9 +198,7 @@ describe("API client", () => {
   });
 
   it("accepts 204 No Content as an empty successful response", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(null, { status: 204 }),
-    );
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(apiGet("/api/v1/projects")).resolves.toBeNull();

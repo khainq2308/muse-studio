@@ -117,9 +117,6 @@ jobs:
       - name: Lint frontend
         working-directory: apps/studio-web
         run: npm run lint
-      - name: Temporary formatter output for client tests
-        working-directory: apps/studio-web
-        run: npx prettier src/lib/api/client.test.ts
       - name: Check frontend formatting
         working-directory: apps/studio-web
         run: npm run format:check
