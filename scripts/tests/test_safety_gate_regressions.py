@@ -86,6 +86,7 @@ class DynamicShellExpansionGuardRegressionTests(unittest.TestCase):
             'env -- "$COMMAND" push origin main',
             'command -- "$COMMAND" push origin main',
             'nohup -- "$COMMAND" push origin main',
+            'time -p "$COMMAND" push origin main',
             'docker --context "$CTX" compose down -v',
             'psql -c "$QUERY"',
             'mysql --execute="$SQL"',
