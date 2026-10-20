@@ -24,10 +24,7 @@ for (const file of collectFiles(srcRoot)) {
   const relative = path.relative(srcRoot, file).split(path.sep).join("/");
   const source = readFileSync(file, "utf8");
 
-  if (
-    file.endsWith(".tsx") &&
-    /<pre\b[^>]*>\s*\{\s*JSON\.stringify\s*\(/s.test(source)
-  ) {
+  if (file.endsWith(".tsx") && /<pre\b[^>]*>\s*\{\s*JSON\.stringify\s*\(/s.test(source)) {
     failures.push(`${relative}: render domain data instead of dumping JSON into <pre>.`);
   }
 
@@ -55,11 +52,7 @@ for (const file of collectFiles(srcRoot)) {
     if (!targetPath) continue;
     const targetRelative = path.relative(srcRoot, targetPath).split(path.sep).join("/");
     const targetMatch = targetRelative.match(/^(entities|features)\/([^/]+)(?:\/|$)/);
-    if (
-      targetMatch &&
-      targetMatch[1] === sourceRootName &&
-      targetMatch[2] !== sourceFeature
-    ) {
+    if (targetMatch && targetMatch[1] === sourceRootName && targetMatch[2] !== sourceFeature) {
       failures.push(
         `${relative}: cross-feature import to "${match[1]}" is forbidden; use lib/ for shared contracts.`,
       );
