@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/test.sh [orchestrator|media|web|all] [pytest args]
-# Pytest arguments apply only to a single pytest scope. The all scope always runs unfiltered suites.
+# Pytest arguments apply only to a single pytest scope.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 scope=all
@@ -20,8 +20,18 @@ run_media() {
   ( cd "$ROOT/apps/media-engine" && PYTHONPATH=. python3 -m pytest -q "$@" ) || rc=1
 }
 run_web() {
-  echo "==> studio-web typecheck + build"
-  ( cd "$ROOT/apps/studio-web" && { [ -d node_modules ] || npm install --no-audit --no-fund; } && npm run build ) || rc=1
+  echo "==> Studio Web: deterministic install"
+  if ! ( cd "$ROOT/apps/studio-web" && npm ci --no-audit --no-fund ); then rc=1; return; fi
+  echo "==> Studio Web: lint + formatting"
+  ( cd "$ROOT/apps/studio-web" && npm run lint && npm run format:check ) || rc=1
+  echo "==> Studio Web: unit tests"
+  ( cd "$ROOT/apps/studio-web" && npm test ) || rc=1
+  echo "==> Studio Web: typecheck + production build"
+  ( cd "$ROOT/apps/studio-web" && npm run build ) || rc=1
+  if command -v npx >/dev/null 2>&1; then
+    echo "==> Studio Web: Playwright Chromium smoke"
+    ( cd "$ROOT/apps/studio-web" && npx playwright install chromium && npm run test:e2e ) || rc=1
+  fi
 }
 case "$scope" in
   orchestrator|orch|backend) run_orchestrator "$@" ;;
