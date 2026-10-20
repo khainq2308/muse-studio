@@ -85,6 +85,7 @@ function isIdentifierDeclarationName(node) {
   const parent = node.parent;
   return (
     (ts.isVariableDeclaration(parent) && parent.name === node) ||
+    (ts.isBindingElement(parent) && parent.name === node) ||
     (ts.isFunctionDeclaration(parent) && parent.name === node) ||
     (ts.isClassDeclaration(parent) && parent.name === node) ||
     (ts.isParameter(parent) && parent.name === node) ||
@@ -162,13 +163,7 @@ function containsRawFetchAccess(sourceFile) {
       return;
     }
 
-    if (
-      ts.isIdentifier(node) &&
-      node.text === "fetch" &&
-      !isIdentifierDeclarationName(node) &&
-      ts.isVariableDeclaration(node.parent) &&
-      node.parent.initializer === node
-    ) {
+    if (ts.isIdentifier(node) && node.text === "fetch" && !isIdentifierDeclarationName(node)) {
       found = true;
       return;
     }
