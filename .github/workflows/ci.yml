@@ -90,6 +90,40 @@ jobs:
           REQUIRE_FFMPEG: "1"
         run: uv run --locked --project . --extra dev python -m pytest -q -rs
 
+  openapi-contract:
+    name: OpenAPI export and frontend type generation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+          enable-cache: true
+          cache-dependency-glob: |
+            apps/orchestrator/pyproject.toml
+            apps/orchestrator/uv.lock
+            apps/media-engine/pyproject.toml
+      - name: Sync locked orchestrator dependencies
+        run: uv sync --locked --project apps/orchestrator --extra dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/studio-web/package-lock.json
+      - name: Install locked frontend dependencies
+        working-directory: apps/studio-web
+        run: npm ci --no-audit --no-fund
+      - name: Check committed OpenAPI snapshot
+        run: uv run --locked --project apps/orchestrator --extra dev python scripts/export_openapi.py --check
+      - name: Check generated frontend TypeScript schema
+        working-directory: apps/studio-web
+        run: npm run gen:api:check
+      - name: Ensure generation left the working tree clean
+        run: git diff --exit-code -- apps/orchestrator/openapi.json apps/studio-web/src/lib/api/schema.d.ts
+
   media-engine-tests:
     name: Media engine unit tests
     runs-on: ubuntu-latest
