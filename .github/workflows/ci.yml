@@ -49,7 +49,11 @@ jobs:
           SECRET_ENCRYPTION_KEY: ci-only-encryption-key-0123456789abcdef0123456789abcdef
           STUDIO_ADMIN_TOKEN: ci-only-admin-token
           MUSE2API_VIDEO_PAYLOAD_PROFILE: czg86389-hub
-        run: COMPOSE_PROJECT_NAME=musestudio-ci docker compose -f docker-compose.prod.yml build\n      - name: Smoke-test production Studio Web Nginx and same-origin API proxy\n        env:\n          STUDIO_WEB_IMAGE: musestudio-ci-studio-web\n        run: bash scripts/test_nginx_prod.sh
+        run: COMPOSE_PROJECT_NAME=musestudio-ci docker compose -f docker-compose.prod.yml build
+      - name: Smoke-test production Studio Web Nginx and same-origin API proxy
+        env:
+          STUDIO_WEB_IMAGE: musestudio-ci-studio-web
+        run: bash scripts/test_nginx_prod.sh
 
   python-tests:
     name: Python tests
