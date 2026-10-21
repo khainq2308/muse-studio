@@ -1,10 +1,10 @@
 import { Cable } from "lucide-react";
-import type { ConnectionSummary } from "@/entities/connection/api";
+import type { components } from "@/lib/api/schema";
 import { QueryState } from "@/components/shared/query-state";
 import { ResourceCard } from "@/components/shared/resource-card";
 
 interface ConnectionListProps {
-  connections: ConnectionSummary[];
+  connections: components["schemas"]["ConnectionOut"][];
   isLoading: boolean;
   isError: boolean;
   errorMessage: string;
