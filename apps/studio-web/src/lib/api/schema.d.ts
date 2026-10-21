@@ -1092,6 +1092,54 @@ export interface components {
             /** Shot Ids */
             shot_ids?: string[] | null;
         };
+        /** BatchLaunchOut */
+        BatchLaunchOut: {
+            /** Batch Id */
+            batch_id: string;
+            /** Blocked Count */
+            blocked_count: number;
+            /** Blocked Shot Ids */
+            blocked_shot_ids: string[];
+            /** Enqueued Count */
+            enqueued_count: number;
+            /** Enqueued Task Ids */
+            enqueued_task_ids: string[];
+            /** Skipped Shot Ids */
+            skipped_shot_ids: string[];
+            /** Skipped Unchanged Count */
+            skipped_unchanged_count: number;
+            /** Total Shots */
+            total_shots: number;
+        };
+        /** BatchTickOut */
+        BatchTickOut: {
+            /** Active Tasks Fetched */
+            active_tasks_fetched: number;
+            /** Project Id */
+            project_id: string;
+            /** Queue Summary */
+            queue_summary: {
+                [key: string]: number;
+            };
+            /** Stepped Count */
+            stepped_count: number;
+            /** Stepped Tasks */
+            stepped_tasks: components["schemas"]["BatchTickStepOut"][];
+            /** Tick Limit */
+            tick_limit: number;
+        };
+        /** BatchTickStepOut */
+        BatchTickStepOut: {
+            /** Auto Enqueued From Frame Chain */
+            auto_enqueued_from_frame_chain?: boolean | null;
+            /** Poll Count */
+            poll_count?: number | null;
+            /** Shot Id */
+            shot_id: string;
+            state: components["schemas"]["QueueTaskState"];
+            /** Task Id */
+            task_id: string;
+        };
         /** BibleEntryCreateIn */
         BibleEntryCreateIn: {
             /** Code Name */
@@ -1192,6 +1240,17 @@ export interface components {
              */
             volume: number;
         };
+        /** CompareShotTakesOut */
+        CompareShotTakesOut: {
+            /** Same Model */
+            same_model: boolean;
+            /** Same Prompt Hash */
+            same_prompt_hash: boolean;
+            /** Shot Id */
+            shot_id: string;
+            take_a: components["schemas"]["TakeComparisonOut"];
+            take_b: components["schemas"]["TakeComparisonOut"];
+        };
         /** ConnectionCreateIn */
         ConnectionCreateIn: {
             /** Api Key */
@@ -1284,6 +1343,19 @@ export interface components {
              * @default false
              */
             regenerate_now: boolean;
+        };
+        /** ContinuityFlagOut */
+        ContinuityFlagOut: {
+            /** Continuity Flagged */
+            continuity_flagged: boolean;
+            /** Director Notes */
+            director_notes: string;
+            /** Regenerated Task Id */
+            regenerated_task_id: string | null;
+            /** Shot Id */
+            shot_id: string;
+            /** Take Id */
+            take_id: string;
         };
         /** EnqueueTaskIn */
         EnqueueTaskIn: {
@@ -1430,6 +1502,20 @@ export interface components {
              */
             retention_hours: number;
         };
+        /** PipelineLintIssueOut */
+        PipelineLintIssueOut: {
+            /** Code */
+            code: string;
+            /** Field */
+            field?: string | null;
+            /** Message */
+            message: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "blocker" | "warning" | "info";
+        };
         /** ProjectCreateIn */
         ProjectCreateIn: {
             /**
@@ -1501,6 +1587,59 @@ export interface components {
              */
             updated_at: string;
         };
+        /** ProjectShotOut */
+        ProjectShotOut: {
+            /** Action */
+            action: string;
+            approval_state: components["schemas"]["ShotApprovalState"];
+            /** Camera Motion */
+            camera_motion: string;
+            /** Composition */
+            composition: string;
+            /** Continuity Mode */
+            continuity_mode: string;
+            /** Dialogue */
+            dialogue: string;
+            /** Duration Seconds */
+            duration_seconds: number;
+            /** First Frame Asset Id */
+            first_frame_asset_id: string | null;
+            generation_state: components["schemas"]["ShotGenerationState"];
+            /** Id */
+            id: string;
+            /** Last Frame Asset Id */
+            last_frame_asset_id: string | null;
+            /** Lint Report */
+            lint_report: components["schemas"]["PipelineLintIssueOut"][];
+            /** Location Code */
+            location_code: string;
+            /** Negative Prompt */
+            negative_prompt: string;
+            /** Next Shot Id */
+            next_shot_id: string | null;
+            /** Previous Shot Id */
+            previous_shot_id: string | null;
+            /** Prompt Final */
+            prompt_final: string;
+            /** Prompt Hash */
+            prompt_hash: string;
+            /** Reference Asset Ids */
+            reference_asset_ids: string[];
+            /** Requires Reference Lock */
+            requires_reference_lock: boolean;
+            /** Scene Id */
+            scene_id: string;
+            /** Selected Take Id */
+            selected_take_id: string | null;
+            /** Sequence Index */
+            sequence_index: number;
+            /** Shot Size */
+            shot_size: string;
+            /** Subject Codes */
+            subject_codes: string[];
+            /** Title */
+            title: string;
+        };
         /**
          * QueueTaskOut
          * @description Stable response contract for queue tasks; never expose internal prompt snapshots.
@@ -1560,6 +1699,13 @@ export interface components {
          * @enum {string}
          */
         QueueTaskState: "queued" | "paused" | "running" | "succeeded" | "failed" | "poll_timeout" | "canceled";
+        /** RetryFailedTasksOut */
+        RetryFailedTasksOut: {
+            /** New Task Ids */
+            new_task_ids: string[];
+            /** Retried Count */
+            retried_count: number;
+        };
         /** RevisionOut */
         RevisionOut: {
             /** Commit Message */
@@ -1595,11 +1741,48 @@ export interface components {
              */
             source_format: string;
         };
+        /** ScriptImportOut */
+        ScriptImportOut: {
+            /** Detected Characters */
+            detected_characters: number;
+            /** Detected Locations */
+            detected_locations: number;
+            /** Detected Scenes */
+            detected_scenes: number;
+            /** Diff Summary */
+            diff_summary: string;
+            /** Generated Shots */
+            generated_shots: number;
+            /** Raw Content Preserved */
+            raw_content_preserved: boolean;
+            /** Script Revision Id */
+            script_revision_id: string;
+            /** Version Number */
+            version_number: number;
+        };
         /**
          * ShotApprovalState
          * @enum {string}
          */
         ShotApprovalState: "draft" | "needs_review" | "approved" | "rejected";
+        /**
+         * ShotGenerationState
+         * @enum {string}
+         */
+        ShotGenerationState: "not_started" | "blocked_reference" | "blocked_upstream_frame" | "queued" | "running" | "succeeded" | "failed" | "canceled";
+        /** ShotReviewOut */
+        ShotReviewOut: {
+            approval_state: components["schemas"]["ShotApprovalState"];
+            generation_state: components["schemas"]["ShotGenerationState"];
+            /** Id */
+            id: string;
+            /** Lint Report */
+            lint_report: components["schemas"]["PipelineLintIssueOut"][];
+            /** Prompt Final */
+            prompt_final: string;
+            /** Prompt Hash */
+            prompt_hash: string;
+        };
         /** ShotTakeOut */
         ShotTakeOut: {
             /** Account Used */
@@ -1663,6 +1846,67 @@ export interface components {
             requires_reference_lock?: boolean | null;
             /** Shot Size */
             shot_size?: string | null;
+        };
+        /** StoryBibleEntryOut */
+        StoryBibleEntryOut: {
+            /** Code Name */
+            code_name: string;
+            /** Display Name */
+            display_name: string;
+            /**
+             * Entry Type
+             * @enum {string}
+             */
+            entry_type: "character" | "location" | "style" | "prop";
+            /** Id */
+            id: string;
+            /** Immutable Traits */
+            immutable_traits: string;
+            /** Mutable Attributes */
+            mutable_attributes: {
+                [key: string]: unknown;
+            };
+            /** Reference Asset Ids */
+            reference_asset_ids: string[];
+            /** Requires Reference Lock */
+            requires_reference_lock: boolean;
+        };
+        /** StoryBibleUpsertOut */
+        StoryBibleUpsertOut: {
+            /** Code Name */
+            code_name: string;
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "recompiled_downstream_shots";
+        };
+        /** TakeComparisonOut */
+        TakeComparisonOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Asset Id */
+            asset_id: string;
+            /** Continuity Flagged */
+            continuity_flagged: boolean;
+            /** Director Notes */
+            director_notes: string;
+            /** First Frame Asset Id */
+            first_frame_asset_id: string | null;
+            /** Is Selected */
+            is_selected: boolean;
+            /** Last Frame Asset Id */
+            last_frame_asset_id: string | null;
+            /** Model Id */
+            model_id: string;
+            /** Prompt Hash */
+            prompt_hash: string;
+            /** Take Id */
+            take_id: string;
+            /** Take Number */
+            take_number: number;
         };
         /** TimelineAssembleIn */
         TimelineAssembleIn: {
@@ -2571,9 +2815,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BatchLaunchOut"];
                 };
             };
             /** @description Validation Error */
@@ -2608,9 +2850,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RetryFailedTasksOut"];
                 };
             };
             /** @description Validation Error */
@@ -2646,9 +2886,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BatchTickOut"];
                 };
             };
             /** @description Validation Error */
@@ -2751,9 +2989,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ScriptImportOut"];
                 };
             };
             /** @description Validation Error */
@@ -2786,9 +3022,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ProjectShotOut"][];
                 };
             };
             /** @description Validation Error */
@@ -2861,9 +3095,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShotReviewOut"];
                 };
             };
             /** @description Validation Error */
@@ -2900,9 +3132,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CompareShotTakesOut"];
                 };
             };
             /** @description Validation Error */
@@ -2941,9 +3171,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ContinuityFlagOut"];
                 };
             };
             /** @description Validation Error */
@@ -2976,9 +3204,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["StoryBibleEntryOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3015,9 +3241,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["StoryBibleUpsertOut"];
                 };
             };
             /** @description Validation Error */

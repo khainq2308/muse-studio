@@ -436,6 +436,151 @@
         "title": "BatchLaunchIn",
         "type": "object"
       },
+      "BatchLaunchOut": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "blocked_count": {
+            "title": "Blocked Count",
+            "type": "integer"
+          },
+          "blocked_shot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocked Shot Ids",
+            "type": "array"
+          },
+          "enqueued_count": {
+            "title": "Enqueued Count",
+            "type": "integer"
+          },
+          "enqueued_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enqueued Task Ids",
+            "type": "array"
+          },
+          "skipped_shot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped Shot Ids",
+            "type": "array"
+          },
+          "skipped_unchanged_count": {
+            "title": "Skipped Unchanged Count",
+            "type": "integer"
+          },
+          "total_shots": {
+            "title": "Total Shots",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "total_shots",
+          "enqueued_count",
+          "skipped_unchanged_count",
+          "blocked_count",
+          "enqueued_task_ids",
+          "skipped_shot_ids",
+          "blocked_shot_ids"
+        ],
+        "title": "BatchLaunchOut",
+        "type": "object"
+      },
+      "BatchTickOut": {
+        "properties": {
+          "active_tasks_fetched": {
+            "title": "Active Tasks Fetched",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "queue_summary": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Queue Summary",
+            "type": "object"
+          },
+          "stepped_count": {
+            "title": "Stepped Count",
+            "type": "integer"
+          },
+          "stepped_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/BatchTickStepOut"
+            },
+            "title": "Stepped Tasks",
+            "type": "array"
+          },
+          "tick_limit": {
+            "title": "Tick Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "stepped_count",
+          "stepped_tasks",
+          "queue_summary",
+          "tick_limit",
+          "active_tasks_fetched"
+        ],
+        "title": "BatchTickOut",
+        "type": "object"
+      },
+      "BatchTickStepOut": {
+        "properties": {
+          "auto_enqueued_from_frame_chain": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Enqueued From Frame Chain"
+          },
+          "poll_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Count"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/QueueTaskState"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "shot_id",
+          "state"
+        ],
+        "title": "BatchTickStepOut",
+        "type": "object"
+      },
       "BibleEntryCreateIn": {
         "properties": {
           "code_name": {
@@ -637,6 +782,37 @@
           "order_index"
         ],
         "title": "ClipEditItemIn",
+        "type": "object"
+      },
+      "CompareShotTakesOut": {
+        "properties": {
+          "same_model": {
+            "title": "Same Model",
+            "type": "boolean"
+          },
+          "same_prompt_hash": {
+            "title": "Same Prompt Hash",
+            "type": "boolean"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "take_a": {
+            "$ref": "#/components/schemas/TakeComparisonOut"
+          },
+          "take_b": {
+            "$ref": "#/components/schemas/TakeComparisonOut"
+          }
+        },
+        "required": [
+          "shot_id",
+          "same_prompt_hash",
+          "same_model",
+          "take_a",
+          "take_b"
+        ],
+        "title": "CompareShotTakesOut",
         "type": "object"
       },
       "ConnectionCreateIn": {
@@ -861,6 +1037,46 @@
           }
         },
         "title": "ContinuityFlagIn",
+        "type": "object"
+      },
+      "ContinuityFlagOut": {
+        "properties": {
+          "continuity_flagged": {
+            "title": "Continuity Flagged",
+            "type": "boolean"
+          },
+          "director_notes": {
+            "title": "Director Notes",
+            "type": "string"
+          },
+          "regenerated_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regenerated Task Id"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "take_id": {
+            "title": "Take Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shot_id",
+          "take_id",
+          "continuity_flagged",
+          "director_notes",
+          "regenerated_task_id"
+        ],
+        "title": "ContinuityFlagOut",
         "type": "object"
       },
       "EnqueueTaskIn": {
@@ -1265,6 +1481,45 @@
         "title": "OrphanScanIn",
         "type": "object"
       },
+      "PipelineLintIssueOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "blocker",
+              "warning",
+              "info"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "title": "PipelineLintIssueOut",
+        "type": "object"
+      },
       "ProjectCreateIn": {
         "properties": {
           "aspect_ratio": {
@@ -1382,6 +1637,186 @@
           "updated_at"
         ],
         "title": "ProjectOut",
+        "type": "object"
+      },
+      "ProjectShotOut": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "approval_state": {
+            "$ref": "#/components/schemas/ShotApprovalState"
+          },
+          "camera_motion": {
+            "title": "Camera Motion",
+            "type": "string"
+          },
+          "composition": {
+            "title": "Composition",
+            "type": "string"
+          },
+          "continuity_mode": {
+            "title": "Continuity Mode",
+            "type": "string"
+          },
+          "dialogue": {
+            "title": "Dialogue",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "title": "Duration Seconds",
+            "type": "number"
+          },
+          "first_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Frame Asset Id"
+          },
+          "generation_state": {
+            "$ref": "#/components/schemas/ShotGenerationState"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Frame Asset Id"
+          },
+          "lint_report": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineLintIssueOut"
+            },
+            "title": "Lint Report",
+            "type": "array"
+          },
+          "location_code": {
+            "title": "Location Code",
+            "type": "string"
+          },
+          "negative_prompt": {
+            "title": "Negative Prompt",
+            "type": "string"
+          },
+          "next_shot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Shot Id"
+          },
+          "previous_shot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Shot Id"
+          },
+          "prompt_final": {
+            "title": "Prompt Final",
+            "type": "string"
+          },
+          "prompt_hash": {
+            "title": "Prompt Hash",
+            "type": "string"
+          },
+          "reference_asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reference Asset Ids",
+            "type": "array"
+          },
+          "requires_reference_lock": {
+            "title": "Requires Reference Lock",
+            "type": "boolean"
+          },
+          "scene_id": {
+            "title": "Scene Id",
+            "type": "string"
+          },
+          "selected_take_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Take Id"
+          },
+          "sequence_index": {
+            "title": "Sequence Index",
+            "type": "integer"
+          },
+          "shot_size": {
+            "title": "Shot Size",
+            "type": "string"
+          },
+          "subject_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subject Codes",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "scene_id",
+          "sequence_index",
+          "title",
+          "subject_codes",
+          "location_code",
+          "shot_size",
+          "camera_motion",
+          "composition",
+          "action",
+          "dialogue",
+          "duration_seconds",
+          "requires_reference_lock",
+          "reference_asset_ids",
+          "prompt_final",
+          "negative_prompt",
+          "prompt_hash",
+          "lint_report",
+          "continuity_mode",
+          "previous_shot_id",
+          "next_shot_id",
+          "first_frame_asset_id",
+          "last_frame_asset_id",
+          "selected_take_id",
+          "approval_state",
+          "generation_state"
+        ],
+        "title": "ProjectShotOut",
         "type": "object"
       },
       "QueueTaskOut": {
@@ -1576,6 +2011,27 @@
         "title": "QueueTaskState",
         "type": "string"
       },
+      "RetryFailedTasksOut": {
+        "properties": {
+          "new_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "New Task Ids",
+            "type": "array"
+          },
+          "retried_count": {
+            "title": "Retried Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retried_count",
+          "new_task_ids"
+        ],
+        "title": "RetryFailedTasksOut",
+        "type": "object"
+      },
       "RevisionOut": {
         "properties": {
           "commit_message": {
@@ -1640,6 +2096,54 @@
         "title": "ScriptImportIn",
         "type": "object"
       },
+      "ScriptImportOut": {
+        "properties": {
+          "detected_characters": {
+            "title": "Detected Characters",
+            "type": "integer"
+          },
+          "detected_locations": {
+            "title": "Detected Locations",
+            "type": "integer"
+          },
+          "detected_scenes": {
+            "title": "Detected Scenes",
+            "type": "integer"
+          },
+          "diff_summary": {
+            "title": "Diff Summary",
+            "type": "string"
+          },
+          "generated_shots": {
+            "title": "Generated Shots",
+            "type": "integer"
+          },
+          "raw_content_preserved": {
+            "title": "Raw Content Preserved",
+            "type": "boolean"
+          },
+          "script_revision_id": {
+            "title": "Script Revision Id",
+            "type": "string"
+          },
+          "version_number": {
+            "title": "Version Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "script_revision_id",
+          "version_number",
+          "raw_content_preserved",
+          "diff_summary",
+          "detected_characters",
+          "detected_locations",
+          "detected_scenes",
+          "generated_shots"
+        ],
+        "title": "ScriptImportOut",
+        "type": "object"
+      },
       "ShotApprovalState": {
         "enum": [
           "draft",
@@ -1649,6 +2153,59 @@
         ],
         "title": "ShotApprovalState",
         "type": "string"
+      },
+      "ShotGenerationState": {
+        "enum": [
+          "not_started",
+          "blocked_reference",
+          "blocked_upstream_frame",
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "canceled"
+        ],
+        "title": "ShotGenerationState",
+        "type": "string"
+      },
+      "ShotReviewOut": {
+        "properties": {
+          "approval_state": {
+            "$ref": "#/components/schemas/ShotApprovalState"
+          },
+          "generation_state": {
+            "$ref": "#/components/schemas/ShotGenerationState"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lint_report": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineLintIssueOut"
+            },
+            "title": "Lint Report",
+            "type": "array"
+          },
+          "prompt_final": {
+            "title": "Prompt Final",
+            "type": "string"
+          },
+          "prompt_hash": {
+            "title": "Prompt Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "prompt_final",
+          "prompt_hash",
+          "lint_report",
+          "approval_state",
+          "generation_state"
+        ],
+        "title": "ShotReviewOut",
+        "type": "object"
       },
       "ShotTakeOut": {
         "properties": {
@@ -1909,6 +2466,172 @@
           }
         },
         "title": "ShotUpdateIn",
+        "type": "object"
+      },
+      "StoryBibleEntryOut": {
+        "properties": {
+          "code_name": {
+            "title": "Code Name",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "entry_type": {
+            "enum": [
+              "character",
+              "location",
+              "style",
+              "prop"
+            ],
+            "title": "Entry Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "immutable_traits": {
+            "title": "Immutable Traits",
+            "type": "string"
+          },
+          "mutable_attributes": {
+            "additionalProperties": true,
+            "title": "Mutable Attributes",
+            "type": "object"
+          },
+          "reference_asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reference Asset Ids",
+            "type": "array"
+          },
+          "requires_reference_lock": {
+            "title": "Requires Reference Lock",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "entry_type",
+          "code_name",
+          "display_name",
+          "immutable_traits",
+          "mutable_attributes",
+          "reference_asset_ids",
+          "requires_reference_lock"
+        ],
+        "title": "StoryBibleEntryOut",
+        "type": "object"
+      },
+      "StoryBibleUpsertOut": {
+        "properties": {
+          "code_name": {
+            "title": "Code Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "recompiled_downstream_shots",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code_name",
+          "status"
+        ],
+        "title": "StoryBibleUpsertOut",
+        "type": "object"
+      },
+      "TakeComparisonOut": {
+        "properties": {
+          "account_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Used"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "continuity_flagged": {
+            "title": "Continuity Flagged",
+            "type": "boolean"
+          },
+          "director_notes": {
+            "title": "Director Notes",
+            "type": "string"
+          },
+          "first_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Frame Asset Id"
+          },
+          "is_selected": {
+            "title": "Is Selected",
+            "type": "boolean"
+          },
+          "last_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Frame Asset Id"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "prompt_hash": {
+            "title": "Prompt Hash",
+            "type": "string"
+          },
+          "take_id": {
+            "title": "Take Id",
+            "type": "string"
+          },
+          "take_number": {
+            "title": "Take Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "take_id",
+          "take_number",
+          "asset_id",
+          "first_frame_asset_id",
+          "last_frame_asset_id",
+          "model_id",
+          "prompt_hash",
+          "account_used",
+          "continuity_flagged",
+          "director_notes",
+          "is_selected"
+        ],
+        "title": "TakeComparisonOut",
         "type": "object"
       },
       "TimelineAssembleIn": {
@@ -3531,9 +4254,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Launch Batch Render Api V1 Projects  Project Id  Batch Launch Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BatchLaunchOut"
                 }
               }
             },
@@ -3608,9 +4329,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Retry Failed Project Tasks Api V1 Projects  Project Id  Batch Retry Failed Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RetryFailedTasksOut"
                 }
               }
             },
@@ -3697,9 +4416,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Tick Project Batch Queue Api V1 Projects  Project Id  Batch Tick Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BatchTickOut"
                 }
               }
             },
@@ -3887,9 +4604,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Import And Analyze Script Api V1 Projects  Project Id  Scripts Import Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ScriptImportOut"
                 }
               }
             },
@@ -3949,8 +4664,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/ProjectShotOut"
                   },
                   "title": "Response List Project Shots Api V1 Projects  Project Id  Shots Get",
                   "type": "array"
@@ -4096,9 +4810,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update And Review Shot Api V1 Projects  Project Id  Shots  Shot Id  Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShotReviewOut"
                 }
               }
             },
@@ -4184,9 +4896,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Compare Shot Takes Ab Api V1 Projects  Project Id  Shots  Shot Id  Compare Takes Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CompareShotTakesOut"
                 }
               }
             },
@@ -4273,9 +4983,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Flag Take Continuity And Regenerate Api V1 Projects  Project Id  Shots  Shot Id  Takes  Take Id  Flag Continuity Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ContinuityFlagOut"
                 }
               }
             },
@@ -4334,8 +5042,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/StoryBibleEntryOut"
                   },
                   "title": "Response Get Story Bible Api V1 Projects  Project Id  Story Bible Get",
                   "type": "array"
@@ -4404,9 +5111,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Upsert Story Bible Entry Api V1 Projects  Project Id  Story Bible Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/StoryBibleUpsertOut"
                 }
               }
             },
