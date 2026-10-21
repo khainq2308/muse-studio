@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 
 from muse_orchestrator.api.dependencies import get_system_service
+from muse_orchestrator.api.metrics import MetricsSummaryOut
+from muse_orchestrator.api.response_types import JsonValue
 from muse_orchestrator.application.system_service import SystemService
 from muse_orchestrator.models.domain import StructuredLogRecord
 
@@ -18,33 +20,82 @@ class LogCreateIn(BaseModel):
     event: str = Field(..., min_length=1, max_length=128)
     project_id: str | None = None
     task_id: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-def _to_log_out(entry: StructuredLogRecord) -> dict[str, Any]:
-    return {
-        "id": entry.id,
-        "correlation_id": entry.correlation_id,
-        "level": entry.level,
-        "event": entry.event,
-        "project_id": entry.project_id,
-        "task_id": entry.task_id,
-        "payload_redacted": entry.payload_redacted,
-        "created_at": entry.created_at.isoformat() if entry.created_at else None,
-    }
+class StructuredLogOut(BaseModel):
+    id: str
+    correlation_id: str
+    level: str
+    event: str
+    project_id: str | None
+    task_id: str | None
+    payload_redacted: dict[str, JsonValue]
+    created_at: datetime | None
 
 
-@router.post("/logs", status_code=status.HTTP_201_CREATED)
+class DiagnosticAccountOut(BaseModel):
+    id: str
+    connection_id: str
+    label: str
+    api_key_masked: str
+    proxy_display_host: str | None
+    enabled: bool
+    health_state: str
+
+
+class DiagnosticAuditEventOut(BaseModel):
+    id: str
+    actor: str
+    action: str
+    target_type: str
+    target_id: str
+    details_redacted: dict[str, JsonValue]
+    created_at: datetime | None
+
+
+class DiagnosticRecentLogOut(BaseModel):
+    id: str
+    correlation_id: str
+    level: str
+    event: str
+    project_id: str | None
+    task_id: str | None
+    created_at: datetime | None
+
+
+class SystemDiagnosticsOut(BaseModel):
+    generated_by: str
+    summary: MetricsSummaryOut
+    accounts: list[DiagnosticAccountOut]
+    recent_audit_events: list[DiagnosticAuditEventOut]
+    recent_logs: list[DiagnosticRecentLogOut]
+
+
+def _to_log_out(entry: StructuredLogRecord) -> StructuredLogOut:
+    return StructuredLogOut(
+        id=entry.id,
+        correlation_id=entry.correlation_id,
+        level=entry.level,
+        event=entry.event,
+        project_id=entry.project_id,
+        task_id=entry.task_id,
+        payload_redacted=entry.payload_redacted,
+        created_at=entry.created_at,
+    )
+
+
+@router.post("/logs", response_model=StructuredLogOut, status_code=status.HTTP_201_CREATED)
 async def create_log(
     payload: LogCreateIn,
     service: SystemService = Depends(get_system_service),
-) -> dict[str, Any]:
+) -> StructuredLogOut:
     """Record a structured operational log entry (payload is redacted at rest)."""
     entry = await service.record_log(payload.model_dump())
     return _to_log_out(entry)
 
 
-@router.get("/logs")
+@router.get("/logs", response_model=list[StructuredLogOut])
 async def list_logs(
     level: str | None = Query(default=None, pattern=r"^(DEBUG|INFO|WARNING|ERROR)$"),
     event: str | None = None,
@@ -52,7 +103,7 @@ async def list_logs(
     project_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     service: SystemService = Depends(get_system_service),
-) -> list[dict[str, Any]]:
+) -> list[StructuredLogOut]:
     """List structured log entries, newest first."""
     entries = await service.list_logs(
         level=level,
@@ -64,9 +115,9 @@ async def list_logs(
     return [_to_log_out(e) for e in entries]
 
 
-@router.get("/diagnostics")
+@router.get("/diagnostics", response_model=SystemDiagnosticsOut)
 async def get_diagnostics(
     service: SystemService = Depends(get_system_service),
-) -> dict[str, Any]:
+) -> SystemDiagnosticsOut:
     """Redacted system diagnostics bundle: metrics summary, accounts, recent audits/logs."""
-    return await service.get_diagnostics()
+    return SystemDiagnosticsOut.model_validate(await service.get_diagnostics())
