@@ -19,12 +19,14 @@ type JsonSuccessBody<Operation> = Operation extends { responses: infer Responses
   : never;
 
 /** The successful JSON body inferred from a generated OpenAPI path + method. */
-export type ApiJsonResponse<Path extends string, Method extends HttpMethod> =
-  Path extends keyof paths
-    ? Method extends keyof paths[Path]
-      ? JsonSuccessBody<NonNullable<paths[Path][Method]>>
-      : never
-    : never;
+export type ApiJsonResponse<
+  Path extends string,
+  Method extends HttpMethod,
+> = Path extends keyof paths
+  ? Method extends keyof paths[Path]
+    ? JsonSuccessBody<NonNullable<paths[Path][Method]>>
+    : never
+  : never;
 
 export interface ApiRequestOptions extends Omit<RequestInit, "body" | "headers"> {
   headers?: HeadersInit;
