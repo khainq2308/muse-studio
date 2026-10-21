@@ -62,4 +62,7 @@ def test_queue_task_state_and_enqueue_task_type_are_openapi_enums() -> None:
 
     state_parameters = openapi["paths"]["/api/v1/queue/tasks"]["get"]["parameters"]
     state_parameter = next(parameter for parameter in state_parameters if parameter["name"] == "state")
-    assert _model_name(state_parameter["schema"]) == "QueueTaskState"
+    state_schema = state_parameter["schema"]
+    state_refs = {item.get("$ref") for item in state_schema.get("anyOf", [])}
+    state_refs.add(state_schema.get("$ref"))
+    assert "#/components/schemas/QueueTaskState" in state_refs
