@@ -7,6 +7,12 @@ on:
     paths:
       - "apps/orchestrator/muse_orchestrator/api/**"
       - "apps/orchestrator/tests/test_api_response_contracts.py"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/orchestrator/muse_orchestrator/api/**"
+      - "apps/orchestrator/tests/test_api_response_contracts.py"
 
 permissions:
   contents: write
