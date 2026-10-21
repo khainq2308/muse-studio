@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Report success responses whose OpenAPI schema is missing or too generic.
+"""Report successful OpenAPI responses whose body schema is missing or too generic.
 
 This is intentionally advisory while Phase 0c incrementally adds response models.
-Pass --strict once every JSON success response is expected to have a concrete schema.
+Pass --strict once every successful response body is expected to have a concrete schema.
+Responses with status 204 or 205 are bodyless by HTTP semantics and are exempt.
 """
 from __future__ import annotations
 
@@ -14,6 +15,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SCHEMA = ROOT / "apps" / "orchestrator" / "openapi.json"
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
+BODYLESS_SUCCESS_STATUSES = {"204", "205"}
+MISSING_CONTENT = "(missing content)"
+UNRESOLVED_RESPONSE_REF = "(unresolved response reference)"
 
 
 def _schema_is_generic(
@@ -29,7 +33,7 @@ def _schema_is_generic(
         prefix = "#/components/schemas/"
         if not ref.startswith(prefix) or ref in seen_refs:
             return False
-        target = components.get(ref[len(prefix) :])
+        target = components.get(_decode_pointer_token(ref[len(prefix) :]))
         return _schema_is_generic(target, components, seen_refs | {ref})
 
     schema_type = schema.get("type")
@@ -68,9 +72,37 @@ def _schema_is_generic(
     )
 
 
+def _decode_pointer_token(token: str) -> str:
+    """Decode an RFC 6901 JSON Pointer token."""
+    return token.replace("~1", "/").replace("~0", "~")
+
+
+def _resolve_response(
+    response: Any,
+    response_components: dict[str, Any],
+    seen_refs: frozenset[str] = frozenset(),
+) -> dict[str, Any] | None:
+    """Resolve local OpenAPI response refs; return None for unresolved/cyclic refs."""
+    if not isinstance(response, dict):
+        return None
+
+    ref = response.get("$ref")
+    if not isinstance(ref, str):
+        return response
+
+    prefix = "#/components/responses/"
+    if not ref.startswith(prefix) or ref in seen_refs:
+        return None
+
+    target_name = _decode_pointer_token(ref[len(prefix) :])
+    target = response_components.get(target_name)
+    return _resolve_response(target, response_components, seen_refs | {ref})
+
+
 def audit_schema(document: dict[str, Any]) -> tuple[int, list[tuple[str, str, str, str]]]:
     paths = document.get("paths", {})
     components = document.get("components", {}).get("schemas", {})
+    response_components = document.get("components", {}).get("responses", {})
     operation_count = 0
     findings: list[tuple[str, str, str, str]] = []
 
@@ -82,11 +114,29 @@ def audit_schema(document: dict[str, Any]) -> tuple[int, list[tuple[str, str, st
                 continue
             operation_count += 1
             responses = operation.get("responses", {})
-            for status_code, response in responses.items():
-                if not status_code.startswith("2") or not isinstance(response, dict):
+            if not isinstance(responses, dict):
+                findings.append((method.upper(), path, "(unknown)", UNRESOLVED_RESPONSE_REF))
+                continue
+
+            for status_code, original_response in responses.items():
+                if not isinstance(status_code, str) or not status_code.startswith("2"):
                     continue
-                # 204/no-content endpoints intentionally have no response body contract.
-                content = response.get("content", {})
+                # These statuses explicitly forbid a response body by HTTP semantics.
+                if status_code in BODYLESS_SUCCESS_STATUSES:
+                    continue
+
+                response = _resolve_response(original_response, response_components)
+                if response is None:
+                    findings.append((method.upper(), path, status_code, UNRESOLVED_RESPONSE_REF))
+                    continue
+
+                content = response.get("content")
+                if not isinstance(content, dict) or not content:
+                    # A 200/201/etc with no documented content is not assumed bodyless:
+                    # the contract must state its body, or use 204/205 for no content.
+                    findings.append((method.upper(), path, status_code, MISSING_CONTENT))
+                    continue
+
                 for media_type, media in content.items():
                     schema = media.get("schema") if isinstance(media, dict) else None
                     if _schema_is_generic(schema, components):
@@ -100,7 +150,7 @@ def main() -> int:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="exit non-zero while any generic success-response schemas remain",
+        help="exit non-zero while any generic/missing success-response schemas remain",
     )
     args = parser.parse_args()
 
@@ -111,14 +161,14 @@ def main() -> int:
 
     operation_count, findings = audit_schema(document)
     print(f"OpenAPI operations audited: {operation_count}")
-    print(f"Generic success response schemas: {len(findings)}")
+    print(f"Generic or missing success response schemas: {len(findings)}")
     for method, path, status_code, media_type in findings:
         print(f"  {method:<7} {path} [{status_code} {media_type}]")
     if findings and args.strict:
         print("Run scripts/export_openapi.py after adding explicit response models.")
         return 1
     if not findings:
-        print("[OK] All success response bodies have concrete schemas.")
+        print(" [OK] All documented success response bodies have concrete schemas; 204/205 are exempt.")
     return 0
 
 
