@@ -3,11 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
-
 from fastapi import APIRouter, Depends, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from muse_orchestrator.api.dependencies import get_backup_service
 from muse_orchestrator.application.services import ApplicationError
@@ -17,16 +15,44 @@ from muse_orchestrator.services.backup_service import BACKUP_MAX_BYTES, BackupSe
 router = APIRouter(tags=["Backups"])
 
 
+class BackupManifestOut(BaseModel):
+    """Typed known fields while retaining forward-compatible manifest metadata."""
+
+    format_version: str | None = None
+    project_id: str | None = None
+    project_name: str | None = None
+    created_at: datetime | None = None
+    tables: dict[str, int] = Field(default_factory=dict)
+    excluded_tables: list[str] = Field(default_factory=list)
+    missing_media: list[str] = Field(default_factory=list)
+    media_files: int | None = None
+
+    model_config = {"extra": "allow"}
+
+
 class BackupOut(BaseModel):
     id: str
     project_id: str
     filename: str
     size_bytes: int
     sha256: str
-    manifest_json: dict[str, Any]
+    manifest_json: BackupManifestOut
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BackupRestoreReportOut(BaseModel):
+    tables_restored: dict[str, int]
+    rows_skipped: dict[str, int]
+    media_restored: int
+    media_missing: list[str]
+
+
+class BackupRestoreOut(BaseModel):
+    project_id: str
+    project_name: str
+    report: BackupRestoreReportOut
 
 
 def _to_backup_out(record: BackupRecord) -> BackupOut:
@@ -87,12 +113,12 @@ async def delete_backup(
     await service.delete_backup(backup_id)
 
 
-@router.post("/api/v1/backups/restore", status_code=status.HTTP_201_CREATED)
+@router.post("/api/v1/backups/restore", response_model=BackupRestoreOut, status_code=status.HTTP_201_CREATED)
 async def restore_backup(
     file: UploadFile,
     project_name: str | None = Query(default=None, min_length=1, max_length=255),
     service: BackupService = Depends(get_backup_service),
-) -> dict[str, Any]:
+) -> BackupRestoreOut:
     """M7: restore a project from an uploaded backup ZIP (IDs are remapped)."""
     temporary_path: Path | None = None
     try:
@@ -118,8 +144,4 @@ async def restore_backup(
                 temporary_path.unlink(missing_ok=True)
             except OSError:
                 pass
-    return {
-        "project_id": project.id,
-        "project_name": project.name,
-        "report": report,
-    }
+    return BackupRestoreOut(project_id=project.id, project_name=project.name, report=report)
