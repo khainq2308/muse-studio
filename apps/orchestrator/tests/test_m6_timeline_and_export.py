@@ -252,6 +252,47 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert download.headers["content-type"] == "video/mp4"
 
 
+
+@pytest.mark.asyncio
+async def test_failed_export_status_omits_success_only_fields(client: AsyncClient) -> None:
+    project_response = await client.post(
+        "/api/v1/projects",
+        json={"name": "Export Failure Contract"},
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    sequence_response = await client.post(
+        f"/api/v1/projects/{project_id}/timeline/assemble",
+        json={"name": "Empty Timeline"},
+    )
+    assert sequence_response.status_code == 201
+    sequence_id = sequence_response.json()["sequence_id"]
+    assert sequence_response.json()["manifest"]["video_clips"] == []
+
+    launch_response = await client.post(
+        f"/api/v1/projects/{project_id}/timeline/exports",
+        json={"sequence_id": sequence_id},
+    )
+    assert launch_response.status_code == 202, launch_response.text
+    export_id = launch_response.json()["export_id"]
+
+    worker_result = await _drive_export(export_id)
+    assert worker_result["state"] == "failed"
+
+    status_response = await client.get(
+        f"/api/v1/projects/{project_id}/timeline/exports/{export_id}"
+    )
+    assert status_response.status_code == 200, status_response.text
+    export_status = status_response.json()
+    assert export_status["state"] == "failed"
+    assert export_status["message"]
+    assert "download_url" not in export_status
+    assert "output_asset_id" not in export_status
+    assert "ffmpeg_args" not in export_status
+    assert "ffprobe_verification" not in export_status
+
+
 @pytest.mark.asyncio
 async def test_application_errors_preserve_http_status_and_detail(
     client: AsyncClient,
