@@ -37,14 +37,77 @@ class ContinuityFlagIn(BaseModel):
     model_id: str = Field(default="muse-video-mock-v1")
 
 
-@router.post("/batch/launch", status_code=status.HTTP_201_CREATED)
+class BatchLaunchOut(BaseModel):
+    batch_id: str
+    total_shots: int
+    enqueued_count: int
+    skipped_unchanged_count: int
+    blocked_count: int
+    enqueued_task_ids: list[str]
+    skipped_shot_ids: list[str]
+    blocked_shot_ids: list[str]
+
+
+class BatchTickStepOut(BaseModel):
+    task_id: str
+    shot_id: str
+    state: QueueTaskState
+    poll_count: int | None = None
+    auto_enqueued_from_frame_chain: bool | None = None
+
+
+class BatchTickOut(BaseModel):
+    project_id: str
+    stepped_count: int
+    stepped_tasks: list[BatchTickStepOut]
+    queue_summary: dict[str, int]
+    tick_limit: int
+    active_tasks_fetched: int
+
+
+class RetryFailedTasksOut(BaseModel):
+    retried_count: int
+    new_task_ids: list[str]
+
+
+class ContinuityFlagOut(BaseModel):
+    shot_id: str
+    take_id: str
+    continuity_flagged: bool
+    director_notes: str
+    regenerated_task_id: str | None
+
+
+class TakeComparisonOut(BaseModel):
+    take_id: str
+    take_number: int
+    asset_id: str
+    first_frame_asset_id: str | None
+    last_frame_asset_id: str | None
+    model_id: str
+    prompt_hash: str
+    account_used: str | None
+    continuity_flagged: bool
+    director_notes: str
+    is_selected: bool
+
+
+class CompareShotTakesOut(BaseModel):
+    shot_id: str
+    same_prompt_hash: bool
+    same_model: bool
+    take_a: TakeComparisonOut
+    take_b: TakeComparisonOut
+
+
+@router.post("/batch/launch", response_model=BatchLaunchOut, status_code=status.HTTP_201_CREATED)
 async def launch_batch_render(
     project_id: str,
     payload: BatchLaunchIn,
     request: Request,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> BatchLaunchOut:
     """
     Fan-out N shots thành các task bất đồng bộ (Mục 3.7, M5 & Tiêu chí nghiệm thu #6, #10 PRD):
     - Tự động chạy Continuity Linter trước khi đưa vào queue.
@@ -147,7 +210,7 @@ async def launch_batch_render(
     }
 
 
-@router.post("/batch/tick")
+@router.post("/batch/tick", response_model=BatchTickOut)
 async def tick_project_batch_queue(
     project_id: str,
     request: Request,
@@ -155,7 +218,7 @@ async def tick_project_batch_queue(
     max_steps: int = Query(default=50, ge=1, le=200),
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> BatchTickOut:
     """
     Thực thi 1 chu kỳ điều phối (scheduler tick) trên toàn bộ hàng đợi của Project:
     - Tôn trọng tuyệt đối max_concurrency của từng Connection.
@@ -224,14 +287,14 @@ async def tick_project_batch_queue(
     }
 
 
-@router.post("/batch/retry-failed")
+@router.post("/batch/retry-failed", response_model=RetryFailedTasksOut)
 async def retry_failed_project_tasks(
     project_id: str,
     request: Request,
     connection_id: str | None = None,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> RetryFailedTasksOut:
     """Chỉ retry các Shot bị lỗi (failed / poll_timeout), giữ nguyên thành quả các Shot đã succeeded."""
     failed_shots = await repository.list_failed_project_shots(project_id)
 
@@ -262,7 +325,7 @@ async def retry_failed_project_tasks(
     return {"retried_count": len(new_task_ids), "new_task_ids": new_task_ids}
 
 
-@router.post("/shots/{shot_id}/takes/{take_id}/flag-continuity")
+@router.post("/shots/{shot_id}/takes/{take_id}/flag-continuity", response_model=ContinuityFlagOut)
 async def flag_take_continuity_and_regenerate(
     project_id: str,
     shot_id: str,
@@ -271,7 +334,7 @@ async def flag_take_continuity_and_regenerate(
     request: Request,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> ContinuityFlagOut:
     """Đánh dấu lỗi Continuity trên một Take và tuỳ chọn kích hoạt Regenerate có mục tiêu (Mục 1 & 3.8 PRD)."""
     take = await repository.get_shot_take(take_id)
     shot = await repository.get_shot(shot_id)
@@ -312,14 +375,14 @@ async def flag_take_continuity_and_regenerate(
     }
 
 
-@router.get("/shots/{shot_id}/compare-takes")
+@router.get("/shots/{shot_id}/compare-takes", response_model=CompareShotTakesOut)
 async def compare_shot_takes_ab(
     project_id: str,
     shot_id: str,
     take_a_id: str,
     take_b_id: str,
     repository: StudioRepository = Depends(get_studio_repository),
-) -> dict[str, Any]:
+) -> CompareShotTakesOut:
     """So sánh A/B giữa 2 Takes của cùng một Shot (Mục 3.8 PRD)."""
     ta = await repository.get_shot_take(take_a_id)
     tb = await repository.get_shot_take(take_b_id)
