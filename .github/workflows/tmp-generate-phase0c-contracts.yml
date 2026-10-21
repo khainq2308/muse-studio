@@ -1,0 +1,47 @@
+name: Temporary Phase 0c contract generation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  generate-contracts:
+    name: Generate OpenAPI and TypeScript contracts from updated routes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+          enable-cache: true
+          cache-dependency-glob: |
+            apps/orchestrator/pyproject.toml
+            apps/orchestrator/uv.lock
+            apps/media-engine/pyproject.toml
+      - name: Install locked orchestrator dependencies
+        run: uv sync --locked --project apps/orchestrator --extra dev
+      - name: Export OpenAPI snapshot
+        run: uv run --locked --project apps/orchestrator --extra dev python scripts/export_openapi.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/studio-web/package-lock.json
+      - name: Install locked frontend dependencies
+        working-directory: apps/studio-web
+        run: npm ci --no-audit --no-fund
+      - name: Generate TypeScript schema
+        working-directory: apps/studio-web
+        run: npm run gen:api
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase-0c-generated-contracts
+          path: |
+            apps/orchestrator/openapi.json
+            apps/studio-web/src/lib/api/schema.d.ts
