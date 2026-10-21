@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 
 from muse_orchestrator.api.dependencies import get_project_service
+from muse_orchestrator.api.response_types import JsonValue
 from muse_orchestrator.application.services import ProjectService
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import Project, ProjectRevision
@@ -46,7 +46,7 @@ class RevisionOut(BaseModel):
     project_id: str
     revision_number: int
     commit_message: str
-    snapshot_json: dict[str, Any]
+    snapshot_json: dict[str, JsonValue]
     created_at: datetime
 
     model_config = {"from_attributes": True}
