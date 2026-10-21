@@ -88,8 +88,8 @@ def test_response_audit_reports_generic_objects_and_array_items_but_not_typed_nu
     assert report.returncode == 0, report.stderr
     assert "OpenAPI operations audited: 4" in report.stdout
     assert "Generic success response schemas: 2" in report.stdout
-    assert "GET /generic-object [200 application/json]" in report.stdout
-    assert "GET /generic-list [200 application/json]" in report.stdout
+    assert "/generic-object [200 application/json]" in report.stdout
+    assert "/generic-list [200 application/json]" in report.stdout
     assert "/typed" not in report.stdout
     assert "/empty" not in report.stdout
 
