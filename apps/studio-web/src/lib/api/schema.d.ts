@@ -1464,9 +1464,6 @@ export interface components {
         "JsonValue-Input": string | number | boolean | components["schemas"]["JsonValue-Input"][] | {
             [key: string]: components["schemas"]["JsonValue-Input"];
         } | null;
-        "JsonValue-Output": string | number | boolean | components["schemas"]["JsonValue-Output"][] | {
-            [key: string]: components["schemas"]["JsonValue-Output"];
-        } | null;
         /** LogCreateIn */
         LogCreateIn: {
             /** Correlation Id */
@@ -1487,6 +1484,11 @@ export interface components {
             /** Task Id */
             task_id?: string | null;
         };
+        /**
+         * NodeExecutionState
+         * @enum {string}
+         */
+        NodeExecutionState: "idle" | "ready" | "blocked" | "queued" | "running" | "waiting_approval" | "succeeded" | "failed" | "canceled" | "skipped";
         /** OrphanCleanupIn */
         OrphanCleanupIn: {
             /**
@@ -1877,7 +1879,7 @@ export interface components {
             immutable_traits: string;
             /** Mutable Attributes */
             mutable_attributes: {
-                [key: string]: components["schemas"]["JsonValue-Output"];
+                [key: string]: components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Output"];
             };
             /** Reference Asset Ids */
             reference_asset_ids: string[];
@@ -1979,6 +1981,35 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** WorkflowApprovalNodeOut */
+        WorkflowApprovalNodeOut: {
+            /** Cache Hit */
+            cache_hit: boolean;
+            /** Node Id */
+            node_id: string;
+            /** Output Refs */
+            output_refs: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
+            };
+            state: components["schemas"]["NodeExecutionState"];
+        };
+        /** WorkflowApprovalOut */
+        WorkflowApprovalOut: {
+            /**
+             * Execution Mode
+             * @constant
+             */
+            execution_mode: "simulation";
+            /** Node Executions */
+            node_executions: components["schemas"]["WorkflowApprovalNodeOut"][];
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "succeeded";
+        };
         /** WorkflowCreateIn */
         WorkflowCreateIn: {
             /**
@@ -2009,6 +2040,91 @@ export interface components {
              */
             use_default_m3_template: boolean;
         };
+        /** WorkflowCreateOut */
+        WorkflowCreateOut: {
+            /** Cache Keys */
+            cache_keys: {
+                [key: string]: string;
+            };
+            /** Current Version */
+            current_version: number;
+            /** Edges */
+            edges: components["schemas"]["WorkflowEdgeOut"][];
+            /** Execution Order */
+            execution_order: string[];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Nodes */
+            nodes: components["schemas"]["WorkflowNodeOut"][];
+            /** Project Id */
+            project_id: string;
+            /** Ui Layout */
+            ui_layout: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
+            };
+        };
+        /** WorkflowDryRunOut */
+        WorkflowDryRunOut: {
+            /** Cache Keys */
+            cache_keys: {
+                [key: string]: string;
+            };
+            /**
+             * Execution Mode
+             * @constant
+             */
+            execution_mode: "planning_only";
+            /** Execution Plan Order */
+            execution_plan_order: string[];
+            /** Run Id */
+            run_id: string;
+            /**
+             * Run Mode
+             * @constant
+             */
+            run_mode: "dry_run";
+            /**
+             * Status
+             * @constant
+             */
+            status: "succeeded";
+        };
+        /** WorkflowEdgeOut */
+        WorkflowEdgeOut: {
+            /** Edge Id */
+            edge_id: string;
+            /** Source Node Id */
+            source_node_id: string;
+            /** Source Port */
+            source_port: string;
+            /** Target Node Id */
+            target_node_id: string;
+            /** Target Port */
+            target_port: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** WorkflowExecutionOut */
+        WorkflowExecutionOut: {
+            /**
+             * Execution Mode
+             * @constant
+             */
+            execution_mode: "simulation";
+            /** Execution Plan Order */
+            execution_plan_order: string[];
+            /** Node Executions */
+            node_executions: components["schemas"]["WorkflowNodeExecutionOut"][];
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "succeeded" | "waiting_approval" | "failed";
+        };
         /** WorkflowGraphUpdateIn */
         WorkflowGraphUpdateIn: {
             /** Edges */
@@ -2024,6 +2140,19 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** WorkflowGraphUpdateOut */
+        WorkflowGraphUpdateOut: {
+            /** Cache Keys */
+            cache_keys: {
+                [key: string]: string;
+            };
+            /** Current Version */
+            current_version: number;
+            /** Execution Order */
+            execution_order: string[];
+            /** Id */
+            id: string;
+        };
         /**
          * WorkflowLayoutOnlyIn
          * @description Chỉ lưu vị trí kéo thả node trên Canvas, không tạo version logic mới và không xoá cache.
@@ -2033,6 +2162,54 @@ export interface components {
             ui_layout: {
                 [key: string]: unknown;
             };
+        };
+        /** WorkflowLayoutSaveOut */
+        WorkflowLayoutSaveOut: {
+            /** Ui Layout Saved */
+            ui_layout_saved: boolean;
+            /** Version Number */
+            version_number: number;
+            /** Workflow Id */
+            workflow_id: string;
+        };
+        /** WorkflowNodeExecutionOut */
+        WorkflowNodeExecutionOut: {
+            /** Cache Hit */
+            cache_hit: boolean;
+            /** Cache Key */
+            cache_key: string;
+            /** Logs */
+            logs: string[];
+            /** Node Id */
+            node_id: string;
+            /** Node Type */
+            node_type: string;
+            /** Output Refs */
+            output_refs: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
+            };
+            state: components["schemas"]["NodeExecutionState"];
+        };
+        /** WorkflowNodeOut */
+        WorkflowNodeOut: {
+            /** Config */
+            config?: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
+            };
+            /** Inputs */
+            inputs?: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
+            };
+            /** Node Id */
+            node_id: string;
+            /** Node Type */
+            node_type: string;
+            /** Outputs */
+            outputs?: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
+            };
+        } & {
+            [key: string]: unknown;
         };
         /** WorkflowRunRequestIn */
         WorkflowRunRequestIn: {
@@ -2050,6 +2227,12 @@ export interface components {
             /** Start Node Id */
             start_node_id?: string | null;
         };
+        "muse_orchestrator__api__pipeline__JsonValue-Output": string | number | boolean | components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Output"][] | {
+            [key: string]: components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Output"];
+        } | null;
+        muse_orchestrator__api__workflows__JsonValue: string | number | boolean | components["schemas"]["muse_orchestrator__api__workflows__JsonValue"][] | {
+            [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
+        } | null;
     };
     responses: never;
     parameters: never;
@@ -3442,9 +3625,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowCreateOut"];
                 };
             };
             /** @description Validation Error */
@@ -3482,9 +3663,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowGraphUpdateOut"];
                 };
             };
             /** @description Validation Error */
@@ -3522,9 +3701,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowLayoutSaveOut"];
                 };
             };
             /** @description Validation Error */
@@ -3562,9 +3739,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowDryRunOut"] | components["schemas"]["WorkflowExecutionOut"];
                 };
             };
             /** @description Validation Error */
@@ -3600,9 +3775,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowApprovalOut"];
                 };
             };
             /** @description Validation Error */
