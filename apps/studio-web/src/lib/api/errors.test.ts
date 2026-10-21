@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/client";
-import {
-  authErrorMessage,
-  isAuthError,
-  shouldRetryApiRequest,
-} from "@/lib/api/errors";
+import { authErrorMessage, isAuthError, shouldRetryApiRequest } from "@/lib/api/errors";
 
 describe("shared API error classification", () => {
   it("classifies unauthorized and forbidden responses as auth-related", () => {
