@@ -74,6 +74,7 @@ Legacy code may not fully meet the target layering. Do not add new violations; w
 | Media-engine tests | `scripts/test.sh media` |
 | Frontend typecheck/build | `scripts/test.sh web` |
 | OpenAPI snapshot + generated TypeScript drift check | `bash scripts/check_openapi.sh` (also included in `scripts/test.sh all`) |
+| Audit remaining generic OpenAPI success responses | `python3 scripts/audit_openapi_responses.py` (advisory during Phase 0c; add `--strict` after all response contracts are typed) |
 | Changed-Python Ruff lint + layering ratchet | `scripts/lint.sh` (default checks changed Python files repo-wide; `--all` checks the legacy app tree; `--fix` modifies application code) |
 | Layering details | `python3 scripts/check_layering.py --report` |
 | Roadmap gap signals (advisory) | `python3 scripts/audit_roadmap.py` |

@@ -64,7 +64,7 @@ Run the smallest relevant check first. Then select the wider checks based on ris
 |---|---|
 | Backend behavior / API / queue | `scripts/test.sh orchestrator`; `scripts/lint.sh`; `python3 scripts/check_layering.py` |
 | FFmpeg or media engine | `scripts/test.sh media`; relevant orchestrator integration tests with FFmpeg available; verify output with FFprobe |
-| Frontend / contracts | `scripts/test.sh web` and `bash scripts/check_openapi.sh`; verify API fields against Pydantic schemas; browser behavior remains unverified unless browser testing actually ran |
+| Frontend / contracts | `scripts/test.sh web` and `bash scripts/check_openapi.sh`; for backend response-model migration also run `python3 scripts/audit_openapi_responses.py` and relevant orchestrator tests; browser behavior remains unverified unless browser testing actually ran |
 | Schema / migrations | Migration-specific upgrade/downgrade tests on throwaway databases; orchestrator tests; never use a production database |
 | Security-sensitive behavior | Negative tests for malicious input, secret leakage and path/origin validation; read-only security review when available |
 | Roadmap signals | `python3 scripts/audit_roadmap.py`; use output only as a heuristic inventory, then inspect implementation/tests |
