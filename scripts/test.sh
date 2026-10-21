@@ -19,6 +19,10 @@ run_media() {
   echo "==> media-engine tests"
   ( cd "$ROOT/apps/media-engine" && PYTHONPATH=. python3 -m pytest -q "$@" ) || rc=1
 }
+run_openapi() {
+  echo "==> OpenAPI snapshot and generated TypeScript schema"
+  "$ROOT/scripts/check_openapi.sh" || rc=1
+}
 run_web() {
   echo "==> Studio Web: deterministic install"
   if ! ( cd "$ROOT/apps/studio-web" && npm ci --no-audit --no-fund ); then rc=1; return; fi
@@ -39,7 +43,7 @@ case "$scope" in
   web|frontend)
     if [ "$#" -gt 0 ]; then echo "web scope does not accept pytest arguments" >&2; exit 2; fi
     run_web ;;
-  all)                       run_orchestrator; run_media; run_web ;;
+  all)                       run_orchestrator; run_media; run_web; run_openapi ;;
   *) echo "Unknown scope: $scope (use orchestrator|media|web|all)" >&2; exit 2 ;;
 esac
 [ "$rc" -eq 0 ] && echo "OK: all selected suites passed" || echo "FAIL: see output above"
