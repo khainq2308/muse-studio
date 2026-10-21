@@ -14,7 +14,8 @@ TMP_DIR="$(mktemp -d)"
 cleanup() {
     docker rm -f "$WEB_CONTAINER" "$API_CONTAINER" >/dev/null 2>&1 || true
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
-    rm -f "$TMP_DIR/health.json" "$TMP_DIR/root.html" "$TMP_DIR/deep-link.html" "$TMP_DIR/api.json"\n    rmdir "$TMP_DIR" 2>/dev/null || true
+    rm -f "$TMP_DIR/health.json" "$TMP_DIR/root.html" "$TMP_DIR/deep-link.html" "$TMP_DIR/api.json"
+    rmdir "$TMP_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
