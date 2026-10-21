@@ -1316,8 +1316,62 @@ export interface components {
             /**
              * Task Type
              * @default video
+             * @enum {string}
              */
-            task_type: string;
+            task_type: "image" | "video";
+        };
+        /** EnqueuedQueueTaskOut */
+        EnqueuedQueueTaskOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Connection Id */
+            connection_id: string;
+            /** Created New */
+            created_new: boolean;
+            /** Error Category */
+            error_category: string | null;
+            /** Error Message Redacted */
+            error_message_redacted: string | null;
+            /** External Task Id */
+            external_task_id: string | null;
+            /** History Log */
+            history_log: string[];
+            /** Id */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Max Attempts */
+            max_attempts: number;
+            /** Max Polls */
+            max_polls: number;
+            /** Model Id */
+            model_id: string;
+            /** Next Poll Delay Seconds */
+            next_poll_delay_seconds: number;
+            /** Poll Count */
+            poll_count: number;
+            /** Priority */
+            priority: number;
+            /** Project Id */
+            project_id: string;
+            /** Result Asset Id */
+            result_asset_id: string | null;
+            /** Retryable */
+            retryable: boolean;
+            /** Scene Id */
+            scene_id: string | null;
+            /** Shot Id */
+            shot_id: string;
+            state: components["schemas"]["QueueTaskState"];
+            /** Take Id */
+            take_id: string | null;
+            /**
+             * Task Type
+             * @enum {string}
+             */
+            task_type: "image" | "video";
         };
         /** ExportLaunchIn */
         ExportLaunchIn: {
@@ -1447,6 +1501,65 @@ export interface components {
              */
             updated_at: string;
         };
+        /**
+         * QueueTaskOut
+         * @description Stable response contract for queue tasks; never expose internal prompt snapshots.
+         */
+        QueueTaskOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Connection Id */
+            connection_id: string;
+            /** Error Category */
+            error_category: string | null;
+            /** Error Message Redacted */
+            error_message_redacted: string | null;
+            /** External Task Id */
+            external_task_id: string | null;
+            /** History Log */
+            history_log: string[];
+            /** Id */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Max Attempts */
+            max_attempts: number;
+            /** Max Polls */
+            max_polls: number;
+            /** Model Id */
+            model_id: string;
+            /** Next Poll Delay Seconds */
+            next_poll_delay_seconds: number;
+            /** Poll Count */
+            poll_count: number;
+            /** Priority */
+            priority: number;
+            /** Project Id */
+            project_id: string;
+            /** Result Asset Id */
+            result_asset_id: string | null;
+            /** Retryable */
+            retryable: boolean;
+            /** Scene Id */
+            scene_id: string | null;
+            /** Shot Id */
+            shot_id: string;
+            state: components["schemas"]["QueueTaskState"];
+            /** Take Id */
+            take_id: string | null;
+            /**
+             * Task Type
+             * @enum {string}
+             */
+            task_type: "image" | "video";
+        };
+        /**
+         * QueueTaskState
+         * @enum {string}
+         */
+        QueueTaskState: "queued" | "paused" | "running" | "succeeded" | "failed" | "poll_timeout" | "canceled";
         /** RevisionOut */
         RevisionOut: {
             /** Commit Message */
@@ -1487,6 +1600,46 @@ export interface components {
          * @enum {string}
          */
         ShotApprovalState: "draft" | "needs_review" | "approved" | "rejected";
+        /** ShotTakeOut */
+        ShotTakeOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Asset Id */
+            asset_id: string;
+            /** Continuity Flagged */
+            continuity_flagged: boolean;
+            /** Director Notes */
+            director_notes: string;
+            /** First Frame Asset Id */
+            first_frame_asset_id: string | null;
+            /** Id */
+            id: string;
+            /** Is Selected */
+            is_selected: boolean;
+            /** Last Frame Asset Id */
+            last_frame_asset_id: string | null;
+            /** Model Id */
+            model_id: string;
+            /** Prompt Hash */
+            prompt_hash: string;
+            /** Shot Id */
+            shot_id: string;
+            /** Take Number */
+            take_number: number;
+            /** Task Id */
+            task_id: string;
+        };
+        /** ShotTakeSelectionOut */
+        ShotTakeSelectionOut: {
+            /** Last Frame Asset Id */
+            last_frame_asset_id: string | null;
+            /** Propagated Downstream Shots */
+            propagated_downstream_shots: string[];
+            /** Selected Take Id */
+            selected_take_id: string;
+            /** Shot Id */
+            shot_id: string;
+        };
         /** ShotUpdateIn */
         ShotUpdateIn: {
             /** Action */
@@ -3243,9 +3396,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ShotTakeOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3279,9 +3430,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShotTakeSelectionOut"];
                 };
             };
             /** @description Validation Error */
@@ -3300,7 +3449,7 @@ export interface operations {
             query?: {
                 project_id?: string | null;
                 connection_id?: string | null;
-                state?: string | null;
+                state?: components["schemas"]["QueueTaskState"] | null;
                 model_id?: string | null;
                 account_used?: string | null;
             };
@@ -3318,9 +3467,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["QueueTaskOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3355,9 +3502,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["EnqueuedQueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3390,9 +3535,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3425,9 +3568,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3460,9 +3601,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3495,9 +3634,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */
