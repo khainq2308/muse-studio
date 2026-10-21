@@ -160,4 +160,5 @@ def test_timeline_and_export_routes_publish_explicit_response_models() -> None:
     assert set(components["ExportJobState"]["enum"]) == {
         "queued", "running", "succeeded", "failed", "canceled",
     }
-    assert components["ExportLaunchOut"]["properties"]["state"]["enum"] == ["queued"]
+    launch_state = components["ExportLaunchOut"]["properties"]["state"]
+    assert launch_state.get("enum") == ["queued"] or launch_state.get("const") == "queued"
