@@ -128,7 +128,7 @@ def audit_module(module_name: str) -> list[RouteFinding]:
                 RouteFinding(
                     module=module_name,
                     method=method.upper(),
-                    path=_full_path(prefix, local_path or "<dynamic>"),
+                    path=_full_path(prefix, local_path if local_path is not None else "<dynamic>"),
                     function=node.name,
                     line=node.lineno,
                     response_model=response_model,
