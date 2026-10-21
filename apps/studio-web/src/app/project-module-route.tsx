@@ -15,9 +15,7 @@ export default function ProjectModuleRoute() {
     >
       <div data-testid="project-module-placeholder" className="space-y-2">
         <h2 className="text-xl font-semibold">{heading}</h2>
-        <p className="text-sm text-muted-foreground">
-          This module is a placeholder in Phase 0a.
-        </p>
+        <p className="text-sm text-muted-foreground">This module is a placeholder in Phase 0a.</p>
         <p className="text-xs text-muted-foreground">Project: {projectId}</p>
       </div>
     </section>

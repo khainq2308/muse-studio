@@ -35,9 +35,7 @@ test("production build deep link matches the registered project-module route", a
   await expect(page.getByTestId("project-module-placeholder")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Provider connections" })).toHaveCount(0);
-  await expect
-    .poll(() => requestedFetchUrls.map(({ pathname }) => pathname))
-    .toContain("/healthz");
+  await expect.poll(() => requestedFetchUrls.map(({ pathname }) => pathname)).toContain("/healthz");
   expect(requestedFetchUrls.map(({ pathname }) => pathname)).not.toContain("/api/v1/projects");
   expect(requestedFetchUrls.map(({ pathname }) => pathname)).not.toContain("/api/v1/connections");
 

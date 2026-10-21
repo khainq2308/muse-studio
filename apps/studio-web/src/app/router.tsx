@@ -43,9 +43,8 @@ const projectModuleRoute = createRoute({
   component: ProjectModuleRoute,
 });
 
-const routeTree = rootRoute.addChildren([
-  shellRoute.addChildren([indexRoute, projectModuleRoute]),
-]);
+const shellChildren = shellRoute.addChildren([indexRoute, projectModuleRoute]);
+const routeTree = rootRoute.addChildren([shellChildren]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 

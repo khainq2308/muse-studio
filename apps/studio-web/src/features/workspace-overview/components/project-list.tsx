@@ -11,7 +11,13 @@ interface ProjectListProps {
   onRetry: () => void;
 }
 
-export function ProjectList({ projects, isLoading, isError, errorMessage, onRetry }: ProjectListProps) {
+export function ProjectList({
+  projects,
+  isLoading,
+  isError,
+  errorMessage,
+  onRetry,
+}: ProjectListProps) {
   return (
     <ResourceCard
       icon={<Film className="size-5" aria-hidden="true" />}
