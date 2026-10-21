@@ -5,9 +5,10 @@ import {
   Outlet,
   redirect,
 } from "@tanstack/react-router";
-import App from "@/App";
+import AppShell from "@/app/app-shell";
 import ProjectModuleRoute from "@/app/project-module-route";
 import { isProjectModule } from "@/app/project-modules";
+import OverviewPage from "@/features/workspace-overview/pages/overview-page";
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -19,14 +20,20 @@ const rootRoute = createRootRoute({
   ),
 });
 
-const indexRoute = createRoute({
+const shellRoute = createRoute({
   getParentRoute: () => rootRoute,
+  id: "_shell",
+  component: AppShell,
+});
+
+const indexRoute = createRoute({
+  getParentRoute: () => shellRoute,
   path: "/",
-  component: App,
+  component: OverviewPage,
 });
 
 const projectModuleRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => shellRoute,
   path: "/projects/$projectId/$module",
   beforeLoad: ({ params }) => {
     if (!isProjectModule(params.module)) {
@@ -36,7 +43,9 @@ const projectModuleRoute = createRoute({
   component: ProjectModuleRoute,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, projectModuleRoute]);
+const routeTree = rootRoute.addChildren([
+  shellRoute.addChildren([indexRoute, projectModuleRoute]),
+]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 

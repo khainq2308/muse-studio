@@ -14,7 +14,7 @@ Bảng này là nguồn trạng thái duy nhất cho các artifact frontend. M�
 | Foundation frontend (dependencies, lockfile, client, router, theme, lint) | Đã triển khai trong PR #49; CI của nhánh phải xanh trước khi merge | Build, typecheck, lint, unit test và browser smoke chạy trên dependency đã khóa |
 | OpenAPI export/snapshot/drift check | Chưa có đủ pipeline Phase 0b | Export offline tái lập, snapshot + generated schema được commit và CI phát hiện drift |
 | Typed backend routes | Chưa audit đầy đủ; phải bao gồm pipeline, queue, batch/takes, workflows, timeline và các router khác | Re-run response-model audit và kiểm tra schema enum/payload trên từng router |
-| Frontend feature UI | Chưa triển khai theo kiến trúc mục tiêu | Chỉ đánh dấu theo evidence của từng phase feature |
+| Frontend product feature UI | Chưa triển khai theo kiến trúc mục tiêu; Phase 0a chỉ có overview chuyển tiếp để xác minh foundation | Chỉ đánh dấu theo evidence của từng phase feature |
 | Browser smoke test | Playwright smoke chạy trên Vite production preview; chưa kiểm thử Nginx production image | Playwright pass với API mock và deep link thật; thêm Nginx image smoke trước khi xác nhận proxy/try_files của production |
 
 ## Local development API routing
@@ -69,7 +69,10 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 ```text
 apps/studio-web/src/
   main.tsx
-  app/                  # App shell: providers (QueryClient, theme), layout, điều hướng tab/route, error boundary
+  app/                  # App shell: providers, route composition, shared layout and navigation
+    app-shell.tsx         # Shared header + Outlet only; no feature queries
+    router.tsx
+    project-module-route.tsx
   components/
     ui/                 # Component shadcn/ui (sinh bằng shadcn CLI, chỉnh sửa tối thiểu)
     shared/             # Component dùng chung không gắn domain: StatusBadge, AsyncState,
@@ -81,6 +84,19 @@ apps/studio-web/src/
     take/               #   nhiều feature (vd connections, projects, shots).
     task/
   features/
+    admin-session/
+      components/
+        admin-token-form.tsx
+    api-status/
+      components/
+        api-status-badge.tsx
+      use-api-status.ts
+    workspace-overview/  # Transitional Phase 0a overview; not a product workflow module
+      pages/
+        overview-page.tsx
+      components/
+        project-list.tsx
+        connection-list.tsx
     projects/
     connections/
     script-studio/
@@ -96,6 +112,7 @@ apps/studio-web/src/
   lib/
     api/
       client.ts         # HTTP transport duy nhất được phép gọi fetch
+      errors.ts         # Shared HTTP/auth error classification and messages
       schema.d.ts       # OpenAPI-generated; không sửa tay
       queryKeys.ts      # Query keys dùng thống nhất
     stores/             # Zustand stores
@@ -110,6 +127,9 @@ Cách chia trách nhiệm:
 - `features/<feature>/api.ts` chứa các TanStack Query hooks và mutation của đúng feature; các hooks gọi `lib/api/client.ts`, không gọi `fetch` trực tiếp.
 - `entities/<entity>/api.ts` chỉ dành cho query/mutation hooks được dùng thật sự bởi từ hai feature trở lên. Không chuyển mọi request vào một service tổng hợp hoặc tạo entity chỉ để gom file.
 - `components/ui/` chứa primitive UI không biết domain; `components/shared/` chứa component tái sử dụng nhưng vẫn nhận props đã typed. Phần ghép state/domain vào giao diện nằm ở feature.
+- `app/app-shell.tsx` chỉ chứa layout dùng chung, token form và health badge với `<Outlet />`; không gọi query dữ liệu projects/connections.
+- `features/workspace-overview/pages/overview-page.tsx` là trang chuyển tiếp của Phase 0a: compose hook trong `entities/` và truyền dữ liệu/trạng thái qua props cho hai list presentational. Nó không triển khai workflow Projects/Connections của sản phẩm và sẽ được thay bằng trang feature thật ở phase tương ứng.
+- Lỗi 401/403 được phân loại trong `lib/api/errors.ts`; lỗi hiển thị ở resource phát sinh, không chuyển thành trạng thái xác thực toàn cục của shell.
 - Không tạo `src/services/` như một lớp monolithic API client. Cũng không tự dựng `useAsyncData`/`usePolling`; dùng TanStack Query để quản lý cache, hủy request, invalidate và polling.
 
 Quy tắc phụ thuộc:

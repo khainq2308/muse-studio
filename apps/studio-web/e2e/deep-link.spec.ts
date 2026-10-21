@@ -31,9 +31,15 @@ test("production build deep link matches the registered project-module route", a
   await expect(route).toHaveAttribute("data-project-id", "test-project");
   await expect(route).toHaveAttribute("data-module", "queue-monitor");
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Queue monitor" })).toBeVisible();
+  await expect(page.getByTestId("project-module-placeholder")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Provider connections" })).toHaveCount(0);
   await expect
     .poll(() => requestedFetchUrls.map(({ pathname }) => pathname))
-    .toEqual(expect.arrayContaining(["/api/v1/projects", "/api/v1/connections"]));
+    .toContain("/healthz");
+  expect(requestedFetchUrls.map(({ pathname }) => pathname)).not.toContain("/api/v1/projects");
+  expect(requestedFetchUrls.map(({ pathname }) => pathname)).not.toContain("/api/v1/connections");
 
   const appOrigin = new URL(page.url()).origin;
   expect(requestedFetchUrls.length).toBeGreaterThan(0);
@@ -43,7 +49,7 @@ test("production build deep link matches the registered project-module route", a
   }
 });
 
-test("invalid project modules redirect instead of rendering the app shell", async ({ page }) => {
+test("invalid project modules redirect to the overview route", async ({ page }) => {
   await page.route("**/healthz", async (route) => {
     await route.fulfill({
       status: 200,
@@ -64,6 +70,7 @@ test("invalid project modules redirect instead of rendering the app shell", asyn
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId("project-module-route")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
 });
 
 test("unknown routes render an explicit 404 page", async ({ page }) => {
