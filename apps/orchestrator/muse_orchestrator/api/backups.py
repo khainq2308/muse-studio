@@ -88,7 +88,19 @@ async def list_backups(
     return [_to_backup_out(record) for record in await service.list_backups(project_id)]
 
 
-@router.get("/api/v1/backups/{backup_id}/download")
+@router.get(
+    "/api/v1/backups/{backup_id}/download",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {
+                "application/zip": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            }
+        }
+    },
+)
 async def download_backup(
     backup_id: str,
     service: BackupService = Depends(get_backup_service),
