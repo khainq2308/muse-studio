@@ -1,7 +1,30 @@
+import type { paths } from "@/lib/api/schema";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 export type QueryValue = string | number | boolean | null | undefined;
 export type QueryParams = Record<string, QueryValue>;
+
+type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
+
+type JsonSuccessBody<Operation> = Operation extends { responses: infer Responses }
+  ? {
+      [Status in keyof Responses]: Status extends `2${string}`
+        ? Responses[Status] extends { content: infer Content }
+          ? Content extends { "application/json": infer Body }
+            ? Body
+            : never
+          : never
+        : never;
+    }[keyof Responses]
+  : never;
+
+/** The successful JSON body inferred from a generated OpenAPI path + method. */
+export type ApiJsonResponse<Path extends string, Method extends HttpMethod> =
+  Path extends keyof paths
+    ? Method extends keyof paths[Path]
+      ? JsonSuccessBody<NonNullable<paths[Path][Method]>>
+      : never
+    : never;
 
 export interface ApiRequestOptions extends Omit<RequestInit, "body" | "headers"> {
   headers?: HeadersInit;
@@ -217,8 +240,11 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   return (await parseResponse(response)) as T;
 }
 
-export function apiGet<T>(path: string, options: Omit<ApiRequestOptions, "method" | "body"> = {}) {
-  return apiRequest<T>(path, { ...options, method: "GET" });
+export function apiGet<Path extends string>(
+  path: Path,
+  options: Omit<ApiRequestOptions, "method" | "body"> = {},
+): Promise<ApiJsonResponse<Path, "get">> {
+  return apiRequest<ApiJsonResponse<Path, "get">>(path, { ...options, method: "GET" });
 }
 
 /** Read an explicitly textual API endpoint such as a Markdown export or Prometheus metrics. */
