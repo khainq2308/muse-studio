@@ -4,4 +4,5 @@ node_modules/
 coverage/
 playwright-report/
 test-results/
-
+# Generated from the committed OpenAPI snapshot; do not reformat by hand.
+src/lib/api/schema.d.ts
