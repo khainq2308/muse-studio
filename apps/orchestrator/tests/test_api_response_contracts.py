@@ -229,4 +229,4 @@ def test_binary_downloads_and_revision_snapshots_have_concrete_schemas() -> None
 
     revision_snapshot = openapi["components"]["schemas"]["RevisionOut"]["properties"]["snapshot_json"]
     assert revision_snapshot["type"] == "object"
-    assert _model_name(revision_snapshot["additionalProperties"]) == "JsonValue"
+    assert _model_name(revision_snapshot["additionalProperties"]).endswith("response_types__JsonValue-Output")
