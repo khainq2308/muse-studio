@@ -8,7 +8,11 @@ export function isAuthError(error: unknown): error is AuthApiError {
   return error instanceof ApiError && (error.status === 401 || error.status === 403);
 }
 
-export function authErrorMessage(error: unknown, activeAdminToken: string, resource: string): string {
+export function authErrorMessage(
+  error: unknown,
+  activeAdminToken: string,
+  resource: string,
+): string {
   if (!isAuthError(error)) {
     return `Could not load ${resource}. Check the Orchestrator and retry.`;
   }

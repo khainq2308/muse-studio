@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/client";
-import { authErrorMessage, isAuthError, shouldRetryApiRequest } from "@/lib/api/errors";
+import {
+  authErrorMessage,
+  isAuthError,
+  shouldRetryApiRequest,
+} from "@/lib/api/errors";
 
 describe("shared API error classification", () => {
   it("classifies unauthorized and forbidden responses as auth-related", () => {
@@ -37,9 +41,19 @@ describe("shared API error classification", () => {
   });
 
   it("respects explicit non-retryable errors and retries transient failures at most once", () => {
-    expect(shouldRetryApiRequest(0, new ApiError({ status: 500, detail: "internal", retryable: false }))).toBe(false);
+    expect(
+      shouldRetryApiRequest(
+        0,
+        new ApiError({ status: 500, detail: "internal", retryable: false }),
+      ),
+    ).toBe(false);
     expect(shouldRetryApiRequest(0, new Error("network failure"))).toBe(true);
     expect(shouldRetryApiRequest(1, new Error("network failure"))).toBe(false);
-    expect(shouldRetryApiRequest(0, new ApiError({ status: 500, detail: "internal", retryable: true }))).toBe(true);
+    expect(
+      shouldRetryApiRequest(
+        0,
+        new ApiError({ status: 500, detail: "internal", retryable: true }),
+      ),
+    ).toBe(true);
   });
 });
