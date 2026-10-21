@@ -50,12 +50,17 @@ def _schema_is_generic(
     if schema_type == "array":
         return _schema_is_generic(schema.get("items"), components, seen_refs)
 
-    for key in ("oneOf", "anyOf", "allOf"):
-        members = schema.get(key)
-        if isinstance(members, list) and any(
-            _schema_is_generic(member, components, seen_refs) for member in members
-        ):
-            return True
+    combinators = [
+        schema[key]
+        for key in ("oneOf", "anyOf", "allOf")
+        if isinstance(schema.get(key), list)
+    ]
+    if combinators:
+        return any(
+            _schema_is_generic(member, components, seen_refs)
+            for members in combinators
+            for member in members
+        )
 
     # OpenAPI schemas with only descriptive metadata but no shape constrain nothing.
     return schema_type is None and not any(
