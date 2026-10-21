@@ -36,6 +36,7 @@ def test_queue_task_and_take_routes_publish_explicit_response_models() -> None:
         ("get", "/api/v1/projects/{project_id}/story-bible", "200"): "StoryBibleEntryOut",
         ("post", "/api/v1/projects/{project_id}/story-bible", "201"): "StoryBibleUpsertOut",
         ("get", "/api/v1/projects/{project_id}/shots", "200"): "ProjectShotOut",
+        ("get", "/api/v1/projects/{project_id}/shots/export", "200"): "ProjectShotsExportOut",
         ("patch", "/api/v1/projects/{project_id}/shots/{shot_id}", "200"): "ShotReviewOut",
         ("post", "/api/v1/projects/{project_id}/batch/launch", "201"): "BatchLaunchOut",
         ("post", "/api/v1/projects/{project_id}/batch/tick", "200"): "BatchTickOut",
@@ -49,6 +50,15 @@ def test_queue_task_and_take_routes_publish_explicit_response_models() -> None:
         if schema.get("type") == "array":
             schema = schema["items"]
         assert _model_name(schema) == expected_model, f"{method.upper()} {path}"
+
+
+
+def test_shot_export_documents_json_and_csv_media_types() -> None:
+    openapi = app.openapi()
+    content = openapi["paths"]["/api/v1/projects/{project_id}/shots/export"]["get"]["responses"]["200"]["content"]
+
+    assert _model_name(content["application/json"]["schema"]) == "ProjectShotsExportOut"
+    assert content["text/csv"]["schema"]["type"] == "string"
 
 
 def test_queue_task_state_and_enqueue_task_type_are_openapi_enums() -> None:
