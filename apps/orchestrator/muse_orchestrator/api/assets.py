@@ -63,7 +63,19 @@ async def upload_asset(
     return _to_asset_out(asset)
 
 
-@router.get("/{asset_id}/download")
+@router.get(
+    "/{asset_id}/download",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            }
+        }
+    },
+)
 async def download_asset(
     asset_id: str,
     service: AssetService = Depends(get_asset_service),
