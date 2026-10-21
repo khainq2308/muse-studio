@@ -8,6 +8,7 @@ FastAPI settings. Importing the app constructs routes and schemas only; its life
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import sys
@@ -62,6 +63,25 @@ def main(argv: list[str] | None = None) -> int:
         if actual != expected:
             print(f"[OPENAPI-DRIFT] Snapshot is stale: {output}", file=sys.stderr)
             print("Run scripts/export_openapi.py and review the resulting diff.", file=sys.stderr)
+            diff = list(
+                difflib.unified_diff(
+                    actual.splitlines(),
+                    expected.splitlines(),
+                    fromfile=f"{output} (committed)",
+                    tofile="generated OpenAPI",
+                    n=3,
+                    lineterm="",
+                )
+            )
+            max_diff_lines = 120
+            for line in diff[:max_diff_lines]:
+                print(line, file=sys.stderr)
+            if len(diff) > max_diff_lines:
+                print(
+                    f"... diff truncated after {max_diff_lines} lines "
+                    f"({len(diff)} lines total)",
+                    file=sys.stderr,
+                )
             return 1
         print(f"[OK] OpenAPI snapshot is current: {output}")
         return 0
