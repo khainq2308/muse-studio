@@ -21,7 +21,7 @@ run_media() {
 }
 run_openapi() {
   echo "==> OpenAPI snapshot and generated TypeScript schema"
-  "$ROOT/scripts/check_openapi.sh" || rc=1
+  bash "$ROOT/scripts/check_openapi.sh" || rc=1
 }
 run_web() {
   echo "==> Studio Web: deterministic install"
