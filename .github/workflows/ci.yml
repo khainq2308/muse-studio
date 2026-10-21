@@ -121,6 +121,8 @@ jobs:
       - name: Check generated frontend TypeScript schema
         working-directory: apps/studio-web
         run: npm run gen:api:check
+      - name: Audit API response-model coverage
+        run: python scripts/audit_api_response_models.py --report --require-typed queue --require-typed batch
       - name: Ensure generation left the working tree clean
         run: git diff --exit-code -- apps/orchestrator/openapi.json apps/studio-web/src/lib/api/schema.d.ts
 
