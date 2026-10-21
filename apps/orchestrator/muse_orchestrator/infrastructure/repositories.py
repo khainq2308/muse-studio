@@ -72,6 +72,14 @@ class StudioRepository:
         )
         return list(result.scalars().all())
 
+    async def list_timeline_tracks(self, sequence_id: str) -> list[TimelineTrackRecord]:
+        result = await self.session.execute(
+            select(TimelineTrackRecord)
+            .where(TimelineTrackRecord.sequence_id == sequence_id)
+            .order_by(TimelineTrackRecord.track_index.asc())
+        )
+        return list(result.scalars().all())
+
     async def create_timeline_bundle(
         self,
         sequence: TimelineSequenceRecord,

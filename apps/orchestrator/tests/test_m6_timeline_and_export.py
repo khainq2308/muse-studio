@@ -54,6 +54,9 @@ async def client():
             delattr(app.state, "arq_pool")
     else:
         app.state.arq_pool = previous_pool
+    # Close the per-test engine before pytest tears down its event loop. Without
+    # this, aiosqlite worker threads can emit "Event loop is closed" warnings.
+    await test_engine.dispose()
 
 
 async def _drive_export(export_id: str):
@@ -134,6 +137,16 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert tl["audio_track_count"] == 1
     assert tl["has_subtitles"] is True
     assert len(tl["warnings"]) == 0
+    manifest = tl["manifest"]
+    assert manifest["sequence_id"] == tl["sequence_id"]
+    assert manifest["video_clips"][0]["effective_duration_seconds"] == 4.0
+    assert manifest["audio_tracks"][0]["name"] == "Suspense OST"
+
+    latest_tl_res = await client.get(f"/api/v1/projects/{proj_id}/timeline")
+    assert latest_tl_res.status_code == 200, latest_tl_res.text
+    latest_tl = latest_tl_res.json()
+    assert latest_tl["sequence_id"] == tl["sequence_id"]
+    assert latest_tl["manifest"]["video_clips"][1]["transition_type"] == "cross_dissolve"
 
     # 5. Kiểm tra phát hiện TIMELINE_GAP và Trim Clip khi chỉnh sửa custom_clips
     custom_tl = (
@@ -198,6 +211,11 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert exp_res.status_code == 202, exp_res.text
     launched = exp_res.json()
     assert launched["state"] == "queued"
+    assert launched["sequence_id"] == tl["sequence_id"]
+    assert launched["aspect_ratio"] == "9:16"
+    assert launched["fps"] == 30
+    assert launched["resolution"] == "1080x1920"
+    assert launched["unsupported_features"] == ["clip_audio", "title_card", "subtitles", "audio_tracks"]
     export_id = launched["export_id"]
 
     worker_result = await _drive_export(export_id)
@@ -207,6 +225,11 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert status_res.status_code == 200, status_res.text
     exp = status_res.json()
     assert exp["state"] == "succeeded"
+    assert exp["export_id"] == export_id
+    assert exp["sequence_id"] == tl["sequence_id"]
+    assert exp["output_asset_id"]
+    assert exp["download_url"] == f"/api/v1/assets/{exp['output_asset_id']}/download"
+    assert "message" not in exp
     assert exp["video_codec"] == "h264"
     assert exp["audio_codec"] == "aac"
     assert exp["resolution"] == "1080x1920"
@@ -230,6 +253,195 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert download.status_code == 200
     assert download.content == b"\x00\x00\x00\x18ftypmp42" + b"exported-bytes"
     assert download.headers["content-type"] == "video/mp4"
+
+
+@pytest.mark.asyncio
+async def test_custom_clip_with_implicit_start_time_is_normalized(
+    client: AsyncClient,
+) -> None:
+    project_response = await client.post(
+        "/api/v1/projects",
+        json={"name": "Implicit Timeline Start"},
+    )
+    assert project_response.status_code == 201, project_response.text
+    project_id = project_response.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/projects/{project_id}/timeline/assemble",
+        json={
+            "custom_clips": [
+                {
+                    "order_index": 1,
+                    "start_time_seconds": None,
+                    "source_duration_seconds": 5.0,
+                    "transition_type": "hard_cut",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["manifest"]["video_clips"][0]["start_time_seconds"] == 0.0
+    assert body["manifest"]["video_clips"][0]["effective_duration_seconds"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_get_latest_timeline_normalizes_legacy_empty_manifest(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from muse_orchestrator.infrastructure.repositories import StudioRepository
+    from muse_orchestrator.models.domain import TimelineSequenceRecord
+
+    legacy_sequence = TimelineSequenceRecord(
+        id="seq_legacy_manifest",
+        project_id="project_legacy_manifest",
+        name="Legacy Sequence",
+        aspect_ratio="9:16",
+        fps=30,
+        resolution_profile="1080x1920",
+        total_duration_seconds=12.0,
+        title_card_json={"title": "Legacy"},
+        subtitle_format="vtt",
+        subtitle_content="WEBVTT",
+        warnings_json=None,
+        manifest_json={},
+    )
+
+    async def get_legacy_sequence(self, project_id: str):
+        return legacy_sequence if project_id == legacy_sequence.project_id else None
+
+    monkeypatch.setattr(StudioRepository, "get_latest_timeline_sequence", get_legacy_sequence)
+
+    response = await client.get(
+        f"/api/v1/projects/{legacy_sequence.project_id}/timeline"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["sequence_id"] == legacy_sequence.id
+    assert body["warnings"] == []
+    assert body["manifest"] == {
+        "sequence_id": legacy_sequence.id,
+        "project_id": legacy_sequence.project_id,
+        "aspect_ratio": "9:16",
+        "fps": 30,
+        "resolution": "1080x1920",
+        "total_duration_seconds": 12.0,
+        "title_card": {"title": "Legacy"},
+        "subtitle_format": "vtt",
+        "has_subtitles": True,
+        "video_clips": [],
+        "audio_tracks": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_export_status_is_safe_for_queued_running_and_inconsistent_terminal_rows(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from muse_orchestrator.infrastructure.repositories import StudioRepository
+    from muse_orchestrator.models.domain import ExportJobRecord, ExportJobState
+
+    jobs = {
+        state.value: ExportJobRecord(
+            id=f"exp_{state.value}",
+            project_id="project_export_status",
+            sequence_id="seq_export_status",
+            state=state,
+            aspect_ratio="16:9",
+            fps=24,
+            resolution="1920x1080",
+            video_codec="h264",
+            audio_codec="aac",
+            manifest_snapshot_json={"unsupported_features": []},
+            ffmpeg_args_json=[],
+            ffprobe_verification_json={},
+            error_message_redacted=None,
+            output_asset_id=None,
+        )
+        for state in (
+            ExportJobState.QUEUED,
+            ExportJobState.RUNNING,
+            ExportJobState.FAILED,
+            ExportJobState.SUCCEEDED,
+        )
+    }
+
+    async def get_export_job(self, export_id: str):
+        return jobs.get(export_id.removeprefix("exp_"))
+
+    monkeypatch.setattr(StudioRepository, "get_export_job", get_export_job)
+
+    for state in ("queued", "running"):
+        response = await client.get(
+            f"/api/v1/projects/project_export_status/timeline/exports/exp_{state}"
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["state"] == state
+        assert "output_asset_id" not in body
+        assert "download_url" not in body
+        assert "message" not in body
+        assert "ffmpeg_args" not in body
+        assert "ffprobe_verification" not in body
+
+    failed = await client.get(
+        "/api/v1/projects/project_export_status/timeline/exports/exp_failed"
+    )
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["message"] == "Export failed."
+    assert "download_url" not in failed.json()
+
+    succeeded_without_asset = await client.get(
+        "/api/v1/projects/project_export_status/timeline/exports/exp_succeeded"
+    )
+    assert succeeded_without_asset.status_code == 200, succeeded_without_asset.text
+    success_body = succeeded_without_asset.json()
+    assert success_body["state"] == "succeeded"
+    assert success_body["output_asset_id"] is None
+    assert "download_url" not in success_body
+    assert success_body["message"] == "Export is marked succeeded but has no output asset."
+
+
+@pytest.mark.asyncio
+async def test_failed_export_status_omits_success_only_fields(client: AsyncClient) -> None:
+    project_response = await client.post(
+        "/api/v1/projects",
+        json={"name": "Export Failure Contract"},
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    sequence_response = await client.post(
+        f"/api/v1/projects/{project_id}/timeline/assemble",
+        json={"name": "Empty Timeline"},
+    )
+    assert sequence_response.status_code == 201
+    sequence_id = sequence_response.json()["sequence_id"]
+    assert sequence_response.json()["manifest"]["video_clips"] == []
+
+    launch_response = await client.post(
+        f"/api/v1/projects/{project_id}/timeline/exports",
+        json={"sequence_id": sequence_id},
+    )
+    assert launch_response.status_code == 202, launch_response.text
+    export_id = launch_response.json()["export_id"]
+
+    worker_result = await _drive_export(export_id)
+    assert worker_result["state"] == "failed"
+
+    status_response = await client.get(
+        f"/api/v1/projects/{project_id}/timeline/exports/{export_id}"
+    )
+    assert status_response.status_code == 200, status_response.text
+    export_status = status_response.json()
+    assert export_status["state"] == "failed"
+    assert export_status["message"]
+    assert "download_url" not in export_status
+    assert "output_asset_id" not in export_status
+    assert "ffmpeg_args" not in export_status
+    assert "ffprobe_verification" not in export_status
 
 
 @pytest.mark.asyncio

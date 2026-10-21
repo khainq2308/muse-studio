@@ -1445,6 +1445,43 @@ export interface components {
              */
             task_type: "image" | "video";
         };
+        /**
+         * ExportJobState
+         * @enum {string}
+         */
+        ExportJobState: "queued" | "running" | "succeeded" | "failed" | "canceled";
+        /** ExportJobStatusOut */
+        ExportJobStatusOut: {
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Audio Codec */
+            audio_codec: string;
+            /** Download Url */
+            download_url?: string | null;
+            /** Export Id */
+            export_id: string;
+            /** Ffmpeg Args */
+            ffmpeg_args?: string[] | null;
+            /** Ffprobe Verification */
+            ffprobe_verification?: {
+                [key: string]: components["schemas"]["TimelineJsonValue"];
+            } | null;
+            /** Fps */
+            fps: number;
+            /** Message */
+            message?: string | null;
+            /** Output Asset Id */
+            output_asset_id?: string | null;
+            /** Resolution */
+            resolution: string;
+            /** Sequence Id */
+            sequence_id: string;
+            state: components["schemas"]["ExportJobState"];
+            /** Unsupported Features */
+            unsupported_features: string[];
+            /** Video Codec */
+            video_codec: string;
+        };
         /** ExportLaunchIn */
         ExportLaunchIn: {
             /** Aspect Ratio */
@@ -1455,6 +1492,26 @@ export interface components {
             resolution?: string | null;
             /** Sequence Id */
             sequence_id?: string | null;
+        };
+        /** ExportLaunchOut */
+        ExportLaunchOut: {
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Export Id */
+            export_id: string;
+            /** Fps */
+            fps: number;
+            /** Resolution */
+            resolution: string;
+            /** Sequence Id */
+            sequence_id: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "queued";
+            /** Unsupported Features */
+            unsupported_features: string[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1967,6 +2024,151 @@ export interface components {
              * @default 0
              */
             transition_duration_seconds: number;
+        };
+        /** TimelineAssembleOut */
+        TimelineAssembleOut: {
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Audio Track Count */
+            audio_track_count: number;
+            /** Clip Count */
+            clip_count: number;
+            /** Fps */
+            fps: number;
+            /** Has Subtitles */
+            has_subtitles: boolean;
+            manifest: components["schemas"]["TimelineManifestOut"];
+            /** Name */
+            name: string;
+            /** Resolution */
+            resolution: string;
+            /** Sequence Id */
+            sequence_id: string;
+            /** Total Duration Seconds */
+            total_duration_seconds: number;
+            /** Warnings */
+            warnings: components["schemas"]["TimelineWarningOut"][];
+        };
+        /** TimelineAudioTrackOut */
+        TimelineAudioTrackOut: {
+            /** Asset Id */
+            asset_id?: string | null;
+            /** Fade In Seconds */
+            fade_in_seconds: number;
+            /** Fade Out Seconds */
+            fade_out_seconds: number;
+            /** Muted */
+            muted: boolean;
+            /** Name */
+            name: string;
+            /**
+             * Track Type
+             * @enum {string}
+             */
+            track_type: "audio" | "voice_over" | "music";
+            /** Volume */
+            volume: number;
+        };
+        /** TimelineClipOut */
+        TimelineClipOut: {
+            /** Asset Id */
+            asset_id?: string | null;
+            /** Effective Duration Seconds */
+            effective_duration_seconds: number;
+            /** Fade In Seconds */
+            fade_in_seconds: number;
+            /** Fade Out Seconds */
+            fade_out_seconds: number;
+            /** Order Index */
+            order_index: number;
+            /** Shot Id */
+            shot_id?: string | null;
+            /** Source Duration Seconds */
+            source_duration_seconds: number;
+            /** Start Time Seconds */
+            start_time_seconds: number;
+            /** Take Id */
+            take_id?: string | null;
+            /** Transition Duration Seconds */
+            transition_duration_seconds: number;
+            /**
+             * Transition Type
+             * @enum {string}
+             */
+            transition_type: "hard_cut" | "cross_dissolve";
+            /** Trim End Seconds */
+            trim_end_seconds: number;
+            /** Trim Start Seconds */
+            trim_start_seconds: number;
+            /** Volume */
+            volume: number;
+        };
+        TimelineJsonValue: string | number | boolean | components["schemas"]["TimelineJsonValue"][] | {
+            [key: string]: components["schemas"]["TimelineJsonValue"];
+        } | null;
+        /** TimelineManifestOut */
+        TimelineManifestOut: {
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Audio Tracks */
+            audio_tracks: components["schemas"]["TimelineAudioTrackOut"][];
+            /** Fps */
+            fps: number;
+            /** Has Subtitles */
+            has_subtitles: boolean;
+            /** Project Id */
+            project_id: string;
+            /** Resolution */
+            resolution: string;
+            /** Sequence Id */
+            sequence_id: string;
+            /**
+             * Subtitle Format
+             * @enum {string}
+             */
+            subtitle_format: "srt" | "vtt";
+            /** Title Card */
+            title_card: {
+                [key: string]: components["schemas"]["TimelineJsonValue"];
+            };
+            /** Total Duration Seconds */
+            total_duration_seconds: number;
+            /** Video Clips */
+            video_clips: components["schemas"]["TimelineClipOut"][];
+        };
+        /** TimelineSequenceOut */
+        TimelineSequenceOut: {
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Fps */
+            fps: number;
+            manifest: components["schemas"]["TimelineManifestOut"];
+            /** Name */
+            name: string;
+            /** Resolution */
+            resolution: string;
+            /** Sequence Id */
+            sequence_id: string;
+            /** Total Duration Seconds */
+            total_duration_seconds: number;
+            /** Warnings */
+            warnings: components["schemas"]["TimelineWarningOut"][];
+        };
+        /** TimelineWarningOut */
+        TimelineWarningOut: {
+            /** Clip Index */
+            clip_index?: number | null;
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /**
+             * Severity
+             * @constant
+             */
+            severity: "warning";
+            /** Shot Id */
+            shot_id?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -3472,9 +3674,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["TimelineSequenceOut"];
                 };
             };
             /** @description Validation Error */
@@ -3511,9 +3711,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["TimelineAssembleOut"];
                 };
             };
             /** @description Validation Error */
@@ -3550,9 +3748,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ExportLaunchOut"];
                 };
             };
             /** @description Validation Error */
@@ -3586,9 +3782,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ExportJobStatusOut"];
                 };
             };
             /** @description Validation Error */

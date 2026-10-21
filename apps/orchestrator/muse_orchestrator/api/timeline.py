@@ -4,7 +4,8 @@ import inspect as _p3_inspect
 import json as _p3_json
 import uuid
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal
+from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse as _P3JSONResponse
 from pydantic import BaseModel, Field
@@ -73,13 +74,122 @@ class ExportLaunchIn(BaseModel):
     resolution: str | None = None
 
 
-@router.post("/assemble", status_code=status.HTTP_201_CREATED)
+TimelineJsonValue = TypeAliasType(
+    "TimelineJsonValue",
+    str | int | float | bool | None
+    | list["TimelineJsonValue"]
+    | dict[str, "TimelineJsonValue"],
+)
+
+
+class TimelineClipOut(BaseModel):
+    shot_id: str | None = None
+    take_id: str | None = None
+    asset_id: str | None = None
+    order_index: int
+    start_time_seconds: float
+    source_duration_seconds: float
+    trim_start_seconds: float
+    trim_end_seconds: float
+    effective_duration_seconds: float
+    transition_type: Literal["hard_cut", "cross_dissolve"]
+    transition_duration_seconds: float
+    volume: float
+    fade_in_seconds: float
+    fade_out_seconds: float
+
+
+class TimelineAudioTrackOut(BaseModel):
+    track_type: Literal["audio", "voice_over", "music"]
+    name: str
+    asset_id: str | None = None
+    volume: float
+    fade_in_seconds: float
+    fade_out_seconds: float
+    muted: bool
+
+
+class TimelineWarningOut(BaseModel):
+    code: str
+    severity: Literal["warning"]
+    message: str
+    shot_id: str | None = None
+    clip_index: int | None = None
+
+
+class TimelineManifestOut(BaseModel):
+    sequence_id: str
+    project_id: str
+    aspect_ratio: str
+    fps: int
+    resolution: str
+    total_duration_seconds: float
+    title_card: dict[str, TimelineJsonValue]
+    subtitle_format: Literal["srt", "vtt"]
+    has_subtitles: bool
+    video_clips: list[TimelineClipOut]
+    audio_tracks: list[TimelineAudioTrackOut]
+
+
+class TimelineAssembleOut(BaseModel):
+    sequence_id: str
+    name: str
+    aspect_ratio: str
+    fps: int
+    resolution: str
+    total_duration_seconds: float
+    clip_count: int
+    audio_track_count: int
+    has_subtitles: bool
+    warnings: list[TimelineWarningOut]
+    manifest: TimelineManifestOut
+
+
+class TimelineSequenceOut(BaseModel):
+    sequence_id: str
+    name: str
+    aspect_ratio: str
+    fps: int
+    resolution: str
+    total_duration_seconds: float
+    warnings: list[TimelineWarningOut]
+    manifest: TimelineManifestOut
+
+
+class ExportLaunchOut(BaseModel):
+    export_id: str
+    sequence_id: str
+    state: Literal["queued"]
+    aspect_ratio: str
+    fps: int
+    resolution: str
+    unsupported_features: list[str]
+
+
+class ExportJobStatusOut(BaseModel):
+    export_id: str
+    sequence_id: str
+    state: ExportJobState
+    aspect_ratio: str
+    fps: int
+    resolution: str
+    video_codec: str
+    audio_codec: str
+    unsupported_features: list[str]
+    output_asset_id: str | None = None
+    download_url: str | None = None
+    ffmpeg_args: list[str] | None = None
+    ffprobe_verification: dict[str, TimelineJsonValue] | None = None
+    message: str | None = None
+
+
+@router.post("/assemble", response_model=TimelineAssembleOut, status_code=status.HTTP_201_CREATED)
 async def assemble_or_update_timeline(
     project_id: str,
     payload: TimelineAssembleIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> TimelineAssembleOut:
     """
     Sắp xếp các Shot Takes lên Timeline, hỗ trợ Trim, Reorder, Cross Dissolve,
     Audio/Music/Voice-over tracks, Subtitle SRT/VTT và Title Card (Mục 3.9 & M6 PRD).
@@ -237,15 +347,115 @@ async def assemble_or_update_timeline(
     }
 
 
-@router.get("")
+def _clip_record_to_manifest_item(row: TimelineClipRecord) -> dict[str, Any]:
+    """Reconstruct one manifest clip from its normalized database row."""
+    transition = row.transition_type
+    if transition not in {"hard_cut", "cross_dissolve"}:
+        transition = "hard_cut"
+    return {
+        "shot_id": row.shot_id,
+        "take_id": row.take_id,
+        "asset_id": row.asset_id,
+        "order_index": row.order_index,
+        "start_time_seconds": row.start_time_seconds,
+        "source_duration_seconds": row.source_duration_seconds,
+        "trim_start_seconds": row.trim_start_seconds,
+        "trim_end_seconds": row.trim_end_seconds,
+        "effective_duration_seconds": row.effective_duration_seconds,
+        "transition_type": transition,
+        "transition_duration_seconds": row.transition_duration_seconds,
+        "volume": row.volume,
+        "fade_in_seconds": row.fade_in_seconds,
+        "fade_out_seconds": row.fade_out_seconds,
+    }
+
+
+def _audio_track_record_to_manifest_item(row: TimelineTrackRecord) -> dict[str, Any] | None:
+    """Reconstruct an audio manifest item from a persisted track row."""
+    if row.track_type not in {"audio", "voice_over", "music"}:
+        return None
+    clip = row.clips_json[0] if row.clips_json and isinstance(row.clips_json[0], dict) else {}
+    return {
+        "track_type": row.track_type,
+        "name": row.name,
+        "asset_id": clip.get("asset_id"),
+        "volume": row.volume,
+        "fade_in_seconds": clip.get("fade_in_seconds", 0.0),
+        "fade_out_seconds": clip.get("fade_out_seconds", 0.0),
+        "muted": row.muted,
+    }
+
+
+async def _normalize_timeline_manifest(
+    seq: TimelineSequenceRecord,
+    repository: StudioRepository,
+) -> dict[str, Any]:
+    """Fill legacy manifests from sequence columns and normalized child records.
+
+    Older rows can have an empty/default manifest_json. Returning that raw value
+    through TimelineManifestOut would turn a previously successful GET into a
+    500 response-validation error. Use persisted sequence/clip/track records as
+    the source of truth for any missing top-level manifest data.
+    """
+    raw = seq.manifest_json if isinstance(seq.manifest_json, dict) else {}
+    clip_rows = await repository.list_timeline_clips(seq.id)
+    track_rows = await repository.list_timeline_tracks(seq.id)
+
+    video_clips = raw.get("video_clips")
+    if not isinstance(video_clips, list) or (not video_clips and clip_rows):
+        video_clips = [_clip_record_to_manifest_item(row) for row in clip_rows]
+
+    audio_tracks = raw.get("audio_tracks")
+    persisted_audio_tracks = [
+        item
+        for row in track_rows
+        if (item := _audio_track_record_to_manifest_item(row)) is not None
+    ]
+    if not isinstance(audio_tracks, list) or (not audio_tracks and persisted_audio_tracks):
+        audio_tracks = persisted_audio_tracks
+
+    title_card = raw.get("title_card")
+    if not isinstance(title_card, dict):
+        title_card = seq.title_card_json if isinstance(seq.title_card_json, dict) else {}
+
+    subtitle_format = raw.get("subtitle_format")
+    if subtitle_format not in {"srt", "vtt"}:
+        subtitle_format = seq.subtitle_format if seq.subtitle_format in {"srt", "vtt"} else "srt"
+
+    return {
+        "sequence_id": raw.get("sequence_id") or seq.id,
+        "project_id": raw.get("project_id") or seq.project_id,
+        "aspect_ratio": raw.get("aspect_ratio") or seq.aspect_ratio,
+        "fps": raw.get("fps") if raw.get("fps") is not None else seq.fps,
+        "resolution": raw.get("resolution") or seq.resolution_profile,
+        "total_duration_seconds": (
+            raw.get("total_duration_seconds")
+            if raw.get("total_duration_seconds") is not None
+            else seq.total_duration_seconds
+        ),
+        "title_card": title_card,
+        "subtitle_format": subtitle_format,
+        "has_subtitles": (
+            raw.get("has_subtitles")
+            if raw.get("has_subtitles") is not None
+            else bool((seq.subtitle_content or "").strip())
+        ),
+        "video_clips": video_clips,
+        "audio_tracks": audio_tracks,
+    }
+
+
+@router.get("", response_model=TimelineSequenceOut)
 async def get_latest_project_timeline(
     project_id: str,
     repository: StudioRepository = Depends(get_studio_repository),
-) -> dict[str, Any]:
+) -> TimelineSequenceOut:
     seq = await repository.get_latest_timeline_sequence(project_id)
     if not seq:
         raise HTTPException(status_code=404, detail="Project chưa có Timeline Sequence nào.")
 
+    warnings = seq.warnings_json if isinstance(seq.warnings_json, list) else []
+    manifest = await _normalize_timeline_manifest(seq, repository)
     return {
         "sequence_id": seq.id,
         "name": seq.name,
@@ -253,8 +463,8 @@ async def get_latest_project_timeline(
         "fps": seq.fps,
         "resolution": seq.resolution_profile,
         "total_duration_seconds": seq.total_duration_seconds,
-        "warnings": seq.warnings_json,
-        "manifest": seq.manifest_json,
+        "warnings": warnings,
+        "manifest": manifest,
     }
 
 
@@ -307,14 +517,14 @@ def _unsupported_export_features(seq: TimelineSequenceRecord) -> list[str]:
     return features
 
 
-@router.post("/exports", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/exports", response_model=ExportLaunchOut, status_code=status.HTTP_202_ACCEPTED)
 async def launch_ffmpeg_export(
     project_id: str,
     payload: ExportLaunchIn,
     request: Request,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> ExportLaunchOut:
     """
     Validate the timeline, persist a QUEUED export job and hand the render to the
     ARQ worker (process_export_job in workers/queue_worker.py). The FFmpeg render
@@ -377,13 +587,13 @@ async def launch_ffmpeg_export(
     }
 
 
-@router.get("/exports/{export_id}")
+@router.get("/exports/{export_id}", response_model=ExportJobStatusOut, response_model_exclude_unset=True)
 async def get_export_job_status(
     project_id: str,
     export_id: str,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> ExportJobStatusOut:
     """Poll one export job: queued/running until the worker records succeeded/failed."""
     job = await repository.get_export_job(export_id)
     if not job or job.project_id != project_id:
@@ -402,11 +612,14 @@ async def get_export_job_status(
     }
     if job.state == ExportJobState.SUCCEEDED:
         result["output_asset_id"] = job.output_asset_id
-        result["download_url"] = f"/api/v1/assets/{job.output_asset_id}/download"
+        if job.output_asset_id:
+            result["download_url"] = f"/api/v1/assets/{job.output_asset_id}/download"
+        else:
+            result["message"] = "Export is marked succeeded but has no output asset."
         result["ffmpeg_args"] = job.ffmpeg_args_json
         result["ffprobe_verification"] = job.ffprobe_verification_json
     elif job.state == ExportJobState.FAILED:
-        result["message"] = job.error_message_redacted
+        result["message"] = job.error_message_redacted or "Export failed."
     return result
 
 # --- P3 HARDENING: PRESERVE ROUTE SIGNATURE & INCLUDE unsupported_features IN ALL 422 RESPONSES ---

@@ -1326,6 +1326,133 @@
         "title": "EnqueuedQueueTaskOut",
         "type": "object"
       },
+      "ExportJobState": {
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "canceled"
+        ],
+        "title": "ExportJobState",
+        "type": "string"
+      },
+      "ExportJobStatusOut": {
+        "properties": {
+          "aspect_ratio": {
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "audio_codec": {
+            "title": "Audio Codec",
+            "type": "string"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          },
+          "export_id": {
+            "title": "Export Id",
+            "type": "string"
+          },
+          "ffmpeg_args": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ffmpeg Args"
+          },
+          "ffprobe_verification": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/TimelineJsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ffprobe Verification"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "output_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Asset Id"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "sequence_id": {
+            "title": "Sequence Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExportJobState"
+          },
+          "unsupported_features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unsupported Features",
+            "type": "array"
+          },
+          "video_codec": {
+            "title": "Video Codec",
+            "type": "string"
+          }
+        },
+        "required": [
+          "export_id",
+          "sequence_id",
+          "state",
+          "aspect_ratio",
+          "fps",
+          "resolution",
+          "video_codec",
+          "audio_codec",
+          "unsupported_features"
+        ],
+        "title": "ExportJobStatusOut",
+        "type": "object"
+      },
       "ExportLaunchIn": {
         "properties": {
           "aspect_ratio": {
@@ -1377,6 +1504,53 @@
           }
         },
         "title": "ExportLaunchIn",
+        "type": "object"
+      },
+      "ExportLaunchOut": {
+        "properties": {
+          "aspect_ratio": {
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "export_id": {
+            "title": "Export Id",
+            "type": "string"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "sequence_id": {
+            "title": "Sequence Id",
+            "type": "string"
+          },
+          "state": {
+            "const": "queued",
+            "title": "State",
+            "type": "string"
+          },
+          "unsupported_features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unsupported Features",
+            "type": "array"
+          }
+        },
+        "required": [
+          "export_id",
+          "sequence_id",
+          "state",
+          "aspect_ratio",
+          "fps",
+          "resolution",
+          "unsupported_features"
+        ],
+        "title": "ExportLaunchOut",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2795,6 +2969,428 @@
           }
         },
         "title": "TimelineAssembleIn",
+        "type": "object"
+      },
+      "TimelineAssembleOut": {
+        "properties": {
+          "aspect_ratio": {
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "audio_track_count": {
+            "title": "Audio Track Count",
+            "type": "integer"
+          },
+          "clip_count": {
+            "title": "Clip Count",
+            "type": "integer"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "has_subtitles": {
+            "title": "Has Subtitles",
+            "type": "boolean"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/TimelineManifestOut"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "sequence_id": {
+            "title": "Sequence Id",
+            "type": "string"
+          },
+          "total_duration_seconds": {
+            "title": "Total Duration Seconds",
+            "type": "number"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineWarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sequence_id",
+          "name",
+          "aspect_ratio",
+          "fps",
+          "resolution",
+          "total_duration_seconds",
+          "clip_count",
+          "audio_track_count",
+          "has_subtitles",
+          "warnings",
+          "manifest"
+        ],
+        "title": "TimelineAssembleOut",
+        "type": "object"
+      },
+      "TimelineAudioTrackOut": {
+        "properties": {
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "fade_in_seconds": {
+            "title": "Fade In Seconds",
+            "type": "number"
+          },
+          "fade_out_seconds": {
+            "title": "Fade Out Seconds",
+            "type": "number"
+          },
+          "muted": {
+            "title": "Muted",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "track_type": {
+            "enum": [
+              "audio",
+              "voice_over",
+              "music"
+            ],
+            "title": "Track Type",
+            "type": "string"
+          },
+          "volume": {
+            "title": "Volume",
+            "type": "number"
+          }
+        },
+        "required": [
+          "track_type",
+          "name",
+          "volume",
+          "fade_in_seconds",
+          "fade_out_seconds",
+          "muted"
+        ],
+        "title": "TimelineAudioTrackOut",
+        "type": "object"
+      },
+      "TimelineClipOut": {
+        "properties": {
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "effective_duration_seconds": {
+            "title": "Effective Duration Seconds",
+            "type": "number"
+          },
+          "fade_in_seconds": {
+            "title": "Fade In Seconds",
+            "type": "number"
+          },
+          "fade_out_seconds": {
+            "title": "Fade Out Seconds",
+            "type": "number"
+          },
+          "order_index": {
+            "title": "Order Index",
+            "type": "integer"
+          },
+          "shot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shot Id"
+          },
+          "source_duration_seconds": {
+            "title": "Source Duration Seconds",
+            "type": "number"
+          },
+          "start_time_seconds": {
+            "title": "Start Time Seconds",
+            "type": "number"
+          },
+          "take_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Take Id"
+          },
+          "transition_duration_seconds": {
+            "title": "Transition Duration Seconds",
+            "type": "number"
+          },
+          "transition_type": {
+            "enum": [
+              "hard_cut",
+              "cross_dissolve"
+            ],
+            "title": "Transition Type",
+            "type": "string"
+          },
+          "trim_end_seconds": {
+            "title": "Trim End Seconds",
+            "type": "number"
+          },
+          "trim_start_seconds": {
+            "title": "Trim Start Seconds",
+            "type": "number"
+          },
+          "volume": {
+            "title": "Volume",
+            "type": "number"
+          }
+        },
+        "required": [
+          "order_index",
+          "start_time_seconds",
+          "source_duration_seconds",
+          "trim_start_seconds",
+          "trim_end_seconds",
+          "effective_duration_seconds",
+          "transition_type",
+          "transition_duration_seconds",
+          "volume",
+          "fade_in_seconds",
+          "fade_out_seconds"
+        ],
+        "title": "TimelineClipOut",
+        "type": "object"
+      },
+      "TimelineJsonValue": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/TimelineJsonValue"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TimelineJsonValue"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "TimelineManifestOut": {
+        "properties": {
+          "aspect_ratio": {
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "audio_tracks": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineAudioTrackOut"
+            },
+            "title": "Audio Tracks",
+            "type": "array"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "has_subtitles": {
+            "title": "Has Subtitles",
+            "type": "boolean"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "sequence_id": {
+            "title": "Sequence Id",
+            "type": "string"
+          },
+          "subtitle_format": {
+            "enum": [
+              "srt",
+              "vtt"
+            ],
+            "title": "Subtitle Format",
+            "type": "string"
+          },
+          "title_card": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TimelineJsonValue"
+            },
+            "title": "Title Card",
+            "type": "object"
+          },
+          "total_duration_seconds": {
+            "title": "Total Duration Seconds",
+            "type": "number"
+          },
+          "video_clips": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineClipOut"
+            },
+            "title": "Video Clips",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sequence_id",
+          "project_id",
+          "aspect_ratio",
+          "fps",
+          "resolution",
+          "total_duration_seconds",
+          "title_card",
+          "subtitle_format",
+          "has_subtitles",
+          "video_clips",
+          "audio_tracks"
+        ],
+        "title": "TimelineManifestOut",
+        "type": "object"
+      },
+      "TimelineSequenceOut": {
+        "properties": {
+          "aspect_ratio": {
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "fps": {
+            "title": "Fps",
+            "type": "integer"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/TimelineManifestOut"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "sequence_id": {
+            "title": "Sequence Id",
+            "type": "string"
+          },
+          "total_duration_seconds": {
+            "title": "Total Duration Seconds",
+            "type": "number"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineWarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sequence_id",
+          "name",
+          "aspect_ratio",
+          "fps",
+          "resolution",
+          "total_duration_seconds",
+          "warnings",
+          "manifest"
+        ],
+        "title": "TimelineSequenceOut",
+        "type": "object"
+      },
+      "TimelineWarningOut": {
+        "properties": {
+          "clip_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clip Index"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "severity": {
+            "const": "warning",
+            "title": "Severity",
+            "type": "string"
+          },
+          "shot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shot Id"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "title": "TimelineWarningOut",
         "type": "object"
       },
       "ValidationError": {
@@ -5722,9 +6318,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Latest Project Timeline Api V1 Projects  Project Id  Timeline Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TimelineSequenceOut"
                 }
               }
             },
@@ -5793,9 +6387,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Assemble Or Update Timeline Api V1 Projects  Project Id  Timeline Assemble Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TimelineAssembleOut"
                 }
               }
             },
@@ -5864,9 +6456,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Launch Ffmpeg Export Api V1 Projects  Project Id  Timeline Exports Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ExportLaunchOut"
                 }
               }
             },
@@ -5934,9 +6524,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Export Job Status Api V1 Projects  Project Id  Timeline Exports  Export Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ExportJobStatusOut"
                 }
               }
             },
