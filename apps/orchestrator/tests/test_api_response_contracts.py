@@ -107,3 +107,31 @@ def test_full_and_dry_run_workflow_modes_do_not_require_start_node_id(run_mode: 
 def test_workflow_run_mode_is_an_openapi_enum() -> None:
     schema = app.openapi()["components"]["schemas"]["WorkflowRunRequestIn"]["properties"]["run_mode"]
     assert schema["enum"] == ["full", "dry_run", "from_here", "downstream"]
+
+def test_workflow_routes_publish_explicit_response_models() -> None:
+    openapi = app.openapi()
+    expected = {
+        ("post", "/api/v1/projects/{project_id}/workflows", "201"): "WorkflowCreateOut",
+        ("put", "/api/v1/projects/{project_id}/workflows/{workflow_id}/graph", "200"): "WorkflowGraphUpdateOut",
+        ("patch", "/api/v1/projects/{project_id}/workflows/{workflow_id}/layout", "200"): "WorkflowLayoutSaveOut",
+        ("post", "/api/v1/projects/{project_id}/workflows/{workflow_id}/runs/{run_id}/nodes/{node_id}/approve", "200"): "WorkflowApprovalOut",
+    }
+    for (method, path, status_code), expected_model in expected.items():
+        schema = _response_schema(openapi, method, path, status_code)
+        assert _model_name(schema) == expected_model, f"{method.upper()} {path}"
+
+    run_schema = _response_schema(
+        openapi,
+        "post",
+        "/api/v1/projects/{project_id}/workflows/{workflow_id}/runs",
+        "201",
+    )
+    model_refs = {
+        item.get("$ref", "").rsplit("/", 1)[-1]
+        for item in run_schema.get("anyOf", run_schema.get("oneOf", []))
+    }
+    assert model_refs == {"WorkflowDryRunOut", "WorkflowExecutionOut"}
+
+    components = openapi["components"]["schemas"]
+    assert _model_name(components["WorkflowExecutionOut"]["properties"]["node_executions"]["items"]) == "WorkflowNodeExecutionOut"
+    assert _model_name(components["WorkflowNodeExecutionOut"]["properties"]["state"]) == "NodeExecutionState"

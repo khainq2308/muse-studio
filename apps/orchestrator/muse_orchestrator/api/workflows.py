@@ -2,8 +2,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
+from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.api.dependencies import get_studio_repository
@@ -39,6 +40,103 @@ class WorkflowLayoutOnlyIn(BaseModel):
     ui_layout: dict[str, Any]
 
 
+
+
+JsonValue = TypeAliasType(
+    "JsonValue",
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"],
+)
+
+
+class WorkflowNodeOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    node_id: str
+    node_type: str
+    config: dict[str, JsonValue] = Field(default_factory=dict)
+    inputs: dict[str, JsonValue] = Field(default_factory=dict)
+    outputs: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class WorkflowEdgeOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    edge_id: str
+    source_node_id: str
+    source_port: str
+    target_node_id: str
+    target_port: str
+
+
+class WorkflowCreateOut(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    current_version: int
+    execution_order: list[str]
+    cache_keys: dict[str, str]
+    nodes: list[WorkflowNodeOut]
+    edges: list[WorkflowEdgeOut]
+    ui_layout: dict[str, JsonValue]
+
+
+class WorkflowGraphUpdateOut(BaseModel):
+    id: str
+    current_version: int
+    execution_order: list[str]
+    cache_keys: dict[str, str]
+
+
+class WorkflowLayoutSaveOut(BaseModel):
+    workflow_id: str
+    version_number: int
+    ui_layout_saved: bool
+
+
+class WorkflowDryRunOut(BaseModel):
+    run_id: str
+    run_mode: Literal["dry_run"]
+    status: Literal["succeeded"]
+    execution_mode: Literal["planning_only"]
+    execution_plan_order: list[str]
+    cache_keys: dict[str, str]
+
+
+class WorkflowNodeExecutionOut(BaseModel):
+    node_id: str
+    node_type: str
+    state: NodeExecutionState
+    cache_key: str
+    cache_hit: bool
+    logs: list[str]
+    output_refs: dict[str, JsonValue]
+
+
+class WorkflowExecutionOut(BaseModel):
+    run_id: str
+    status: Literal["running", "succeeded", "waiting_approval", "failed"]
+    execution_mode: Literal["simulation"]
+    execution_plan_order: list[str]
+    node_executions: list[WorkflowNodeExecutionOut]
+
+
+class WorkflowApprovalNodeOut(BaseModel):
+    node_id: str
+    state: NodeExecutionState
+    cache_hit: bool
+    output_refs: dict[str, JsonValue]
+
+
+class WorkflowApprovalOut(BaseModel):
+    run_id: str
+    status: Literal["succeeded"]
+    execution_mode: Literal["simulation"]
+    node_executions: list[WorkflowApprovalNodeOut]
+
+
+WorkflowRunOut = WorkflowDryRunOut | WorkflowExecutionOut
+
+
 class WorkflowRunRequestIn(BaseModel):
     run_mode: Literal["full", "dry_run", "from_here", "downstream"] = "full"
     start_node_id: str | None = None
@@ -51,13 +149,13 @@ class WorkflowRunRequestIn(BaseModel):
         return self
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=WorkflowCreateOut, status_code=status.HTTP_201_CREATED)
 async def create_workflow(
     project_id: str,
     payload: WorkflowCreateIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> WorkflowCreateOut:
     proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
@@ -106,14 +204,14 @@ async def create_workflow(
     }
 
 
-@router.put("/{workflow_id}/graph")
+@router.put("/{workflow_id}/graph", response_model=WorkflowGraphUpdateOut)
 async def update_workflow_graph(
     project_id: str,
     workflow_id: str,
     payload: WorkflowGraphUpdateIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> WorkflowGraphUpdateOut:
     wf = await repository.get_workflow_definition(workflow_id)
     if not wf or wf.project_id != project_id:
         raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
@@ -145,14 +243,14 @@ async def update_workflow_graph(
     }
 
 
-@router.patch("/{workflow_id}/layout")
+@router.patch("/{workflow_id}/layout", response_model=WorkflowLayoutSaveOut)
 async def autosave_canvas_layout(
     project_id: str,
     workflow_id: str,
     payload: WorkflowLayoutOnlyIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> WorkflowLayoutSaveOut:
     """Lưu vị trí toạ độ node trên Canvas mà không làm thay đổi Merkle Cache Key của logic."""
     wf = await repository.get_workflow_definition(workflow_id)
     if not wf or wf.project_id != project_id:
@@ -164,14 +262,14 @@ async def autosave_canvas_layout(
     return {"workflow_id": workflow_id, "version_number": ver.version_number, "ui_layout_saved": True}
 
 
-@router.post("/{workflow_id}/runs", status_code=status.HTTP_201_CREATED)
+@router.post("/{workflow_id}/runs", response_model=WorkflowRunOut, status_code=status.HTTP_201_CREATED)
 async def execute_workflow(
     project_id: str,
     workflow_id: str,
     payload: WorkflowRunRequestIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> WorkflowRunOut:
     wf = await repository.get_workflow_definition(workflow_id)
     if not wf or wf.project_id != project_id:
         raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
@@ -359,7 +457,7 @@ async def execute_workflow(
     }
 
 
-@router.post("/{workflow_id}/runs/{run_id}/nodes/{node_id}/approve")
+@router.post("/{workflow_id}/runs/{run_id}/nodes/{node_id}/approve", response_model=WorkflowApprovalOut)
 async def approve_manual_gate_and_resume(
     project_id: str,
     workflow_id: str,
@@ -367,7 +465,7 @@ async def approve_manual_gate_and_resume(
     node_id: str,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> WorkflowApprovalOut:
     """Duyệt cổng ManualApproval và tự động chạy tiếp các node phía sau đang bị blocked."""
     wf_run = await repository.get_workflow_run(run_id)
     if not wf_run or wf_run.workflow_id != workflow_id:

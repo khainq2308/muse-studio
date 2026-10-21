@@ -1423,37 +1423,6 @@
           }
         ]
       },
-      "JsonValue-Output": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "integer"
-          },
-          {
-            "type": "number"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "items": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "array"
-          },
-          {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
-            },
-            "type": "object"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
       "LogCreateIn": {
         "properties": {
           "correlation_id": {
@@ -1513,6 +1482,22 @@
         ],
         "title": "LogCreateIn",
         "type": "object"
+      },
+      "NodeExecutionState": {
+        "enum": [
+          "idle",
+          "ready",
+          "blocked",
+          "queued",
+          "running",
+          "waiting_approval",
+          "succeeded",
+          "failed",
+          "canceled",
+          "skipped"
+        ],
+        "title": "NodeExecutionState",
+        "type": "string"
       },
       "OrphanCleanupIn": {
         "properties": {
@@ -2583,7 +2568,7 @@
           },
           "mutable_attributes": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Output"
+              "$ref": "#/components/schemas/muse_orchestrator__api__pipeline__JsonValue-Output"
             },
             "title": "Mutable Attributes",
             "type": "object"
@@ -2852,6 +2837,69 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "WorkflowApprovalNodeOut": {
+        "properties": {
+          "cache_hit": {
+            "title": "Cache Hit",
+            "type": "boolean"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "output_refs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "title": "Output Refs",
+            "type": "object"
+          },
+          "state": {
+            "$ref": "#/components/schemas/NodeExecutionState"
+          }
+        },
+        "required": [
+          "node_id",
+          "state",
+          "cache_hit",
+          "output_refs"
+        ],
+        "title": "WorkflowApprovalNodeOut",
+        "type": "object"
+      },
+      "WorkflowApprovalOut": {
+        "properties": {
+          "execution_mode": {
+            "const": "simulation",
+            "title": "Execution Mode",
+            "type": "string"
+          },
+          "node_executions": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowApprovalNodeOut"
+            },
+            "title": "Node Executions",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "succeeded",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "execution_mode",
+          "node_executions"
+        ],
+        "title": "WorkflowApprovalOut",
+        "type": "object"
+      },
       "WorkflowCreateIn": {
         "properties": {
           "description": {
@@ -2894,6 +2942,201 @@
         "title": "WorkflowCreateIn",
         "type": "object"
       },
+      "WorkflowCreateOut": {
+        "properties": {
+          "cache_keys": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cache Keys",
+            "type": "object"
+          },
+          "current_version": {
+            "title": "Current Version",
+            "type": "integer"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEdgeOut"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "execution_order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Execution Order",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNodeOut"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "ui_layout": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "title": "Ui Layout",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "name",
+          "current_version",
+          "execution_order",
+          "cache_keys",
+          "nodes",
+          "edges",
+          "ui_layout"
+        ],
+        "title": "WorkflowCreateOut",
+        "type": "object"
+      },
+      "WorkflowDryRunOut": {
+        "properties": {
+          "cache_keys": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cache Keys",
+            "type": "object"
+          },
+          "execution_mode": {
+            "const": "planning_only",
+            "title": "Execution Mode",
+            "type": "string"
+          },
+          "execution_plan_order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Execution Plan Order",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_mode": {
+            "const": "dry_run",
+            "title": "Run Mode",
+            "type": "string"
+          },
+          "status": {
+            "const": "succeeded",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "run_mode",
+          "status",
+          "execution_mode",
+          "execution_plan_order",
+          "cache_keys"
+        ],
+        "title": "WorkflowDryRunOut",
+        "type": "object"
+      },
+      "WorkflowEdgeOut": {
+        "additionalProperties": true,
+        "properties": {
+          "edge_id": {
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "source_node_id": {
+            "title": "Source Node Id",
+            "type": "string"
+          },
+          "source_port": {
+            "title": "Source Port",
+            "type": "string"
+          },
+          "target_node_id": {
+            "title": "Target Node Id",
+            "type": "string"
+          },
+          "target_port": {
+            "title": "Target Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge_id",
+          "source_node_id",
+          "source_port",
+          "target_node_id",
+          "target_port"
+        ],
+        "title": "WorkflowEdgeOut",
+        "type": "object"
+      },
+      "WorkflowExecutionOut": {
+        "properties": {
+          "execution_mode": {
+            "const": "simulation",
+            "title": "Execution Mode",
+            "type": "string"
+          },
+          "execution_plan_order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Execution Plan Order",
+            "type": "array"
+          },
+          "node_executions": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNodeExecutionOut"
+            },
+            "title": "Node Executions",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "succeeded",
+              "waiting_approval",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "execution_mode",
+          "execution_plan_order",
+          "node_executions"
+        ],
+        "title": "WorkflowExecutionOut",
+        "type": "object"
+      },
       "WorkflowGraphUpdateIn": {
         "properties": {
           "edges": {
@@ -2925,6 +3168,40 @@
         "title": "WorkflowGraphUpdateIn",
         "type": "object"
       },
+      "WorkflowGraphUpdateOut": {
+        "properties": {
+          "cache_keys": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cache Keys",
+            "type": "object"
+          },
+          "current_version": {
+            "title": "Current Version",
+            "type": "integer"
+          },
+          "execution_order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Execution Order",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "current_version",
+          "execution_order",
+          "cache_keys"
+        ],
+        "title": "WorkflowGraphUpdateOut",
+        "type": "object"
+      },
       "WorkflowLayoutOnlyIn": {
         "description": "Chỉ lưu vị trí kéo thả node trên Canvas, không tạo version logic mới và không xoá cache.",
         "properties": {
@@ -2938,6 +3215,117 @@
           "ui_layout"
         ],
         "title": "WorkflowLayoutOnlyIn",
+        "type": "object"
+      },
+      "WorkflowLayoutSaveOut": {
+        "properties": {
+          "ui_layout_saved": {
+            "title": "Ui Layout Saved",
+            "type": "boolean"
+          },
+          "version_number": {
+            "title": "Version Number",
+            "type": "integer"
+          },
+          "workflow_id": {
+            "title": "Workflow Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow_id",
+          "version_number",
+          "ui_layout_saved"
+        ],
+        "title": "WorkflowLayoutSaveOut",
+        "type": "object"
+      },
+      "WorkflowNodeExecutionOut": {
+        "properties": {
+          "cache_hit": {
+            "title": "Cache Hit",
+            "type": "boolean"
+          },
+          "cache_key": {
+            "title": "Cache Key",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "node_type": {
+            "title": "Node Type",
+            "type": "string"
+          },
+          "output_refs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "title": "Output Refs",
+            "type": "object"
+          },
+          "state": {
+            "$ref": "#/components/schemas/NodeExecutionState"
+          }
+        },
+        "required": [
+          "node_id",
+          "node_type",
+          "state",
+          "cache_key",
+          "cache_hit",
+          "logs",
+          "output_refs"
+        ],
+        "title": "WorkflowNodeExecutionOut",
+        "type": "object"
+      },
+      "WorkflowNodeOut": {
+        "additionalProperties": true,
+        "properties": {
+          "config": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "title": "Config",
+            "type": "object"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "node_type": {
+            "title": "Node Type",
+            "type": "string"
+          },
+          "outputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "title": "Outputs",
+            "type": "object"
+          }
+        },
+        "required": [
+          "node_id",
+          "node_type"
+        ],
+        "title": "WorkflowNodeOut",
         "type": "object"
       },
       "WorkflowRunRequestIn": {
@@ -2972,6 +3360,68 @@
         },
         "title": "WorkflowRunRequestIn",
         "type": "object"
+      },
+      "muse_orchestrator__api__pipeline__JsonValue-Output": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__pipeline__JsonValue-Output"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__pipeline__JsonValue-Output"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "muse_orchestrator__api__workflows__JsonValue": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__workflows__JsonValue"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     }
   },
@@ -5554,9 +6004,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Workflow Api V1 Projects  Project Id  Workflows Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WorkflowCreateOut"
                 }
               }
             },
@@ -5633,9 +6081,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Workflow Graph Api V1 Projects  Project Id  Workflows  Workflow Id  Graph Put",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WorkflowGraphUpdateOut"
                 }
               }
             },
@@ -5713,9 +6159,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Autosave Canvas Layout Api V1 Projects  Project Id  Workflows  Workflow Id  Layout Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WorkflowLayoutSaveOut"
                 }
               }
             },
@@ -5792,9 +6236,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Execute Workflow Api V1 Projects  Project Id  Workflows  Workflow Id  Runs Post",
-                  "type": "object"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowDryRunOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowExecutionOut"
+                    }
+                  ],
+                  "title": "Response Execute Workflow Api V1 Projects  Project Id  Workflows  Workflow Id  Runs Post"
                 }
               }
             },
@@ -5880,9 +6330,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Approve Manual Gate And Resume Api V1 Projects  Project Id  Workflows  Workflow Id  Runs  Run Id  Nodes  Node Id  Approve Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WorkflowApprovalOut"
                 }
               }
             },
