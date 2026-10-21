@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate-contracts:
@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -39,6 +42,19 @@ jobs:
       - name: Generate TypeScript schema
         working-directory: apps/studio-web
         run: npm run gen:api
+      - name: Commit generated contract artifacts to the PR branch
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/orchestrator/openapi.json apps/studio-web/src/lib/api/schema.d.ts
+          if ! git diff --cached --quiet; then
+            git commit -m "build: regenerate OpenAPI contracts for typed queue responses"
+            git push origin "HEAD:$TARGET_BRANCH"
+          else
+            echo "Generated OpenAPI artifacts are already up to date."
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: phase-0c-generated-contracts
