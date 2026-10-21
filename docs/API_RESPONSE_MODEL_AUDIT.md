@@ -19,8 +19,8 @@ Audit kiểm tra mọi response 2xx được khai báo: nếu response không c�
 |---|---|---|
 | Queue tasks/takes + pipeline + batch/continuity | Đã merge ở PR #56 | Các queue task/take, script import, Story Bible, project shots, batch launch/tick/retry, compare A/B và continuity flag responses dùng response model; trạng thái và loại task xuất enum; OpenAPI contract tests bảo vệ hợp đồng |
 | Workflow definition, graph/layout, run/approval | Đã merge ở PR #57 | Response DTO cho workflow create, graph update, layout save, dry-run, run/node execution và approval; giữ nguyên các trường node/edge mở rộng; test OpenAPI và integration bảo vệ cả dry-run lẫn run mô phỏng |
-| Timeline, export và asset-related routes | Đang triển khai trong PR #58 | Timeline sequence/manifest và export-job launch/status responses dùng DTO lồng nhau có type; trạng thái export là enum; integration test kiểm tra assemble, latest sequence, export launch/success; CI yêu cầu typed timeline router |
-| Operations: backup, maintenance, metrics, system | Chưa triển khai | Response JSON có model; file/text/204 endpoints khai báo response semantics tương ứng |
+| Timeline, export và asset-related routes | Đã merge ở PR #58 | Timeline sequence/manifest và export-job launch/status responses dùng DTO lồng nhau có type; trạng thái export là enum; integration test bảo vệ assemble, latest sequence, export status; CI yêu cầu typed timeline router |
+| Operations: backup, maintenance, metrics, system | Đang triển khai trong PR #59 | Restore report, orphan scan/cleanup, metrics summary, structured logs và diagnostics dùng DTO lồng nhau; JSON tùy biến dùng kiểu JSON đệ quy; endpoint file/text/204 được giữ đúng semantics |
 | Toàn bộ frontend API consumer | Chưa triển khai | Consumer migration route-by-route sang generated `components["schemas"]`/operation types; không giữ contract viết tay thay thế |
 
 ## Quy tắc
