@@ -82,7 +82,7 @@ class StoryBibleEntryOut(BaseModel):
     code_name: str
     display_name: str
     immutable_traits: str
-    mutable_attributes: dict[str, Any]
+    mutable_attributes: dict[str, JsonValue]
     reference_asset_ids: list[str]
     requires_reference_lock: bool
 
