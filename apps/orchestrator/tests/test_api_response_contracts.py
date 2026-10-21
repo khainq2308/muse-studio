@@ -108,6 +108,7 @@ def test_workflow_run_mode_is_an_openapi_enum() -> None:
     schema = app.openapi()["components"]["schemas"]["WorkflowRunRequestIn"]["properties"]["run_mode"]
     assert schema["enum"] == ["full", "dry_run", "from_here", "downstream"]
 
+
 def test_workflow_routes_publish_explicit_response_models() -> None:
     openapi = app.openapi()
     expected = {
@@ -135,6 +136,7 @@ def test_workflow_routes_publish_explicit_response_models() -> None:
     components = openapi["components"]["schemas"]
     assert _model_name(components["WorkflowExecutionOut"]["properties"]["node_executions"]["items"]) == "WorkflowNodeExecutionOut"
     assert _model_name(components["WorkflowNodeExecutionOut"]["properties"]["state"]) == "NodeExecutionState"
+
 
 def test_timeline_and_export_routes_publish_explicit_response_models() -> None:
     openapi = app.openapi()
