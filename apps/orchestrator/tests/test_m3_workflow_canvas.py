@@ -9,9 +9,9 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m3_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.main import app
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.models.domain import Base
+from muse_orchestrator.main import app  # noqa: E402
+from muse_orchestrator.core.database import get_db  # noqa: E402
+from muse_orchestrator.models.domain import Base  # noqa: E402
 
 
 @pytest.fixture()
