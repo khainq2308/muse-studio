@@ -2,7 +2,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
-from typing import Any
+from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
@@ -49,6 +49,79 @@ class ShotUpdateIn(BaseModel):
     requires_reference_lock: bool | None = None
     reference_asset_ids: list[str] | None = None
     approval_state: ShotApprovalState | None = None
+
+
+class PipelineLintIssueOut(BaseModel):
+    code: str
+    severity: Literal["blocker", "warning", "info"]
+    message: str
+    field: str | None = None
+
+
+class ScriptImportOut(BaseModel):
+    script_revision_id: str
+    version_number: int
+    raw_content_preserved: bool
+    diff_summary: str
+    detected_characters: int
+    detected_locations: int
+    detected_scenes: int
+    generated_shots: int
+
+
+class StoryBibleEntryOut(BaseModel):
+    id: str
+    entry_type: Literal["character", "location", "style", "prop"]
+    code_name: str
+    display_name: str
+    immutable_traits: str
+    mutable_attributes: dict[str, Any]
+    reference_asset_ids: list[str]
+    requires_reference_lock: bool
+
+
+class StoryBibleUpsertOut(BaseModel):
+    id: str
+    code_name: str
+    status: Literal["recompiled_downstream_shots"]
+
+
+class ProjectShotOut(BaseModel):
+    id: str
+    scene_id: str
+    sequence_index: int
+    title: str
+    subject_codes: list[str]
+    location_code: str
+    shot_size: str
+    camera_motion: str
+    composition: str
+    action: str
+    dialogue: str
+    duration_seconds: float
+    requires_reference_lock: bool
+    reference_asset_ids: list[str]
+    prompt_final: str
+    negative_prompt: str
+    prompt_hash: str
+    lint_report: list[PipelineLintIssueOut]
+    continuity_mode: str
+    previous_shot_id: str | None
+    next_shot_id: str | None
+    first_frame_asset_id: str | None
+    last_frame_asset_id: str | None
+    selected_take_id: str | None
+    approval_state: ShotApprovalState
+    generation_state: ShotGenerationState
+
+
+class ShotReviewOut(BaseModel):
+    id: str
+    prompt_final: str
+    prompt_hash: str
+    lint_report: list[PipelineLintIssueOut]
+    approval_state: ShotApprovalState
+    generation_state: ShotGenerationState
 
 
 async def _recompile_project_shots(project_id: str, repository: StudioRepository) -> list[ShotRecord]:
@@ -153,13 +226,13 @@ async def _recompile_project_shots(project_id: str, repository: StudioRepository
     return list(shots)
 
 
-@router.post("/scripts/import", status_code=status.HTTP_201_CREATED)
+@router.post("/scripts/import", response_model=ScriptImportOut, status_code=status.HTTP_201_CREATED)
 async def import_and_analyze_script(
     project_id: str,
     payload: ScriptImportIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> ScriptImportOut:
     proj = await repository.get_project(project_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
@@ -288,8 +361,8 @@ async def import_and_analyze_script(
     }
 
 
-@router.get("/story-bible")
-async def get_story_bible(project_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[dict[str, Any]]:
+@router.get("/story-bible", response_model=list[StoryBibleEntryOut])
+async def get_story_bible(project_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[StoryBibleEntryOut]:
     rows = await repository.list_story_bible_entries(project_id)
     return [
         {
@@ -306,13 +379,13 @@ async def get_story_bible(project_id: str, repository: StudioRepository = Depend
     ]
 
 
-@router.post("/story-bible", status_code=status.HTTP_201_CREATED)
+@router.post("/story-bible", response_model=StoryBibleUpsertOut, status_code=status.HTTP_201_CREATED)
 async def upsert_story_bible_entry(
     project_id: str,
     payload: BibleEntryCreateIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> StoryBibleUpsertOut:
     existing = await repository.get_story_bible_entry(project_id, payload.code_name)
 
     if existing:
@@ -372,11 +445,11 @@ def _serialize_project_shot(s: ShotRecord) -> dict[str, Any]:
     }
 
 
-@router.get("/shots")
+@router.get("/shots", response_model=list[ProjectShotOut])
 async def list_project_shots(
     project_id: str,
     repository: StudioRepository = Depends(get_studio_repository),
-) -> list[dict[str, Any]]:
+) -> list[ProjectShotOut]:
     """Return stored prompt/lint state without recompiling or committing any writes."""
     shots = await repository.list_project_shots(project_id)
     if shots is None:
@@ -384,14 +457,14 @@ async def list_project_shots(
     return [_serialize_project_shot(shot) for shot in shots]
 
 
-@router.patch("/shots/{shot_id}")
+@router.patch("/shots/{shot_id}", response_model=ShotReviewOut)
 async def update_and_review_shot(
     project_id: str,
     shot_id: str,
     payload: ShotUpdateIn,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> ShotReviewOut:
     shot = await repository.get_shot(shot_id)
     if not shot or shot.project_id != project_id:
         raise HTTPException(status_code=404, detail="Không tìm thấy Shot trong dự án.")
