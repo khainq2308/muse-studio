@@ -3,6 +3,8 @@ name: Temporary OpenAPI dependency lock generation
 on:
   push:
     branches: ["feat/phase-0b-openapi-pipeline"]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
