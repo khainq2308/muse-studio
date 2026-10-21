@@ -1,9 +1,9 @@
 from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.api.dependencies import get_studio_repository
@@ -40,9 +40,15 @@ class WorkflowLayoutOnlyIn(BaseModel):
 
 
 class WorkflowRunRequestIn(BaseModel):
-    run_mode: str = Field(default="full", pattern=r"^(full|dry_run|from_here|downstream)$")
+    run_mode: Literal["full", "dry_run", "from_here", "downstream"] = "full"
     start_node_id: str | None = None
     force_rerun: bool = False
+
+    @model_validator(mode="after")
+    def require_start_node_for_partial_runs(self) -> "WorkflowRunRequestIn":
+        if self.run_mode in ("from_here", "downstream") and not self.start_node_id:
+            raise ValueError("start_node_id is required for from_here and downstream run modes.")
+        return self
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
