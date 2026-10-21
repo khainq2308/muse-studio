@@ -1,0 +1,7 @@
+# Generated and bundled output
+dist/
+node_modules/
+coverage/
+playwright-report/
+test-results/
+

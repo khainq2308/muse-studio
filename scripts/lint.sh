@@ -1,19 +1,40 @@
 #!/usr/bin/env bash
-# Usage: scripts/lint.sh [--fix|--all]
-# Default: check correctness-critical Ruff rules on changed Python files and run the layering ratchet.
-# The legacy app tree has pre-existing Ruff debt; --all reports it without reformatting.
+# Usage: scripts/lint.sh [--fix|--all|--python-only]
+# Python correctness checks, frontend lint/format, and the DB layering ratchet.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 command -v ruff >/dev/null || { echo "ruff not installed: pip install ruff" >&2; exit 127; }
 cd "$ROOT"
 rc=0
+python_only=0
+mode="${1:-}"
+case "$mode" in
+  --python-only)
+    python_only=1
+    shift
+    ;;
+  --fix)
+    ruff check --fix apps/orchestrator apps/media-engine || rc=1
+    ruff format apps/orchestrator apps/media-engine || rc=1
+    shift
+    ;;
+  --all)
+    ruff check apps/orchestrator apps/media-engine || rc=1
+    shift
+    ;;
+  "")
+    ;;
+  *)
+    echo "Unknown option: $mode (use --fix, --all, or --python-only)" >&2
+    exit 2
+    ;;
+esac
+if [ "$#" -gt 0 ]; then
+  echo "Unexpected arguments: $*" >&2
+  exit 2
+fi
 
-if [ "$#" -gt 0 ] && [ "$1" = "--fix" ]; then
-  ruff check --fix apps/orchestrator apps/media-engine || rc=1
-  ruff format apps/orchestrator apps/media-engine || rc=1
-elif [ "$#" -gt 0 ] && [ "$1" = "--all" ]; then
-  ruff check apps/orchestrator apps/media-engine || rc=1
-else
+if [ "$mode" != "--fix" ] && [ "$mode" != "--all" ]; then
   base="$(printenv LINT_BASE_REF 2>/dev/null || echo origin/main)"
   temp_list="/tmp/musestudio-lint-files-$$"
   {
@@ -42,6 +63,26 @@ else
     echo "No changed Python files; skipping Ruff check."
   fi
   rm -f "$temp_list"
+fi
+
+if [ "$python_only" -eq 0 ]; then
+  echo "==> Studio Web lint and formatting"
+  if [ -x apps/studio-web/node_modules/.bin/eslint ] &&
+     [ -x apps/studio-web/node_modules/.bin/prettier ]; then
+    echo "Using existing Studio Web dependencies (no destructive reinstall)."
+    ( cd apps/studio-web && npm run lint && npm run format:check ) || rc=1
+  elif [ -d apps/studio-web/node_modules ]; then
+    echo "Studio Web node_modules exists but is incomplete; refusing to delete it with npm ci." >&2
+    echo "Repair dependencies explicitly with 'cd apps/studio-web && npm ci' when network access is available." >&2
+    rc=1
+  elif ( cd apps/studio-web && npm ci --no-audit --no-fund ); then
+    ( cd apps/studio-web && npm run lint && npm run format:check ) || rc=1
+  else
+    echo "Frontend dependency install failed; skipping lint and format checks." >&2
+    rc=1
+  fi
+else
+  echo "Skipping frontend npm install/lint; frontend-build job owns that gate."
 fi
 
 python3 scripts/check_layering.py || rc=1

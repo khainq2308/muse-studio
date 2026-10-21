@@ -11,11 +11,15 @@ Bảng này là nguồn trạng thái duy nhất cho các artifact frontend. M�
 | Hạng mục | Trạng thái ở revision hiện tại | Điều kiện đổi trạng thái |
 |---|---|---|
 | Chuẩn kiến trúc frontend | Đã đặc tả; chưa đồng nghĩa runtime đã được viết lại | Kiểm chứng các artifact trong PR phase tương ứng |
-| Foundation frontend (dependencies, lockfile, client, router, theme, lint) | Chưa hoàn thành Phase 0a | Build, typecheck, lint và test chạy trên dependency đã khóa |
+| Foundation frontend (dependencies, lockfile, client, router, theme, lint) | Đã triển khai trong PR #49; CI của nhánh phải xanh trước khi merge | Build, typecheck, lint, unit test và browser smoke chạy trên dependency đã khóa |
 | OpenAPI export/snapshot/drift check | Chưa có đủ pipeline Phase 0b | Export offline tái lập, snapshot + generated schema được commit và CI phát hiện drift |
 | Typed backend routes | Chưa audit đầy đủ; phải bao gồm pipeline, queue, batch/takes, workflows, timeline và các router khác | Re-run response-model audit và kiểm tra schema enum/payload trên từng router |
-| Frontend feature UI | Chưa triển khai theo kiến trúc mục tiêu | Chỉ đánh dấu theo evidence của từng phase feature |
-| Browser smoke test | Chưa có smoke test production build/deep-link theo chuẩn này | Playwright pass với API mock và deep link thật trên bản build |
+| Frontend product feature UI | Chưa triển khai theo kiến trúc mục tiêu; Phase 0a chỉ có overview chuyển tiếp để xác minh foundation | Chỉ đánh dấu theo evidence của từng phase feature |
+| Browser smoke test | Playwright smoke chạy trên Vite production preview; chưa kiểm thử Nginx production image | Playwright pass với API mock và deep link thật; thêm Nginx image smoke trước khi xác nhận proxy/try_files của production |
+
+## Local development API routing
+
+In the development Compose stack, the browser must call the Studio Web origin (`VITE_ORCHESTRATOR_URL=.`). Vite then proxies `/api/*` and `/healthz` from inside the `studio-web` container to `ORCHESTRATOR_PROXY_TARGET`, whose Compose default is `http://orchestrator-api:8000`. Do not set the browser-facing base URL to `http://localhost:8000` in Docker: `localhost` would refer to the user's browser machine and would bypass the same-origin proxy. Outside Compose, Vite defaults the upstream target to `http://127.0.0.1:8000`.
 
 ## 1. Nguyên tắc nền tảng
 
@@ -40,7 +44,7 @@ Bảng này là nguồn trạng thái duy nhất cho các artifact frontend. M�
 | Kéo–thả | **dnd-kit** | Sắp xếp shot trên board, clip trên timeline. |
 | Bảng / danh sách dài | TanStack Table / @tanstack/react-virtual | Chỉ thêm khi một màn hình thực sự cần. |
 | Test | **Vitest** + Testing Library + MSW (handler qua `openapi-msw` từ cùng snapshot OpenAPI) + **Playwright** smoke test | Xem mục 7. |
-| Lint / format | ESLint + Prettier cho frontend | Phải được thêm ở Phase 0 kèm các rule thực thi ở mục 4; hiện repo chưa có. |
+| Lint / format | ESLint + Prettier cho frontend | ESLint chặn raw `fetch`/browser storage và các alias import vi phạm layering; AST-based boundary checker kiểm tra import tĩnh/động, cross-layer/cross-feature imports, import ra ngoài `src/`, raw fetch/storage và JSON dump trong `<pre>`. Mọi feature mới phải giữ các rule này trong CI. |
 | Lockfile | `package-lock.json` | Bắt buộc commit; cài đặt trong CI/Docker bằng `npm ci`. Cấm sửa lockfile bằng tay (theo `AGENTS.md`). |
 
 Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ thể của một feature và được nêu lý do trong PR. Không thêm thư viện "để dành".
@@ -48,7 +52,7 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 ## 3. Contracts: sinh tự động từ OpenAPI — cấm viết tay
 
 - Nguồn sự thật duy nhất cho API types là OpenAPI schema của orchestrator. Schema phải lấy được **không cần chạy server**. Phase 0 sẽ bổ sung một script export offline (dự kiến đặt tên scripts/export_openapi.py; hiện chưa có trong repository) để nạp đối tượng FastAPI app và ghi `app.openapi()` ra snapshot OpenAPI. Snapshot dự kiến đặt tại apps/orchestrator/openapi.json và cũng chưa được commit ở revision hiện tại. Việc nạp module app không chạy lifespan nên mục tiêu là không cần DB/Redis.
-- Lệnh chuẩn dưới đây là script **sẽ được bổ sung vào `apps/studio-web/package.json` ở Phase 0 — hiện tại nó chưa tồn tại** (package.json hiện chỉ có `dev`/`build`/`preview`, và thư mục frontend chưa có `package-lock.json`); đừng chạy khi chưa tới Phase 0. Khi đã có, lệnh đọc snapshot sau khi Phase 0 tạo và commit, không phụ thuộc server đang chạy:
+- Lệnh `npm run gen:api` dưới đây vẫn là hạng mục của Phase 0b; PR #49 đã thiết lập các script frontend hiện tại và commit `package-lock.json`, nhưng chưa tạo snapshot OpenAPI hoặc generated schema. Khi Phase 0b được triển khai, lệnh sẽ đọc snapshot đã commit và không phụ thuộc server đang chạy:
 
   ```bash
   npm run gen:api   # openapi-typescript ../orchestrator/openapi.json -> src/lib/api/schema.d.ts
@@ -65,10 +69,13 @@ Thư viện ngoài danh sách này chỉ được thêm khi có nhu cầu cụ t
 ```text
 apps/studio-web/src/
   main.tsx
-  app/                  # App shell: providers (QueryClient, theme), layout, điều hướng tab/route, error boundary
+  app/                  # App shell: providers, route composition, shared layout and navigation
+    app-shell.tsx         # Shared header + Outlet only; no feature queries
+    router.tsx
+    project-module-route.tsx
   components/
     ui/                 # Component shadcn/ui (sinh bằng shadcn CLI, chỉnh sửa tối thiểu)
-    shared/             # Component dùng chung không gắn domain: StatusBadge, AsyncState,
+    shared/             # Component dùng chung không gắn domain: StatusBadge, QueryState,
                         # MediaThumb, ConfirmActionDialog, TakeCompare, ...
   entities/
     project/            # Mỗi entity gồm: api.ts (query/mutation hooks DÙNG CHUNG),
@@ -77,6 +84,19 @@ apps/studio-web/src/
     take/               #   nhiều feature (vd connections, projects, shots).
     task/
   features/
+    admin-session/
+      components/
+        admin-token-form.tsx
+    api-status/
+      components/
+        api-status-badge.tsx
+      use-api-status.ts
+    workspace-overview/  # Transitional Phase 0a overview; not a product workflow module
+      pages/
+        overview-page.tsx
+      components/
+        project-list.tsx
+        connection-list.tsx
     projects/
     connections/
     script-studio/
@@ -92,6 +112,7 @@ apps/studio-web/src/
   lib/
     api/
       client.ts         # HTTP transport duy nhất được phép gọi fetch
+      errors.ts         # Shared HTTP/auth error classification and messages
       schema.d.ts       # OpenAPI-generated; không sửa tay
       queryKeys.ts      # Query keys dùng thống nhất
     stores/             # Zustand stores
@@ -106,6 +127,9 @@ Cách chia trách nhiệm:
 - `features/<feature>/api.ts` chứa các TanStack Query hooks và mutation của đúng feature; các hooks gọi `lib/api/client.ts`, không gọi `fetch` trực tiếp.
 - `entities/<entity>/api.ts` chỉ dành cho query/mutation hooks được dùng thật sự bởi từ hai feature trở lên. Không chuyển mọi request vào một service tổng hợp hoặc tạo entity chỉ để gom file.
 - `components/ui/` chứa primitive UI không biết domain; `components/shared/` chứa component tái sử dụng nhưng vẫn nhận props đã typed. Phần ghép state/domain vào giao diện nằm ở feature.
+- `app/app-shell.tsx` chỉ chứa layout dùng chung, token form và health badge với `<Outlet />`; không gọi query dữ liệu projects/connections.
+- `features/workspace-overview/pages/overview-page.tsx` là trang chuyển tiếp của Phase 0a: compose hook trong `entities/` và truyền dữ liệu/trạng thái qua props cho hai list presentational. Nó không triển khai workflow Projects/Connections của sản phẩm và sẽ được thay bằng trang feature thật ở phase tương ứng.
+- Lỗi 401/403 được phân loại trong `lib/api/errors.ts`; lỗi hiển thị ở resource phát sinh, không chuyển thành trạng thái xác thực toàn cục của shell.
 - Không tạo `src/services/` như một lớp monolithic API client. Cũng không tự dựng `useAsyncData`/`usePolling`; dùng TanStack Query để quản lý cache, hủy request, invalidate và polling.
 
 Quy tắc phụ thuộc:
@@ -129,7 +153,7 @@ Quy tắc phụ thuộc:
 | `timeline-editor` | M6 | Assemble timeline, export job + polling + tải MP4 |
 | `system-ops` | M7 | Backups (tạo/list/tải/restore), quét & dọn orphan, metrics, diagnostics |
 
-Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): ESLint cấu hình `no-restricted-imports` (cấm import chéo giữa các feature, cấm import ra ngoài app) và `no-restricted-globals` (cấm `fetch` và `localStorage`/`sessionStorage` ngoài `lib/api` và store token), cộng một check grep trong CI cho mẫu `<pre>{JSON.stringify(` trong `features/`. Các quy tắc chưa máy móc hoá được (hard-code hex, JSON dump biến thể) thuộc checklist review của PR và Definition of Done ở mục 7.
+Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): ESLint dùng `no-restricted-globals` để chặn truy cập trực tiếp tới `fetch` và browser storage. Script [AST boundary checker](../apps/studio-web/scripts/check_frontend_boundaries.mjs) kiểm tra import tĩnh/động, alias `@/` và `src/`, import ra ngoài `src/` (bao gồm `@muse-studio/contracts`), phân lớp entities/features/UI primitives, truy cập raw fetch/storage và JSON dump trong `<pre>`. Vì checker chạy trên AST nên comment/string không bị coi là hành vi thực thi. Các quy tắc chưa máy móc hoá được (hard-code hex, JSON dump biến thể) thuộc checklist review của PR và Definition of Done ở mục 7.
 
 ## 5. Quy tắc triển khai theo lớp
 
@@ -201,7 +225,7 @@ Không hard-code host/port trong code feature.
 ## 7. Kiểm thử & Definition of Done cho một feature
 
 - Vitest + Testing Library cho component/hook; MSW với handler sinh qua `openapi-msw` từ chính snapshot OpenAPI đã commit (không viết mock tay trôi khỏi schema) cho tầng api của feature. Ít nhất: test cho query/mutation hooks chính và cho các component có logic trạng thái (badge mapping, confirm dialog, A/B compare).
-- Playwright smoke test là bắt buộc từ Phase 0a. Smoke mặc định **không chạy orchestrator/DB/Redis thật**: dùng `page.route()`/`route.fulfill()` để mock các request `/api/v1/**` bằng fixture hợp lệ với OpenAPI snapshot, trong khi app được build và serve như production. Test ít nhất một deep link thật như `/projects/test-project/queue-monitor`, kiểm tra SPA fallback render app và API request vẫn nhắm tới đường dẫn tuyệt đối `/api/...` chứ không thành `/projects/test-project/api/...`. Integration test với orchestrator thật + provider mock + DB/Redis disposable là suite riêng, không gọi đó là Playwright smoke mặc định.
+- Playwright smoke test là bắt buộc từ Phase 0a. Smoke mặc định **không chạy orchestrator/DB/Redis thật**: dùng `page.route()`/`route.fulfill()` để mock các request `/api/v1/**` bằng fixture phù hợp với hợp đồng API đã xác minh. Trên Vite `preview` của production bundle, test deep link `/projects/test-project/queue-monitor` xác minh route params, placeholder module và request health cùng origin tại đường dẫn tuyệt đối `/healthz`; test module slug không hợp lệ xác minh redirect về overview, rồi kiểm tra requests Projects/Connections tại đường dẫn tuyệt đối `/api/v1/projects` và `/api/v1/connections`, cùng origin với ứng dụng. Bộ test này **chưa** thực thi Nginx container nên không xác minh `try_files` hoặc proxy `/api/` của `nginx.prod.conf`. Trước khi xác nhận production deployment, bổ sung smoke test chạy production image với Nginx và một API mock trong network test. Integration test với orchestrator thật + provider mock + DB/Redis disposable là suite riêng.
 - Một feature chỉ "xong" khi đồng thời: `tsc` + `vite build` pass; đủ bốn trạng thái hiển thị; không JSON dump; có media preview thật ở nơi có media; test của feature pass; lint pass; không vi phạm các mục 3–6 của tài liệu này. PR thay đổi giao diện phải kèm **ảnh chụp màn hình** các màn hình chính đã thay đổi (trước/sau nếu là viết lại) trong mô tả PR.
 
 ## 8. Lộ trình chuyển đổi từ trạng thái hiện tại
@@ -210,7 +234,7 @@ Mỗi phase là một PR riêng; không gộp refactor nền móng với viết 
 
 > **Lịch sử quyết định — PR #42 (đã đóng, không merge):** PR `feat/studio-web-workspace` từng thử nới Docker build context lên root monorepo, mở rộng contracts viết tay, thêm CSS viết tay và hiển thị JSON thô. PR này đã được đóng mà không merge. Phạm vi chức năng (các module và luồng người dùng) được giữ làm đầu vào yêu cầu cho Phase 1–2, nhưng mã của nhánh đó không được dùng làm nền. ADR-007 ghi lại lý do chọn generated OpenAPI contracts và giữ build context của frontend độc lập.
 
-- **Phase 0a — Frontend foundation:** cài stack đã chốt; commit `package-lock.json`; đổi cả hai Dockerfile frontend sang `npm ci`; dựng `lib/api/client.ts`, router/app shell, theme token trong `styles/globals.css`, ESLint/Prettier và rule layering; đưa frontend lint vào `scripts/lint.sh` và CI; giữ `scripts/test.sh web` làm gate typecheck/build và cập nhật job `frontend-build` để cache theo lockfile, chạy `npm ci`, test deep-link bằng Playwright production build. Chưa viết lại feature.
+- **Phase 0a — Frontend foundation:** cài stack đã chốt; commit `package-lock.json`; đổi cả hai Dockerfile frontend sang `npm ci`; thêm `.dockerignore`; dựng `lib/api/client.ts`, router/app shell, theme token trong `styles/globals.css`, ESLint/Prettier và luật layering/raw API access; đưa frontend lint vào `scripts/lint.sh` và CI; giữ `scripts/test.sh web` làm gate typecheck/build và cập nhật job `frontend-build` để cache theo lockfile, chạy `npm ci`, unit test và Playwright smoke trên Vite production preview. Nginx-container smoke được ghi nhận là bước xác minh production còn lại. Chưa viết lại feature.
 - **Phase 0b — OpenAPI pipeline:** thêm script export offline (đường dẫn dự kiến ở thư mục `scripts`, hiện chưa tồn tại), snapshot `apps/orchestrator/openapi.json`, `gen:api` tạo `src/lib/api/schema.d.ts`, và CI drift check. Exporter phải đặt `ENVIRONMENT=development` tường minh **trước khi import Settings/FastAPI app**, để không bị cấu hình production hoặc thiếu secret làm hỏng export; xác định repo root bằng `Path(__file__)` để không phụ thuộc current working directory. Drift job phải cài Python dependency riêng (ví dụ `uv sync --locked --project apps/orchestrator --extra dev` rồi `uv run --locked --project apps/orchestrator ...`) và cài Node/frontend dependency riêng (`npm ci` trước `npm run gen:api`); không giả định dependency giữa các CI job được chia sẻ.
 - **Phase 0c — Typed API theo router:** re-run audit và thêm Pydantic `response_model` + enum cho mọi route được đưa vào schema; bao gồm pipeline (shots, Story Bible, script import), queue, batch/takes, workflows, timeline/export và các router còn lại. Không chỉ kiểm tra queue/batch/workflows. Chỉ xoá `packages/contracts` ở bước cuối sau khi generated types cover toàn bộ consumer và không còn import cũ. Phase 0a/0b là prerequisite chung; gate typed theo route: queue-monitor có thể bắt đầu khi queue đủ typed; shot-board chỉ khi pipeline + queue + batch/takes đủ typed; các phase sau mở khi những route chúng dùng đã typed. Không chặn feature của router đã sẵn sàng chỉ vì router không liên quan còn thiếu response model.
 - **Phase 1 — Vòng sản xuất lõi:** queue-monitor khi queue typed; shot-board (media preview + duyệt take A/B) sau khi pipeline + queue + batch/takes typed.

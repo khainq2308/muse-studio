@@ -100,7 +100,9 @@ services:
     container_name: muse-studio-web
     restart: unless-stopped
     environment:
-      VITE_ORCHESTRATOR_URL: http://localhost:8000
+      # Browser requests stay same-origin; Vite makes the upstream request inside Compose.
+      VITE_ORCHESTRATOR_URL: "."
+      ORCHESTRATOR_PROXY_TARGET: http://orchestrator-api:8000
     ports:
       - "127.0.0.1:5173:5173"
     volumes:

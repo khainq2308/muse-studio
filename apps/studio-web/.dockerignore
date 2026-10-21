@@ -1,0 +1,12 @@
+# Host-installed dependencies can contain native binaries for another OS/architecture.
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+
+# Never send repository metadata or local secrets into the image build context.
+.git/
+.env
+.env.*
+!.env.example
