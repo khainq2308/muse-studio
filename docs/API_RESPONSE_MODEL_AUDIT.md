@@ -9,6 +9,8 @@ Tài liệu này theo dõi việc thu hẹp các response thành object/list t�
 - `python3 scripts/audit_api_response_models.py --report --require-typed queue --require-typed batch --require-typed workflows --require-typed timeline`: kiểm tra khai báo `response_model` trực tiếp trên các router đã được đưa vào gate; đây là kiểm tra bổ sung, khác với audit schema đã sinh trong OpenAPI.
 - `bash scripts/check_openapi.sh`: xác minh snapshot FastAPI và TypeScript schema đã sinh cùng khớp với source hiện tại.
 
+`ExportJobStatusOut` dùng `response_model_exclude_unset=True` để chỉ gửi các trường phụ thuộc trạng thái khi thực sự tồn tại (ví dụ `download_url`/`ffmpeg_args` sau khi thành công, hoặc `message` khi thất bại), tránh biến trường không áp dụng thành `null` trong API.
+
 Audit kiểm tra mọi response 2xx được khai báo: nếu response không có `content`, `content` rỗng, hoặc media type không có schema cụ thể thì báo contract gap. Audit cũng resolve các local `#/components/responses/...` references; response reference không resolve được sẽ bị báo lỗi thay vì im lặng bỏ qua. Status `204 No Content` và `205 Reset Content` được miễn vì HTTP quy định không có response body. Không mặc định coi các response 200/201/202 thiếu `content` là hợp lệ; nếu endpoint chủ đích không có body, hãy khai báo status bodyless phù hợp. Một endpoint chỉ được coi là typed khi schema mô tả được object fields, array items và enum thật; không dùng `dict[str, Any]` hoặc `Record<string, unknown>` để né contract gap.
 
 ## Thứ tự triển khai Phase 0c
