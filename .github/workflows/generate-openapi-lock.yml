@@ -1,0 +1,27 @@
+name: Temporary OpenAPI dependency lock generation
+
+on:
+  push:
+    branches: ["feat/phase-0b-openapi-pipeline"]
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lock:
+    name: Generate exact openapi-typescript lock with npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Generate package metadata with npm
+        working-directory: apps/studio-web
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund --save-dev --save-exact openapi-typescript@7.13.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openapi-typescript-lock
+          path: |
+            apps/studio-web/package.json
+            apps/studio-web/package-lock.json
