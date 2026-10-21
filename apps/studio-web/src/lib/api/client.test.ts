@@ -74,7 +74,7 @@ describe("API client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await apiGet<Array<{ id: string }>>("/api/v1/projects", {
+    await apiGet("/api/v1/projects", {
       query: { limit: 10, archived: false, omitted: null },
     });
 
