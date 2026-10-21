@@ -2044,8 +2044,9 @@ export interface components {
             /**
              * Run Mode
              * @default full
+             * @enum {string}
              */
-            run_mode: string;
+            run_mode: "full" | "dry_run" | "from_here" | "downstream";
             /** Start Node Id */
             start_node_id?: string | null;
         };

@@ -2949,7 +2949,12 @@
           },
           "run_mode": {
             "default": "full",
-            "pattern": "^(full|dry_run|from_here|downstream)$",
+            "enum": [
+              "full",
+              "dry_run",
+              "from_here",
+              "downstream"
+            ],
             "title": "Run Mode",
             "type": "string"
           },
