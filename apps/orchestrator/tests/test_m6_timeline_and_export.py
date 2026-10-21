@@ -252,7 +252,6 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert download.headers["content-type"] == "video/mp4"
 
 
-
 @pytest.mark.asyncio
 async def test_get_latest_timeline_normalizes_legacy_empty_manifest(
     client: AsyncClient,
