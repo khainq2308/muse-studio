@@ -230,6 +230,24 @@
         "title": "AccountUpdateIn",
         "type": "object"
       },
+      "AssetMetricsOut": {
+        "properties": {
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "total_bytes"
+        ],
+        "title": "AssetMetricsOut",
+        "type": "object"
+      },
       "AssetOut": {
         "properties": {
           "asset_type": {
@@ -336,6 +354,109 @@
         "title": "AudioTrackItemIn",
         "type": "object"
       },
+      "BackupManifestOut": {
+        "additionalProperties": true,
+        "description": "Typed known fields while retaining forward-compatible manifest metadata.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "excluded_tables": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Tables",
+            "type": "array"
+          },
+          "format_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format Version"
+          },
+          "media_files": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Files"
+          },
+          "missing_media": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Media",
+            "type": "array"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "tables": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tables",
+            "type": "object"
+          }
+        },
+        "title": "BackupManifestOut",
+        "type": "object"
+      },
+      "BackupMetricsOut": {
+        "properties": {
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "total_bytes"
+        ],
+        "title": "BackupMetricsOut",
+        "type": "object"
+      },
       "BackupOut": {
         "properties": {
           "created_at": {
@@ -352,9 +473,7 @@
             "type": "string"
           },
           "manifest_json": {
-            "additionalProperties": true,
-            "title": "Manifest Json",
-            "type": "object"
+            "$ref": "#/components/schemas/BackupManifestOut"
           },
           "project_id": {
             "title": "Project Id",
@@ -379,6 +498,65 @@
           "created_at"
         ],
         "title": "BackupOut",
+        "type": "object"
+      },
+      "BackupRestoreOut": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "report": {
+            "$ref": "#/components/schemas/BackupRestoreReportOut"
+          }
+        },
+        "required": [
+          "project_id",
+          "project_name",
+          "report"
+        ],
+        "title": "BackupRestoreOut",
+        "type": "object"
+      },
+      "BackupRestoreReportOut": {
+        "properties": {
+          "media_missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Media Missing",
+            "type": "array"
+          },
+          "media_restored": {
+            "title": "Media Restored",
+            "type": "integer"
+          },
+          "rows_skipped": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Rows Skipped",
+            "type": "object"
+          },
+          "tables_restored": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tables Restored",
+            "type": "object"
+          }
+        },
+        "required": [
+          "tables_restored",
+          "rows_skipped",
+          "media_restored",
+          "media_missing"
+        ],
+        "title": "BackupRestoreReportOut",
         "type": "object"
       },
       "BatchLaunchIn": {
@@ -607,7 +785,7 @@
           },
           "mutable_attributes": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Input"
+              "$ref": "#/components/schemas/muse_orchestrator__api__pipeline__JsonValue-Input"
             },
             "title": "Mutable Attributes",
             "type": "object"
@@ -897,6 +1075,32 @@
         "title": "ConnectionHealthState",
         "type": "string"
       },
+      "ConnectionMetricsOut": {
+        "properties": {
+          "accounts_total": {
+            "title": "Accounts Total",
+            "type": "integer"
+          },
+          "by_health": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Health",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_health",
+          "accounts_total"
+        ],
+        "title": "ConnectionMetricsOut",
+        "type": "object"
+      },
       "ConnectionOut": {
         "properties": {
           "api_key_masked": {
@@ -908,7 +1112,9 @@
             "type": "string"
           },
           "capabilities_snapshot": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Output"
+            },
             "title": "Capabilities Snapshot",
             "type": "object"
           },
@@ -1079,6 +1285,188 @@
           "regenerated_task_id"
         ],
         "title": "ContinuityFlagOut",
+        "type": "object"
+      },
+      "CountOut": {
+        "properties": {
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total"
+        ],
+        "title": "CountOut",
+        "type": "object"
+      },
+      "DiagnosticAccountOut": {
+        "properties": {
+          "api_key_masked": {
+            "title": "Api Key Masked",
+            "type": "string"
+          },
+          "connection_id": {
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "health_state": {
+            "title": "Health State",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "proxy_display_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Display Host"
+          }
+        },
+        "required": [
+          "id",
+          "connection_id",
+          "label",
+          "api_key_masked",
+          "proxy_display_host",
+          "enabled",
+          "health_state"
+        ],
+        "title": "DiagnosticAccountOut",
+        "type": "object"
+      },
+      "DiagnosticAuditEventOut": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "details_redacted": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Output"
+            },
+            "title": "Details Redacted",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          },
+          "target_type": {
+            "title": "Target Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor",
+          "action",
+          "target_type",
+          "target_id",
+          "details_redacted",
+          "created_at"
+        ],
+        "title": "DiagnosticAuditEventOut",
+        "type": "object"
+      },
+      "DiagnosticRecentLogOut": {
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "id",
+          "correlation_id",
+          "level",
+          "event",
+          "project_id",
+          "task_id",
+          "created_at"
+        ],
+        "title": "DiagnosticRecentLogOut",
         "type": "object"
       },
       "EnqueueTaskIn": {
@@ -1553,6 +1941,27 @@
         "title": "ExportLaunchOut",
         "type": "object"
       },
+      "ExportMetricsOut": {
+        "properties": {
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By State",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_state"
+        ],
+        "title": "ExportMetricsOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1565,37 +1974,6 @@
         },
         "title": "HTTPValidationError",
         "type": "object"
-      },
-      "JsonValue-Input": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "integer"
-          },
-          {
-            "type": "number"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "items": {
-              "$ref": "#/components/schemas/JsonValue-Input"
-            },
-            "type": "array"
-          },
-          {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Input"
-            },
-            "type": "object"
-          },
-          {
-            "type": "null"
-          }
-        ]
       },
       "LogCreateIn": {
         "properties": {
@@ -1624,7 +2002,9 @@
             "type": "string"
           },
           "payload": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Input"
+            },
             "title": "Payload",
             "type": "object"
           },
@@ -1655,6 +2035,46 @@
           "event"
         ],
         "title": "LogCreateIn",
+        "type": "object"
+      },
+      "MetricsSummaryOut": {
+        "properties": {
+          "assets": {
+            "$ref": "#/components/schemas/AssetMetricsOut"
+          },
+          "backups": {
+            "$ref": "#/components/schemas/BackupMetricsOut"
+          },
+          "connections": {
+            "$ref": "#/components/schemas/ConnectionMetricsOut"
+          },
+          "exports": {
+            "$ref": "#/components/schemas/ExportMetricsOut"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/CountOut"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueMetricsOut"
+          },
+          "service": {
+            "$ref": "#/components/schemas/ServiceMetricsOut"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageMetricsOut"
+          }
+        },
+        "required": [
+          "service",
+          "projects",
+          "connections",
+          "queue",
+          "assets",
+          "exports",
+          "backups",
+          "storage"
+        ],
+        "title": "MetricsSummaryOut",
         "type": "object"
       },
       "NodeExecutionState": {
@@ -1691,6 +2111,78 @@
         "title": "OrphanCleanupIn",
         "type": "object"
       },
+      "OrphanCleanupOut": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "freed_bytes": {
+            "title": "Freed Bytes",
+            "type": "integer"
+          },
+          "orphans": {
+            "items": {
+              "$ref": "#/components/schemas/OrphanFileOut"
+            },
+            "title": "Orphans",
+            "type": "array"
+          },
+          "retention_hours": {
+            "title": "Retention Hours",
+            "type": "number"
+          },
+          "scanned_orphans": {
+            "title": "Scanned Orphans",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dry_run",
+          "retention_hours",
+          "scanned_orphans",
+          "deleted",
+          "freed_bytes",
+          "errors",
+          "orphans"
+        ],
+        "title": "OrphanCleanupOut",
+        "type": "object"
+      },
+      "OrphanFileOut": {
+        "properties": {
+          "age_hours": {
+            "title": "Age Hours",
+            "type": "number"
+          },
+          "rel_path": {
+            "title": "Rel Path",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rel_path",
+          "size_bytes",
+          "age_hours"
+        ],
+        "title": "OrphanFileOut",
+        "type": "object"
+      },
       "OrphanScanIn": {
         "properties": {
           "retention_hours": {
@@ -1702,6 +2194,37 @@
           }
         },
         "title": "OrphanScanIn",
+        "type": "object"
+      },
+      "OrphanScanOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "orphans": {
+            "items": {
+              "$ref": "#/components/schemas/OrphanFileOut"
+            },
+            "title": "Orphans",
+            "type": "array"
+          },
+          "retention_hours": {
+            "title": "Retention Hours",
+            "type": "number"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retention_hours",
+          "count",
+          "total_bytes",
+          "orphans"
+        ],
+        "title": "OrphanScanOut",
         "type": "object"
       },
       "PipelineLintIssueOut": {
@@ -2063,6 +2586,32 @@
         "title": "ProjectShotsExportOut",
         "type": "object"
       },
+      "QueueMetricsOut": {
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "generation_tasks_by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Generation Tasks By State",
+            "type": "object"
+          },
+          "generation_tasks_total": {
+            "title": "Generation Tasks Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "depth",
+          "generation_tasks_by_state",
+          "generation_tasks_total"
+        ],
+        "title": "QueueMetricsOut",
+        "type": "object"
+      },
       "QueueTaskOut": {
         "description": "Stable response contract for queue tasks; never expose internal prompt snapshots.",
         "properties": {
@@ -2386,6 +2935,39 @@
           "generated_shots"
         ],
         "title": "ScriptImportOut",
+        "type": "object"
+      },
+      "ServiceMetricsOut": {
+        "properties": {
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "number"
+          },
+          "uptime_seconds": {
+            "title": "Uptime Seconds",
+            "type": "number"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "environment",
+          "uptime_seconds",
+          "started_at"
+        ],
+        "title": "ServiceMetricsOut",
         "type": "object"
       },
       "ShotApprovalState": {
@@ -2712,6 +3294,29 @@
         "title": "ShotUpdateIn",
         "type": "object"
       },
+      "StorageMetricsOut": {
+        "properties": {
+          "file_count": {
+            "title": "File Count",
+            "type": "integer"
+          },
+          "media_root": {
+            "title": "Media Root",
+            "type": "string"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "media_root",
+          "total_bytes",
+          "file_count"
+        ],
+        "title": "StorageMetricsOut",
+        "type": "object"
+      },
       "StoryBibleEntryOut": {
         "properties": {
           "code_name": {
@@ -2794,6 +3399,120 @@
           "status"
         ],
         "title": "StoryBibleUpsertOut",
+        "type": "object"
+      },
+      "StructuredLogOut": {
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "payload_redacted": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Output"
+            },
+            "title": "Payload Redacted",
+            "type": "object"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "id",
+          "correlation_id",
+          "level",
+          "event",
+          "project_id",
+          "task_id",
+          "payload_redacted",
+          "created_at"
+        ],
+        "title": "StructuredLogOut",
+        "type": "object"
+      },
+      "SystemDiagnosticsOut": {
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticAccountOut"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "generated_by": {
+            "title": "Generated By",
+            "type": "string"
+          },
+          "recent_audit_events": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticAuditEventOut"
+            },
+            "title": "Recent Audit Events",
+            "type": "array"
+          },
+          "recent_logs": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticRecentLogOut"
+            },
+            "title": "Recent Logs",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/MetricsSummaryOut"
+          }
+        },
+        "required": [
+          "generated_by",
+          "summary",
+          "accounts",
+          "recent_audit_events",
+          "recent_logs"
+        ],
+        "title": "SystemDiagnosticsOut",
         "type": "object"
       },
       "TakeComparisonOut": {
@@ -3957,6 +4676,37 @@
         "title": "WorkflowRunRequestIn",
         "type": "object"
       },
+      "muse_orchestrator__api__pipeline__JsonValue-Input": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__pipeline__JsonValue-Input"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__pipeline__JsonValue-Input"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "muse_orchestrator__api__pipeline__JsonValue-Output": {
         "anyOf": [
           {
@@ -3980,6 +4730,68 @@
           {
             "additionalProperties": {
               "$ref": "#/components/schemas/muse_orchestrator__api__pipeline__JsonValue-Output"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "muse_orchestrator__api__response_types__JsonValue-Input": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Input"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Input"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "muse_orchestrator__api__response_types__JsonValue-Output": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Output"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Output"
             },
             "type": "object"
           },
@@ -4258,9 +5070,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Restore Backup Api V1 Backups Restore Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BackupRestoreOut"
                 }
               }
             },
@@ -4926,9 +5736,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cleanup Orphans Api V1 Maintenance Orphans Cleanup Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/OrphanCleanupOut"
                 }
               }
             },
@@ -4988,9 +5796,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Scan Orphans Api V1 Maintenance Orphans Scan Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/OrphanScanOut"
                 }
               }
             },
@@ -5090,9 +5896,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Metrics Summary Api V1 Metrics Summary Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MetricsSummaryOut"
                 }
               }
             },
@@ -7519,9 +8323,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Diagnostics Api V1 System Diagnostics Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SystemDiagnosticsOut"
                 }
               }
             },
@@ -7649,8 +8451,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/StructuredLogOut"
                   },
                   "title": "Response List Logs Api V1 System Logs Get",
                   "type": "array"
@@ -7711,9 +8512,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Log Api V1 System Logs Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/StructuredLogOut"
                 }
               }
             },
