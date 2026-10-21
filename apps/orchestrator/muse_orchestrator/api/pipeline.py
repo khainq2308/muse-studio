@@ -3,6 +3,7 @@ import csv
 import io
 import uuid
 from typing import Any, Literal
+from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,12 @@ from muse_orchestrator.services.prompt_compiler import (
 router = APIRouter(prefix="/api/v1/projects/{project_id}", tags=["M2 Script-to-Shot Pipeline"])
 
 
+JsonValue = TypeAliasType(
+    "JsonValue",
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"],
+)
+
+
 class ScriptImportIn(BaseModel):
     raw_content: str = Field(..., min_length=5)
     source_format: str = Field(default="museflow")
@@ -32,7 +39,7 @@ class BibleEntryCreateIn(BaseModel):
     code_name: str = Field(..., min_length=2, max_length=128)
     display_name: str = Field(..., min_length=1, max_length=255)
     immutable_traits: str = Field(default="")
-    mutable_attributes: dict[str, Any] = Field(default_factory=dict)
+    mutable_attributes: dict[str, JsonValue] = Field(default_factory=dict)
     reference_asset_ids: list[str] = Field(default_factory=list)
     requires_reference_lock: bool = Field(default=False)
 
@@ -122,6 +129,11 @@ class ShotReviewOut(BaseModel):
     lint_report: list[PipelineLintIssueOut]
     approval_state: ShotApprovalState
     generation_state: ShotGenerationState
+
+
+class ProjectShotsExportOut(BaseModel):
+    project_id: str
+    shots: list[ProjectShotOut]
 
 
 async def _recompile_project_shots(project_id: str, repository: StudioRepository) -> list[ShotRecord]:
@@ -497,10 +509,19 @@ async def update_and_review_shot(
     }
 
 
-@router.get("/shots/export")
+@router.get(
+    "/shots/export",
+    responses={
+        200: {
+            "model": ProjectShotsExportOut,
+            "description": "Download project shots as JSON or CSV.",
+            "content": {"text/csv": {"schema": {"type": "string"}}},
+        }
+    },
+)
 async def export_shot_list(
     project_id: str,
-    format: str = "json",
+    format: Literal["json", "csv"] = "json",
     repository: StudioRepository = Depends(get_studio_repository),
 ) -> Response:
     shot_records = await repository.list_project_shots(project_id)
