@@ -134,6 +134,16 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert tl["audio_track_count"] == 1
     assert tl["has_subtitles"] is True
     assert len(tl["warnings"]) == 0
+    manifest = tl["manifest"]
+    assert manifest["sequence_id"] == tl["sequence_id"]
+    assert manifest["video_clips"][0]["effective_duration_seconds"] == 4.0
+    assert manifest["audio_tracks"][0]["name"] == "Suspense OST"
+
+    latest_tl_res = await client.get(f"/api/v1/projects/{proj_id}/timeline")
+    assert latest_tl_res.status_code == 200, latest_tl_res.text
+    latest_tl = latest_tl_res.json()
+    assert latest_tl["sequence_id"] == tl["sequence_id"]
+    assert latest_tl["manifest"]["video_clips"][1]["transition_type"] == "cross_dissolve"
 
     # 5. Kiểm tra phát hiện TIMELINE_GAP và Trim Clip khi chỉnh sửa custom_clips
     custom_tl = (
@@ -198,6 +208,11 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert exp_res.status_code == 202, exp_res.text
     launched = exp_res.json()
     assert launched["state"] == "queued"
+    assert launched["sequence_id"] == tl["sequence_id"]
+    assert launched["aspect_ratio"] == "9:16"
+    assert launched["fps"] == 30
+    assert launched["resolution"] == "1080x1920"
+    assert launched["unsupported_features"] == ["clip_audio", "title_card", "subtitles", "audio_tracks"]
     export_id = launched["export_id"]
 
     worker_result = await _drive_export(export_id)
@@ -207,6 +222,11 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
     assert status_res.status_code == 200, status_res.text
     exp = status_res.json()
     assert exp["state"] == "succeeded"
+    assert exp["export_id"] == export_id
+    assert exp["sequence_id"] == tl["sequence_id"]
+    assert exp["output_asset_id"]
+    assert exp["download_url"] == f"/api/v1/assets/{exp['output_asset_id']}/download"
+    assert "message" not in exp
     assert exp["video_codec"] == "h264"
     assert exp["audio_codec"] == "aac"
     assert exp["resolution"] == "1080x1920"
