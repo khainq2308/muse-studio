@@ -9,7 +9,7 @@ MuseStudio orchestrates AI-video production: script → Story Bible → shot boa
 - `apps/orchestrator`: FastAPI, domain models, application services, persistence, queue and provider adapters.
 - `apps/studio-web`: React + TypeScript + Vite frontend.
 - `apps/media-engine`: FFprobe / FFmpeg utilities for inspecting and transforming media.
-- `packages/contracts`: legacy TypeScript contracts kept only for transition; frozen (no new imports), to be removed after generated OpenAPI types replace all consumers.
+- Frontend API contracts are generated into `apps/studio-web/src/lib/api/schema.d.ts` from the orchestrator OpenAPI snapshot; the retired `packages/contracts` package was removed in PR #60 after the import audit. Do not recreate or import it.
 - `docs/`: architecture, decisions, capability matrix, implementation plan and operation notes.
 - `ops/`: operations and provider probes.
 - `scripts/`: the canonical, agent-independent test, lint, environment and architecture commands.
