@@ -8,10 +8,12 @@ type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
 
 type JsonSuccessBody<Operation> = Operation extends { responses: infer Responses }
   ? {
-      [Status in keyof Responses]: Status extends `2${string}`
-        ? Responses[Status] extends { content: infer Content }
-          ? Content extends { "application/json": infer Body }
-            ? Body
+      [Status in keyof Responses]: Status extends string | number
+        ? `${Status}` extends `2${string}`
+          ? Responses[Status] extends { content: infer Content }
+            ? Content extends { "application/json": infer Body }
+              ? Body
+              : never
             : never
           : never
         : never;
