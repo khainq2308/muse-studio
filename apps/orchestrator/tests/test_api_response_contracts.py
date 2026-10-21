@@ -32,6 +32,16 @@ def test_queue_task_and_take_routes_publish_explicit_response_models() -> None:
         ("post", "/api/v1/queue/tasks/{task_id}/cancel", "200"): "QueueTaskOut",
         ("get", "/api/v1/queue/shots/{shot_id}/takes", "200"): "ShotTakeOut",
         ("post", "/api/v1/queue/shots/{shot_id}/takes/{take_id}/select", "200"): "ShotTakeSelectionOut",
+        ("post", "/api/v1/projects/{project_id}/scripts/import", "201"): "ScriptImportOut",
+        ("get", "/api/v1/projects/{project_id}/story-bible", "200"): "StoryBibleEntryOut",
+        ("post", "/api/v1/projects/{project_id}/story-bible", "201"): "StoryBibleUpsertOut",
+        ("get", "/api/v1/projects/{project_id}/shots", "200"): "ProjectShotOut",
+        ("patch", "/api/v1/projects/{project_id}/shots/{shot_id}", "200"): "ShotReviewOut",
+        ("post", "/api/v1/projects/{project_id}/batch/launch", "201"): "BatchLaunchOut",
+        ("post", "/api/v1/projects/{project_id}/batch/tick", "200"): "BatchTickOut",
+        ("post", "/api/v1/projects/{project_id}/batch/retry-failed", "200"): "RetryFailedTasksOut",
+        ("post", "/api/v1/projects/{project_id}/shots/{shot_id}/takes/{take_id}/flag-continuity", "200"): "ContinuityFlagOut",
+        ("get", "/api/v1/projects/{project_id}/shots/{shot_id}/compare-takes", "200"): "CompareShotTakesOut",
     }
 
     for (method, path, status_code), expected_model in expected.items():
