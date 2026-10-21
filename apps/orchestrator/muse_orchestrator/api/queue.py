@@ -28,6 +28,60 @@ class EnqueueTaskIn(BaseModel):
     max_polls: int = Field(default=60, ge=1, le=500)
 
 
+
+class QueueTaskOut(BaseModel):
+    id: str
+    project_id: str
+    scene_id: str | None
+    shot_id: str
+    connection_id: str
+    task_type: str
+    model_id: str
+    idempotency_key: str | None
+    priority: int
+    state: QueueTaskState
+    external_task_id: str | None
+    account_used: str | None
+    attempt_count: int
+    max_attempts: int
+    poll_count: int
+    max_polls: int
+    next_poll_delay_seconds: float
+    error_category: str | None
+    retryable: bool
+    error_message_redacted: str | None
+    result_asset_id: str | None
+    take_id: str | None
+    history_log: list[str]
+
+
+class EnqueueTaskOut(QueueTaskOut):
+    created_new: bool
+
+
+class ShotTakeOut(BaseModel):
+    id: str
+    shot_id: str
+    take_number: int
+    task_id: str
+    asset_id: str
+    model_id: str
+    prompt_hash: str
+    account_used: str | None
+    first_frame_asset_id: str | None
+    last_frame_asset_id: str | None
+    continuity_flagged: bool
+    director_notes: str
+    is_selected: bool
+
+
+class SelectShotTakeOut(BaseModel):
+    shot_id: str
+    selected_take_id: str
+    last_frame_asset_id: str | None
+    propagated_downstream_shots: list[str]
+
+
 def _serialize_task(t: GenerationTaskRecord) -> dict[str, Any]:
     return {
         "id": t.id,
@@ -56,13 +110,13 @@ def _serialize_task(t: GenerationTaskRecord) -> dict[str, Any]:
     }
 
 
-@router.post("/tasks", status_code=status.HTTP_201_CREATED)
+@router.post("/tasks", response_model=EnqueueTaskOut, status_code=status.HTTP_201_CREATED)
 async def enqueue_generation_task(
     payload: EnqueueTaskIn,
     request: Request,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> EnqueueTaskOut:
     shot = await repository.get_shot(payload.shot_id)
     if not shot:
         raise HTTPException(status_code=404, detail="Shot không tồn tại.")
@@ -96,24 +150,16 @@ async def enqueue_generation_task(
     return out
 
 
-@router.get("/tasks")
+@router.get("/tasks", response_model=list[QueueTaskOut])
 async def list_queue_tasks(
     project_id: str | None = None,
     connection_id: str | None = None,
-    state: str | None = None,
+    state: QueueTaskState | None = None,
     model_id: str | None = None,
     account_used: str | None = None,
     repository: StudioRepository = Depends(get_studio_repository),
-) -> list[dict[str, Any]]:
-    state_filter: QueueTaskState | None = None
-    if state:
-        try:
-            state_filter = QueueTaskState(state)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=f"state không hợp lệ. Giá trị cho phép: {[s.value for s in QueueTaskState]}",
-            ) from exc
+) -> list[QueueTaskOut]:
+    state_filter = state
 
     rows = await repository.list_queue_tasks(
         project_id=project_id,
@@ -125,13 +171,13 @@ async def list_queue_tasks(
     return [_serialize_task(r) for r in rows]
 
 
-@router.post("/tasks/{task_id}/step")
+@router.post("/tasks/{task_id}/step", response_model=QueueTaskOut)
 async def step_generation_task(
     task_id: str,
     request: Request,
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
-) -> dict[str, Any]:
+) -> QueueTaskOut:
     try:
         task = await GenerationQueueService.step_task(repository.session, task_id)
     except ValueError as exc:
@@ -140,8 +186,8 @@ async def step_generation_task(
     return _serialize_task(task)
 
 
-@router.post("/tasks/{task_id}/pause")
-async def pause_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+@router.post("/tasks/{task_id}/pause", response_model=QueueTaskOut)
+async def pause_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> QueueTaskOut:
     task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -152,8 +198,8 @@ async def pause_task(task_id: str, repository: StudioRepository = Depends(get_st
     return _serialize_task(task)
 
 
-@router.post("/tasks/{task_id}/resume")
-async def resume_task(task_id: str, request: Request, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+@router.post("/tasks/{task_id}/resume", response_model=QueueTaskOut)
+async def resume_task(task_id: str, request: Request, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> QueueTaskOut:
     task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -165,8 +211,8 @@ async def resume_task(task_id: str, request: Request, repository: StudioReposito
     return _serialize_task(task)
 
 
-@router.post("/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+@router.post("/tasks/{task_id}/cancel", response_model=QueueTaskOut)
+async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> QueueTaskOut:
     task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
@@ -188,8 +234,8 @@ async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_s
     return _serialize_task(task)
 
 
-@router.get("/shots/{shot_id}/takes")
-async def list_shot_takes(shot_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[dict[str, Any]]:
+@router.get("/shots/{shot_id}/takes", response_model=list[ShotTakeOut])
+async def list_shot_takes(shot_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[ShotTakeOut]:
     rows = await repository.list_shot_takes(shot_id)
     return [
         {
@@ -211,8 +257,8 @@ async def list_shot_takes(shot_id: str, repository: StudioRepository = Depends(g
     ]
 
 
-@router.post("/shots/{shot_id}/takes/{take_id}/select")
-async def select_shot_take(shot_id: str, take_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> dict[str, Any]:
+@router.post("/shots/{shot_id}/takes/{take_id}/select", response_model=SelectShotTakeOut)
+async def select_shot_take(shot_id: str, take_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> SelectShotTakeOut:
     shot = await repository.get_shot(shot_id)
     if not shot:
         raise HTTPException(status_code=404, detail="Shot không tồn tại.")
