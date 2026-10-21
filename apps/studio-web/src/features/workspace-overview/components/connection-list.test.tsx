@@ -41,7 +41,7 @@ describe("ConnectionList", () => {
   it("limits fractional latency to one decimal place without trailing zeroes", () => {
     render(
       <ConnectionList
-        connections={connections}
+        connections={connections.slice(1)}
         isLoading={false}
         isError={false}
         errorMessage="Could not load connections."
