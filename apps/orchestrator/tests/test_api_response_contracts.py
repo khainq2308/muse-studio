@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
+from muse_orchestrator.api.workflows import WorkflowRunRequestIn
 from muse_orchestrator.main import app
 
 
@@ -86,3 +90,20 @@ def test_queue_task_state_and_enqueue_task_type_are_openapi_enums() -> None:
     state_refs = {item.get("$ref") for item in state_schema.get("anyOf", [])}
     state_refs.add(state_schema.get("$ref"))
     assert "#/components/schemas/QueueTaskState" in state_refs
+
+
+@pytest.mark.parametrize("run_mode", ["from_here", "downstream"])
+def test_partial_workflow_run_requires_start_node_id(run_mode: str) -> None:
+    with pytest.raises(ValidationError, match="start_node_id is required"):
+        WorkflowRunRequestIn(run_mode=run_mode)
+
+
+@pytest.mark.parametrize("run_mode", ["full", "dry_run"])
+def test_full_and_dry_run_workflow_modes_do_not_require_start_node_id(run_mode: str) -> None:
+    request = WorkflowRunRequestIn(run_mode=run_mode)
+    assert request.start_node_id is None
+
+
+def test_workflow_run_mode_is_an_openapi_enum() -> None:
+    schema = app.openapi()["components"]["schemas"]["WorkflowRunRequestIn"]["properties"]["run_mode"]
+    assert schema["enum"] == ["full", "dry_run", "from_here", "downstream"]
