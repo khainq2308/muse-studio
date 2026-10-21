@@ -135,3 +135,29 @@ def test_workflow_routes_publish_explicit_response_models() -> None:
     components = openapi["components"]["schemas"]
     assert _model_name(components["WorkflowExecutionOut"]["properties"]["node_executions"]["items"]) == "WorkflowNodeExecutionOut"
     assert _model_name(components["WorkflowNodeExecutionOut"]["properties"]["state"]) == "NodeExecutionState"
+
+def test_timeline_and_export_routes_publish_explicit_response_models() -> None:
+    openapi = app.openapi()
+    expected = {
+        ("post", "/api/v1/projects/{project_id}/timeline/assemble", "201"): "TimelineAssembleOut",
+        ("get", "/api/v1/projects/{project_id}/timeline", "200"): "TimelineSequenceOut",
+        ("post", "/api/v1/projects/{project_id}/timeline/exports", "202"): "ExportLaunchOut",
+        ("get", "/api/v1/projects/{project_id}/timeline/exports/{export_id}", "200"): "ExportJobStatusOut",
+    }
+    for (method, path, status_code), expected_model in expected.items():
+        schema = _response_schema(openapi, method, path, status_code)
+        assert _model_name(schema) == expected_model, f"{method.upper()} {path}"
+
+    components = openapi["components"]["schemas"]
+    manifest = components["TimelineManifestOut"]["properties"]
+    assert _model_name(manifest["video_clips"]["items"]) == "TimelineClipOut"
+    assert _model_name(manifest["audio_tracks"]["items"]) == "TimelineAudioTrackOut"
+    assert _model_name(components["TimelineAssembleOut"]["properties"]["manifest"]) == "TimelineManifestOut"
+    assert _model_name(components["TimelineSequenceOut"]["properties"]["manifest"]) == "TimelineManifestOut"
+
+    export_status = components["ExportJobStatusOut"]["properties"]
+    assert _model_name(export_status["state"]) == "ExportJobState"
+    assert set(components["ExportJobState"]["enum"]) == {
+        "queued", "running", "succeeded", "failed", "canceled",
+    }
+    assert components["ExportLaunchOut"]["properties"]["state"]["enum"] == ["queued"]
