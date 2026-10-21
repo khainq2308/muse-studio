@@ -54,6 +54,9 @@ async def client():
             delattr(app.state, "arq_pool")
     else:
         app.state.arq_pool = previous_pool
+    # Close the per-test engine before pytest tears down its event loop. Without
+    # this, aiosqlite worker threads can emit "Event loop is closed" warnings.
+    await test_engine.dispose()
 
 
 async def _drive_export(export_id: str):
