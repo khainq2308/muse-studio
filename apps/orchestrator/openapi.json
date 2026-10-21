@@ -2849,7 +2849,9 @@
             "type": "integer"
           },
           "snapshot_json": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/muse_orchestrator__api__response_types__JsonValue-Output"
+            },
             "title": "Snapshot Json",
             "type": "object"
           }
@@ -4992,8 +4994,11 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
               }
             },
             "description": "Successful Response"
@@ -5178,8 +5183,11 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
               }
             },
             "description": "Successful Response"

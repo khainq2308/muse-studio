@@ -1989,7 +1989,7 @@ export interface components {
             revision_number: number;
             /** Snapshot Json */
             snapshot_json: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Output"];
             };
         };
         /** ScriptImportIn */
@@ -2789,7 +2789,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/octet-stream": string;
                 };
             };
             /** @description Validation Error */
@@ -2890,7 +2890,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/zip": string;
                 };
             };
             /** @description Validation Error */
