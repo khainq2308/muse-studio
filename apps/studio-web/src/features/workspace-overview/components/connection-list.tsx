@@ -11,6 +11,11 @@ interface ConnectionListProps {
   onRetry: () => void;
 }
 
+function formatLatency(latencyMs: number | null): string {
+  if (latencyMs === null) return "—";
+  return `${Number(latencyMs.toFixed(1))} ms`;
+}
+
 export function ConnectionList({
   connections,
   isLoading,
@@ -47,9 +52,7 @@ export function ConnectionList({
               </div>
               <div className="shrink-0 text-right text-xs text-muted-foreground">
                 <p>{connection.health_state}</p>
-                <p className="mt-1">
-                  {connection.latency_ms === null ? "—" : `${connection.latency_ms} ms`}
-                </p>
+                <p className="mt-1">{formatLatency(connection.latency_ms)}</p>
               </div>
             </li>
           ))}

@@ -75,7 +75,7 @@ apps/studio-web/src/
     project-module-route.tsx
   components/
     ui/                 # Component shadcn/ui (sinh bằng shadcn CLI, chỉnh sửa tối thiểu)
-    shared/             # Component dùng chung không gắn domain: StatusBadge, AsyncState,
+    shared/             # Component dùng chung không gắn domain: StatusBadge, QueryState,
                         # MediaThumb, ConfirmActionDialog, TakeCompare, ...
   entities/
     project/            # Mỗi entity gồm: api.ts (query/mutation hooks DÙNG CHUNG),
@@ -225,7 +225,7 @@ Không hard-code host/port trong code feature.
 ## 7. Kiểm thử & Definition of Done cho một feature
 
 - Vitest + Testing Library cho component/hook; MSW với handler sinh qua `openapi-msw` từ chính snapshot OpenAPI đã commit (không viết mock tay trôi khỏi schema) cho tầng api của feature. Ít nhất: test cho query/mutation hooks chính và cho các component có logic trạng thái (badge mapping, confirm dialog, A/B compare).
-- Playwright smoke test là bắt buộc từ Phase 0a. Smoke mặc định **không chạy orchestrator/DB/Redis thật**: dùng `page.route()`/`route.fulfill()` để mock các request `/api/v1/**` bằng fixture hợp lệ với OpenAPI snapshot. Hiện PR #49 chạy test trên Vite `preview` của production bundle, kiểm tra route `/projects/test-project/queue-monitor` được match bằng params và API request vẫn là đường dẫn tuyệt đối `/api/...`; nó **chưa** thực thi Nginx container nên không xác minh `try_files` hoặc proxy `/api/` của `nginx.prod.conf`. Trước khi xác nhận production deployment, bổ sung smoke test chạy production image với Nginx và một API mock trong network test. Integration test với orchestrator thật + provider mock + DB/Redis disposable là suite riêng.
+- Playwright smoke test là bắt buộc từ Phase 0a. Smoke mặc định **không chạy orchestrator/DB/Redis thật**: dùng `page.route()`/`route.fulfill()` để mock các request `/api/v1/**` bằng fixture phù hợp với hợp đồng API đã xác minh. Trên Vite `preview` của production bundle, test deep link `/projects/test-project/queue-monitor` xác minh route params, placeholder module và request health cùng origin tại đường dẫn tuyệt đối `/healthz`; test module slug không hợp lệ xác minh redirect về overview, rồi kiểm tra requests Projects/Connections tại đường dẫn tuyệt đối `/api/v1/projects` và `/api/v1/connections`, cùng origin với ứng dụng. Bộ test này **chưa** thực thi Nginx container nên không xác minh `try_files` hoặc proxy `/api/` của `nginx.prod.conf`. Trước khi xác nhận production deployment, bổ sung smoke test chạy production image với Nginx và một API mock trong network test. Integration test với orchestrator thật + provider mock + DB/Redis disposable là suite riêng.
 - Một feature chỉ "xong" khi đồng thời: `tsc` + `vite build` pass; đủ bốn trạng thái hiển thị; không JSON dump; có media preview thật ở nơi có media; test của feature pass; lint pass; không vi phạm các mục 3–6 của tài liệu này. PR thay đổi giao diện phải kèm **ảnh chụp màn hình** các màn hình chính đã thay đổi (trước/sau nếu là viết lại) trong mô tả PR.
 
 ## 8. Lộ trình chuyển đổi từ trạng thái hiện tại

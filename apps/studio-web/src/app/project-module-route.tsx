@@ -2,8 +2,7 @@ import { useParams } from "@tanstack/react-router";
 
 export default function ProjectModuleRoute() {
   const { projectId, module } = useParams({ from: "/_shell/projects/$projectId/$module" });
-  const [firstWord, ...remainingWords] = module.split("-");
-  const moduleTitle = [firstWord, ...remainingWords].filter(Boolean).join(" ");
+  const moduleTitle = module.split("-").filter(Boolean).join(" ");
   const heading = moduleTitle.charAt(0).toUpperCase() + moduleTitle.slice(1);
 
   return (

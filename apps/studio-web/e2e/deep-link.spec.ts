@@ -48,6 +48,14 @@ test("production build deep link matches the registered project-module route", a
 });
 
 test("invalid project modules redirect to the overview route", async ({ page }) => {
+  const requestedFetchUrls: Array<{ origin: string; pathname: string }> = [];
+
+  page.on("request", (request) => {
+    if (request.resourceType() !== "fetch" && request.resourceType() !== "xhr") return;
+    const url = new URL(request.url());
+    requestedFetchUrls.push({ origin: url.origin, pathname: url.pathname });
+  });
+
   await page.route("**/healthz", async (route) => {
     await route.fulfill({
       status: 200,
@@ -69,6 +77,17 @@ test("invalid project modules redirect to the overview route", async ({ page }) 
   await expect(page.getByTestId("project-module-route")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+
+  await expect
+    .poll(() => requestedFetchUrls.map(({ pathname }) => pathname))
+    .toEqual(expect.arrayContaining(["/api/v1/projects", "/api/v1/connections"]));
+
+  const appOrigin = new URL(page.url()).origin;
+  expect(requestedFetchUrls.length).toBeGreaterThan(0);
+  for (const request of requestedFetchUrls) {
+    expect(request.origin).toBe(appOrigin);
+    expect(request.pathname === "/healthz" || request.pathname.startsWith("/api/")).toBe(true);
+  }
 });
 
 test("unknown routes render an explicit 404 page", async ({ page }) => {

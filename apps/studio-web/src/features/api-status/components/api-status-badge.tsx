@@ -1,4 +1,5 @@
 import { CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { getApiStatusPresentation } from "@/features/api-status/status";
 import { useApiStatus } from "@/features/api-status/use-api-status";
 
@@ -12,7 +13,7 @@ export function ApiStatusBadge() {
         <CheckCircle2 className="size-4 text-success" aria-hidden="true" />
       ) : (
         <span
-          className={`size-2 rounded-full ${presentation.indicatorClassName}`}
+          className={cn("size-2 rounded-full", presentation.indicatorClassName)}
           aria-hidden="true"
         />
       )}
