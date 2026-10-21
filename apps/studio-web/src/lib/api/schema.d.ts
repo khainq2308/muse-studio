@@ -1092,6 +1092,54 @@ export interface components {
             /** Shot Ids */
             shot_ids?: string[] | null;
         };
+        /** BatchLaunchOut */
+        BatchLaunchOut: {
+            /** Batch Id */
+            batch_id: string;
+            /** Blocked Count */
+            blocked_count: number;
+            /** Blocked Shot Ids */
+            blocked_shot_ids: string[];
+            /** Enqueued Count */
+            enqueued_count: number;
+            /** Enqueued Task Ids */
+            enqueued_task_ids: string[];
+            /** Skipped Shot Ids */
+            skipped_shot_ids: string[];
+            /** Skipped Unchanged Count */
+            skipped_unchanged_count: number;
+            /** Total Shots */
+            total_shots: number;
+        };
+        /** BatchTickOut */
+        BatchTickOut: {
+            /** Active Tasks Fetched */
+            active_tasks_fetched: number;
+            /** Project Id */
+            project_id: string;
+            /** Queue Summary */
+            queue_summary: {
+                [key: string]: number;
+            };
+            /** Stepped Count */
+            stepped_count: number;
+            /** Stepped Tasks */
+            stepped_tasks: components["schemas"]["BatchTickTaskOut"][];
+            /** Tick Limit */
+            tick_limit: number;
+        };
+        /** BatchTickTaskOut */
+        BatchTickTaskOut: {
+            /** Auto Enqueued From Frame Chain */
+            auto_enqueued_from_frame_chain?: boolean | null;
+            /** Poll Count */
+            poll_count?: number | null;
+            /** Shot Id */
+            shot_id: string;
+            state: components["schemas"]["QueueTaskState"];
+            /** Task Id */
+            task_id: string;
+        };
         /** BibleEntryCreateIn */
         BibleEntryCreateIn: {
             /** Code Name */
@@ -1192,6 +1240,17 @@ export interface components {
              */
             volume: number;
         };
+        /** CompareTakesOut */
+        CompareTakesOut: {
+            /** Same Model */
+            same_model: boolean;
+            /** Same Prompt Hash */
+            same_prompt_hash: boolean;
+            /** Shot Id */
+            shot_id: string;
+            take_a: components["schemas"]["TakeCompareInfoOut"];
+            take_b: components["schemas"]["TakeCompareInfoOut"];
+        };
         /** ConnectionCreateIn */
         ConnectionCreateIn: {
             /** Api Key */
@@ -1285,6 +1344,19 @@ export interface components {
              */
             regenerate_now: boolean;
         };
+        /** ContinuityFlagOut */
+        ContinuityFlagOut: {
+            /** Continuity Flagged */
+            continuity_flagged: boolean;
+            /** Director Notes */
+            director_notes: string;
+            /** Regenerated Task Id */
+            regenerated_task_id: string | null;
+            /** Shot Id */
+            shot_id: string;
+            /** Take Id */
+            take_id: string;
+        };
         /** EnqueueTaskIn */
         EnqueueTaskIn: {
             /** Connection Id */
@@ -1317,6 +1389,56 @@ export interface components {
              * Task Type
              * @default video
              */
+            task_type: string;
+        };
+        /** EnqueueTaskOut */
+        EnqueueTaskOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Connection Id */
+            connection_id: string;
+            /** Created New */
+            created_new: boolean;
+            /** Error Category */
+            error_category: string | null;
+            /** Error Message Redacted */
+            error_message_redacted: string | null;
+            /** External Task Id */
+            external_task_id: string | null;
+            /** History Log */
+            history_log: string[];
+            /** Id */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string | null;
+            /** Max Attempts */
+            max_attempts: number;
+            /** Max Polls */
+            max_polls: number;
+            /** Model Id */
+            model_id: string;
+            /** Next Poll Delay Seconds */
+            next_poll_delay_seconds: number;
+            /** Poll Count */
+            poll_count: number;
+            /** Priority */
+            priority: number;
+            /** Project Id */
+            project_id: string;
+            /** Result Asset Id */
+            result_asset_id: string | null;
+            /** Retryable */
+            retryable: boolean;
+            /** Scene Id */
+            scene_id: string | null;
+            /** Shot Id */
+            shot_id: string;
+            state: components["schemas"]["QueueTaskState"];
+            /** Take Id */
+            take_id: string | null;
+            /** Task Type */
             task_type: string;
         };
         /** ExportLaunchIn */
@@ -1447,6 +1569,66 @@ export interface components {
              */
             updated_at: string;
         };
+        /** QueueTaskOut */
+        QueueTaskOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Connection Id */
+            connection_id: string;
+            /** Error Category */
+            error_category: string | null;
+            /** Error Message Redacted */
+            error_message_redacted: string | null;
+            /** External Task Id */
+            external_task_id: string | null;
+            /** History Log */
+            history_log: string[];
+            /** Id */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string | null;
+            /** Max Attempts */
+            max_attempts: number;
+            /** Max Polls */
+            max_polls: number;
+            /** Model Id */
+            model_id: string;
+            /** Next Poll Delay Seconds */
+            next_poll_delay_seconds: number;
+            /** Poll Count */
+            poll_count: number;
+            /** Priority */
+            priority: number;
+            /** Project Id */
+            project_id: string;
+            /** Result Asset Id */
+            result_asset_id: string | null;
+            /** Retryable */
+            retryable: boolean;
+            /** Scene Id */
+            scene_id: string | null;
+            /** Shot Id */
+            shot_id: string;
+            state: components["schemas"]["QueueTaskState"];
+            /** Take Id */
+            take_id: string | null;
+            /** Task Type */
+            task_type: string;
+        };
+        /**
+         * QueueTaskState
+         * @enum {string}
+         */
+        QueueTaskState: "queued" | "paused" | "running" | "succeeded" | "failed" | "poll_timeout" | "canceled";
+        /** RetryFailedOut */
+        RetryFailedOut: {
+            /** New Task Ids */
+            new_task_ids: string[];
+            /** Retried Count */
+            retried_count: number;
+        };
         /** RevisionOut */
         RevisionOut: {
             /** Commit Message */
@@ -1482,11 +1664,51 @@ export interface components {
              */
             source_format: string;
         };
+        /** SelectShotTakeOut */
+        SelectShotTakeOut: {
+            /** Last Frame Asset Id */
+            last_frame_asset_id: string | null;
+            /** Propagated Downstream Shots */
+            propagated_downstream_shots: string[];
+            /** Selected Take Id */
+            selected_take_id: string;
+            /** Shot Id */
+            shot_id: string;
+        };
         /**
          * ShotApprovalState
          * @enum {string}
          */
         ShotApprovalState: "draft" | "needs_review" | "approved" | "rejected";
+        /** ShotTakeOut */
+        ShotTakeOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Asset Id */
+            asset_id: string;
+            /** Continuity Flagged */
+            continuity_flagged: boolean;
+            /** Director Notes */
+            director_notes: string;
+            /** First Frame Asset Id */
+            first_frame_asset_id: string | null;
+            /** Id */
+            id: string;
+            /** Is Selected */
+            is_selected: boolean;
+            /** Last Frame Asset Id */
+            last_frame_asset_id: string | null;
+            /** Model Id */
+            model_id: string;
+            /** Prompt Hash */
+            prompt_hash: string;
+            /** Shot Id */
+            shot_id: string;
+            /** Take Number */
+            take_number: number;
+            /** Task Id */
+            task_id: string;
+        };
         /** ShotUpdateIn */
         ShotUpdateIn: {
             /** Action */
@@ -1510,6 +1732,31 @@ export interface components {
             requires_reference_lock?: boolean | null;
             /** Shot Size */
             shot_size?: string | null;
+        };
+        /** TakeCompareInfoOut */
+        TakeCompareInfoOut: {
+            /** Account Used */
+            account_used: string | null;
+            /** Asset Id */
+            asset_id: string;
+            /** Continuity Flagged */
+            continuity_flagged: boolean;
+            /** Director Notes */
+            director_notes: string;
+            /** First Frame Asset Id */
+            first_frame_asset_id: string | null;
+            /** Is Selected */
+            is_selected: boolean;
+            /** Last Frame Asset Id */
+            last_frame_asset_id: string | null;
+            /** Model Id */
+            model_id: string;
+            /** Prompt Hash */
+            prompt_hash: string;
+            /** Take Id */
+            take_id: string;
+            /** Take Number */
+            take_number: number;
         };
         /** TimelineAssembleIn */
         TimelineAssembleIn: {
@@ -1634,8 +1881,9 @@ export interface components {
             /**
              * Run Mode
              * @default full
+             * @enum {string}
              */
-            run_mode: string;
+            run_mode: "full" | "dry_run" | "from_here" | "downstream";
             /** Start Node Id */
             start_node_id?: string | null;
         };
@@ -2418,9 +2666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BatchLaunchOut"];
                 };
             };
             /** @description Validation Error */
@@ -2455,9 +2701,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RetryFailedOut"];
                 };
             };
             /** @description Validation Error */
@@ -2493,9 +2737,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BatchTickOut"];
                 };
             };
             /** @description Validation Error */
@@ -2747,9 +2989,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CompareTakesOut"];
                 };
             };
             /** @description Validation Error */
@@ -2788,9 +3028,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ContinuityFlagOut"];
                 };
             };
             /** @description Validation Error */
@@ -3243,9 +3481,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ShotTakeOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3279,9 +3515,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SelectShotTakeOut"];
                 };
             };
             /** @description Validation Error */
@@ -3300,7 +3534,7 @@ export interface operations {
             query?: {
                 project_id?: string | null;
                 connection_id?: string | null;
-                state?: string | null;
+                state?: components["schemas"]["QueueTaskState"] | null;
                 model_id?: string | null;
                 account_used?: string | null;
             };
@@ -3318,9 +3552,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["QueueTaskOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3355,9 +3587,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["EnqueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3390,9 +3620,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3425,9 +3653,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3460,9 +3686,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */
@@ -3495,9 +3719,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["QueueTaskOut"];
                 };
             };
             /** @description Validation Error */

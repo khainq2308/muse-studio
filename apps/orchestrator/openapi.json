@@ -436,6 +436,151 @@
         "title": "BatchLaunchIn",
         "type": "object"
       },
+      "BatchLaunchOut": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "blocked_count": {
+            "title": "Blocked Count",
+            "type": "integer"
+          },
+          "blocked_shot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocked Shot Ids",
+            "type": "array"
+          },
+          "enqueued_count": {
+            "title": "Enqueued Count",
+            "type": "integer"
+          },
+          "enqueued_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enqueued Task Ids",
+            "type": "array"
+          },
+          "skipped_shot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped Shot Ids",
+            "type": "array"
+          },
+          "skipped_unchanged_count": {
+            "title": "Skipped Unchanged Count",
+            "type": "integer"
+          },
+          "total_shots": {
+            "title": "Total Shots",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "total_shots",
+          "enqueued_count",
+          "skipped_unchanged_count",
+          "blocked_count",
+          "enqueued_task_ids",
+          "skipped_shot_ids",
+          "blocked_shot_ids"
+        ],
+        "title": "BatchLaunchOut",
+        "type": "object"
+      },
+      "BatchTickOut": {
+        "properties": {
+          "active_tasks_fetched": {
+            "title": "Active Tasks Fetched",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "queue_summary": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Queue Summary",
+            "type": "object"
+          },
+          "stepped_count": {
+            "title": "Stepped Count",
+            "type": "integer"
+          },
+          "stepped_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/BatchTickTaskOut"
+            },
+            "title": "Stepped Tasks",
+            "type": "array"
+          },
+          "tick_limit": {
+            "title": "Tick Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "stepped_count",
+          "stepped_tasks",
+          "queue_summary",
+          "tick_limit",
+          "active_tasks_fetched"
+        ],
+        "title": "BatchTickOut",
+        "type": "object"
+      },
+      "BatchTickTaskOut": {
+        "properties": {
+          "auto_enqueued_from_frame_chain": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Enqueued From Frame Chain"
+          },
+          "poll_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Count"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/QueueTaskState"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "shot_id",
+          "state"
+        ],
+        "title": "BatchTickTaskOut",
+        "type": "object"
+      },
       "BibleEntryCreateIn": {
         "properties": {
           "code_name": {
@@ -637,6 +782,37 @@
           "order_index"
         ],
         "title": "ClipEditItemIn",
+        "type": "object"
+      },
+      "CompareTakesOut": {
+        "properties": {
+          "same_model": {
+            "title": "Same Model",
+            "type": "boolean"
+          },
+          "same_prompt_hash": {
+            "title": "Same Prompt Hash",
+            "type": "boolean"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "take_a": {
+            "$ref": "#/components/schemas/TakeCompareInfoOut"
+          },
+          "take_b": {
+            "$ref": "#/components/schemas/TakeCompareInfoOut"
+          }
+        },
+        "required": [
+          "shot_id",
+          "same_prompt_hash",
+          "same_model",
+          "take_a",
+          "take_b"
+        ],
+        "title": "CompareTakesOut",
         "type": "object"
       },
       "ConnectionCreateIn": {
@@ -863,6 +1039,46 @@
         "title": "ContinuityFlagIn",
         "type": "object"
       },
+      "ContinuityFlagOut": {
+        "properties": {
+          "continuity_flagged": {
+            "title": "Continuity Flagged",
+            "type": "boolean"
+          },
+          "director_notes": {
+            "title": "Director Notes",
+            "type": "string"
+          },
+          "regenerated_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regenerated Task Id"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "take_id": {
+            "title": "Take Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shot_id",
+          "take_id",
+          "continuity_flagged",
+          "director_notes",
+          "regenerated_task_id"
+        ],
+        "title": "ContinuityFlagOut",
+        "type": "object"
+      },
       "EnqueueTaskIn": {
         "properties": {
           "connection_id": {
@@ -920,6 +1136,192 @@
           "connection_id"
         ],
         "title": "EnqueueTaskIn",
+        "type": "object"
+      },
+      "EnqueueTaskOut": {
+        "properties": {
+          "account_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Used"
+          },
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "connection_id": {
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "created_new": {
+            "title": "Created New",
+            "type": "boolean"
+          },
+          "error_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Category"
+          },
+          "error_message_redacted": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message Redacted"
+          },
+          "external_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Task Id"
+          },
+          "history_log": {
+            "items": {
+              "type": "string"
+            },
+            "title": "History Log",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "max_polls": {
+            "title": "Max Polls",
+            "type": "integer"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "next_poll_delay_seconds": {
+            "title": "Next Poll Delay Seconds",
+            "type": "number"
+          },
+          "poll_count": {
+            "title": "Poll Count",
+            "type": "integer"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Asset Id"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/QueueTaskState"
+          },
+          "take_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Take Id"
+          },
+          "task_type": {
+            "title": "Task Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "scene_id",
+          "shot_id",
+          "connection_id",
+          "task_type",
+          "model_id",
+          "idempotency_key",
+          "priority",
+          "state",
+          "external_task_id",
+          "account_used",
+          "attempt_count",
+          "max_attempts",
+          "poll_count",
+          "max_polls",
+          "next_poll_delay_seconds",
+          "error_category",
+          "retryable",
+          "error_message_redacted",
+          "result_asset_id",
+          "take_id",
+          "history_log",
+          "created_new"
+        ],
+        "title": "EnqueueTaskOut",
         "type": "object"
       },
       "ExportLaunchIn": {
@@ -1198,6 +1600,221 @@
         "title": "ProjectOut",
         "type": "object"
       },
+      "QueueTaskOut": {
+        "properties": {
+          "account_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Used"
+          },
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "connection_id": {
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "error_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Category"
+          },
+          "error_message_redacted": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message Redacted"
+          },
+          "external_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Task Id"
+          },
+          "history_log": {
+            "items": {
+              "type": "string"
+            },
+            "title": "History Log",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "max_polls": {
+            "title": "Max Polls",
+            "type": "integer"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "next_poll_delay_seconds": {
+            "title": "Next Poll Delay Seconds",
+            "type": "number"
+          },
+          "poll_count": {
+            "title": "Poll Count",
+            "type": "integer"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Asset Id"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/QueueTaskState"
+          },
+          "take_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Take Id"
+          },
+          "task_type": {
+            "title": "Task Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "scene_id",
+          "shot_id",
+          "connection_id",
+          "task_type",
+          "model_id",
+          "idempotency_key",
+          "priority",
+          "state",
+          "external_task_id",
+          "account_used",
+          "attempt_count",
+          "max_attempts",
+          "poll_count",
+          "max_polls",
+          "next_poll_delay_seconds",
+          "error_category",
+          "retryable",
+          "error_message_redacted",
+          "result_asset_id",
+          "take_id",
+          "history_log"
+        ],
+        "title": "QueueTaskOut",
+        "type": "object"
+      },
+      "QueueTaskState": {
+        "enum": [
+          "queued",
+          "paused",
+          "running",
+          "succeeded",
+          "failed",
+          "poll_timeout",
+          "canceled"
+        ],
+        "title": "QueueTaskState",
+        "type": "string"
+      },
+      "RetryFailedOut": {
+        "properties": {
+          "new_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "New Task Ids",
+            "type": "array"
+          },
+          "retried_count": {
+            "title": "Retried Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retried_count",
+          "new_task_ids"
+        ],
+        "title": "RetryFailedOut",
+        "type": "object"
+      },
       "RevisionOut": {
         "properties": {
           "commit_message": {
@@ -1262,6 +1879,44 @@
         "title": "ScriptImportIn",
         "type": "object"
       },
+      "SelectShotTakeOut": {
+        "properties": {
+          "last_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Frame Asset Id"
+          },
+          "propagated_downstream_shots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Propagated Downstream Shots",
+            "type": "array"
+          },
+          "selected_take_id": {
+            "title": "Selected Take Id",
+            "type": "string"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shot_id",
+          "selected_take_id",
+          "last_frame_asset_id",
+          "propagated_downstream_shots"
+        ],
+        "title": "SelectShotTakeOut",
+        "type": "object"
+      },
       "ShotApprovalState": {
         "enum": [
           "draft",
@@ -1271,6 +1926,100 @@
         ],
         "title": "ShotApprovalState",
         "type": "string"
+      },
+      "ShotTakeOut": {
+        "properties": {
+          "account_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Used"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "continuity_flagged": {
+            "title": "Continuity Flagged",
+            "type": "boolean"
+          },
+          "director_notes": {
+            "title": "Director Notes",
+            "type": "string"
+          },
+          "first_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Frame Asset Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_selected": {
+            "title": "Is Selected",
+            "type": "boolean"
+          },
+          "last_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Frame Asset Id"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "prompt_hash": {
+            "title": "Prompt Hash",
+            "type": "string"
+          },
+          "shot_id": {
+            "title": "Shot Id",
+            "type": "string"
+          },
+          "take_number": {
+            "title": "Take Number",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "shot_id",
+          "take_number",
+          "task_id",
+          "asset_id",
+          "model_id",
+          "prompt_hash",
+          "account_used",
+          "first_frame_asset_id",
+          "last_frame_asset_id",
+          "continuity_flagged",
+          "director_notes",
+          "is_selected"
+        ],
+        "title": "ShotTakeOut",
+        "type": "object"
       },
       "ShotUpdateIn": {
         "properties": {
@@ -1399,6 +2148,90 @@
           }
         },
         "title": "ShotUpdateIn",
+        "type": "object"
+      },
+      "TakeCompareInfoOut": {
+        "properties": {
+          "account_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Used"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "continuity_flagged": {
+            "title": "Continuity Flagged",
+            "type": "boolean"
+          },
+          "director_notes": {
+            "title": "Director Notes",
+            "type": "string"
+          },
+          "first_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Frame Asset Id"
+          },
+          "is_selected": {
+            "title": "Is Selected",
+            "type": "boolean"
+          },
+          "last_frame_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Frame Asset Id"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "prompt_hash": {
+            "title": "Prompt Hash",
+            "type": "string"
+          },
+          "take_id": {
+            "title": "Take Id",
+            "type": "string"
+          },
+          "take_number": {
+            "title": "Take Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "take_id",
+          "take_number",
+          "asset_id",
+          "first_frame_asset_id",
+          "last_frame_asset_id",
+          "model_id",
+          "prompt_hash",
+          "account_used",
+          "continuity_flagged",
+          "director_notes",
+          "is_selected"
+        ],
+        "title": "TakeCompareInfoOut",
         "type": "object"
       },
       "TimelineAssembleIn": {
@@ -1629,7 +2462,12 @@
           },
           "run_mode": {
             "default": "full",
-            "pattern": "^(full|dry_run|from_here|downstream)$",
+            "enum": [
+              "full",
+              "dry_run",
+              "from_here",
+              "downstream"
+            ],
             "title": "Run Mode",
             "type": "string"
           },
@@ -3021,9 +3859,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Launch Batch Render Api V1 Projects  Project Id  Batch Launch Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BatchLaunchOut"
                 }
               }
             },
@@ -3098,9 +3934,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Retry Failed Project Tasks Api V1 Projects  Project Id  Batch Retry Failed Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RetryFailedOut"
                 }
               }
             },
@@ -3187,9 +4021,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Tick Project Batch Queue Api V1 Projects  Project Id  Batch Tick Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BatchTickOut"
                 }
               }
             },
@@ -3674,9 +4506,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Compare Shot Takes Ab Api V1 Projects  Project Id  Shots  Shot Id  Compare Takes Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CompareTakesOut"
                 }
               }
             },
@@ -3763,9 +4593,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Flag Take Continuity And Regenerate Api V1 Projects  Project Id  Shots  Shot Id  Takes  Take Id  Flag Continuity Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ContinuityFlagOut"
                 }
               }
             },
@@ -4623,8 +5451,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/ShotTakeOut"
                   },
                   "title": "Response List Shot Takes Api V1 Queue Shots  Shot Id  Takes Get",
                   "type": "array"
@@ -4694,9 +5521,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Select Shot Take Api V1 Queue Shots  Shot Id  Takes  Take Id  Select Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SelectShotTakeOut"
                 }
               }
             },
@@ -4762,7 +5587,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/QueueTaskState"
                 },
                 {
                   "type": "null"
@@ -4826,8 +5651,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/QueueTaskOut"
                   },
                   "title": "Response List Queue Tasks Api V1 Queue Tasks Get",
                   "type": "array"
@@ -4887,9 +5711,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Enqueue Generation Task Api V1 Queue Tasks Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/EnqueueTaskOut"
                 }
               }
             },
@@ -4947,9 +5769,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Task Api V1 Queue Tasks  Task Id  Cancel Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/QueueTaskOut"
                 }
               }
             },
@@ -5007,9 +5827,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Pause Task Api V1 Queue Tasks  Task Id  Pause Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/QueueTaskOut"
                 }
               }
             },
@@ -5067,9 +5885,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Resume Task Api V1 Queue Tasks  Task Id  Resume Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/QueueTaskOut"
                 }
               }
             },
@@ -5127,9 +5943,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Step Generation Task Api V1 Queue Tasks  Task Id  Step Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/QueueTaskOut"
                 }
               }
             },
