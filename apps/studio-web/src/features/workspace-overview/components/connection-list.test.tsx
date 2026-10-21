@@ -1,7 +1,9 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionSummary } from "@/entities/connection/api";
 import { ConnectionList } from "@/features/workspace-overview/components/connection-list";
+
+afterEach(() => cleanup());
 
 const connections: ConnectionSummary[] = [
   {
