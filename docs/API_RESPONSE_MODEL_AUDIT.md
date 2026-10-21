@@ -14,9 +14,7 @@ Các endpoint trả `204 No Content` được bỏ qua bởi audit vì không c�
 
 | Lát cắt | Trạng thái | Điều kiện nghiệm thu |
 |---|---|---|
-| Queue task và take selection | Đang triển khai trong PR #56 | Tất cả queue task/take success responses tham chiếu response model; state và task type xuất enum; test OpenAPI bảo vệ hợp đồng |
-| Pipeline: shots, Story Bible, script import | Chưa triển khai | DTO rõ ràng cho list/read/update/import/upsert; lint/enum report có kiểu cụ thể |
-| Batch render và continuity/take review | Chưa triển khai | Batch launch/tick/retry, compare A/B và continuity flag response đều typed |
+| Queue tasks/takes + pipeline + batch/continuity | Đang triển khai trong PR #56 | Các queue task/take, script import, Story Bible, project shots, batch launch/tick/retry, compare A/B và continuity flag responses dùng response model; trạng thái và loại task xuất enum; OpenAPI contract tests bảo vệ hợp đồng |
 | Workflow definition, graph/layout, run/approval | Chưa triển khai | Response DTO riêng cho version, graph, run và trạng thái node; enum cho run mode/state |
 | Timeline, export và asset-related routes | Chưa triển khai | Timeline sequence/manifest, export job lifecycle và URL/asset metadata có schema cụ thể |
 | Operations: backup, maintenance, metrics, system | Chưa triển khai | Response JSON có model; file/text/204 endpoints khai báo response semantics tương ứng |
