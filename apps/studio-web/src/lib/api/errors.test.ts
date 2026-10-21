@@ -32,24 +32,34 @@ describe("shared API error classification", () => {
     );
   });
 
-  it.each([400, 401, 403, 404, 422])("does not retry permanent HTTP status %i", (status) => {
-    expect(shouldRetryApiRequest(0, new ApiError({ status, detail: null }))).toBe(false);
+  it("does not retry permanent HTTP statuses", () => {
+    const permanentStatuses = [400, 401, 403, 404, 422];
+
+    for (const status of permanentStatuses) {
+      expect(shouldRetryApiRequest(0, new ApiError({ status, detail: null }))).toBe(false);
+    }
   });
 
-  it("respects explicit non-retryable errors and retries transient failures at most once", () => {
-    expect(
-      shouldRetryApiRequest(
-        0,
-        new ApiError({ status: 500, detail: "internal", retryable: false }),
-      ),
-    ).toBe(false);
-    expect(shouldRetryApiRequest(0, new Error("network failure"))).toBe(true);
-    expect(shouldRetryApiRequest(1, new Error("network failure"))).toBe(false);
-    expect(
-      shouldRetryApiRequest(
-        0,
-        new ApiError({ status: 500, detail: "internal", retryable: true }),
-      ),
-    ).toBe(true);
+  it("retries transient errors at most once", () => {
+    const error = new Error("network failure");
+
+    expect(shouldRetryApiRequest(0, error)).toBe(true);
+    expect(shouldRetryApiRequest(1, error)).toBe(false);
+  });
+
+  it("honors explicit API retryability metadata", () => {
+    const nonRetryableError = new ApiError({
+      status: 500,
+      detail: "internal",
+      retryable: false,
+    });
+    const retryableError = new ApiError({
+      status: 500,
+      detail: "internal",
+      retryable: true,
+    });
+
+    expect(shouldRetryApiRequest(0, nonRetryableError)).toBe(false);
+    expect(shouldRetryApiRequest(0, retryableError)).toBe(true);
   });
 });
