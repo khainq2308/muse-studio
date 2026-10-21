@@ -45,6 +45,20 @@ async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation
     wf_data = wf_res.json()
     wf_id = wf_data["id"]
     assert len(wf_data["execution_order"]) == 7
+    assert wf_data["nodes"][0]["config"]["source"] == "project_latest_script"
+    assert wf_data["edges"][0]["edge_id"] == "e1"
+
+    # Dry-run phải trả contract riêng và không thực thi node.
+    dry_run_res = await client.post(
+        f"/api/v1/projects/{proj_id}/workflows/{wf_id}/runs",
+        json={"run_mode": "dry_run"},
+    )
+    assert dry_run_res.status_code == 201
+    dry_run = dry_run_res.json()
+    assert dry_run["run_mode"] == "dry_run"
+    assert dry_run["execution_mode"] == "planning_only"
+    assert len(dry_run["execution_plan_order"]) == 7
+    assert len(dry_run["cache_keys"]) == 7
 
     # 2. Chạy Workflow lần 1 -> Phải thực thi 6 bước đầu và dừng tại bước 7 (ManualApproval)
     run1_res = await client.post(
@@ -68,6 +82,8 @@ async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation
     )
     assert app_res.status_code == 200
     assert app_res.json()["status"] == "succeeded"
+    assert app_res.json()["execution_mode"] == "simulation"
+    assert len(app_res.json()["node_executions"]) == 7
 
     # 4. Kéo thả vị trí UI Layout trên Canvas -> Không được làm mất Cache!
     layout_res = await client.patch(
@@ -75,6 +91,7 @@ async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation
         json={"ui_layout": {"n_script_in": {"x": 500, "y": 300}}},
     )
     assert layout_res.status_code == 200
+    assert layout_res.json()["ui_layout_saved"] is True
 
     # 5. Chạy lại Workflow lần 2 (không sửa logic) -> Cả 7 node đều phải Cache Hit (state = skipped)
     run2_res = await client.post(
