@@ -1155,7 +1155,7 @@ export interface components {
             immutable_traits: string;
             /** Mutable Attributes */
             mutable_attributes?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Input"];
             };
             /** Reference Asset Ids */
             reference_asset_ids?: string[];
@@ -1461,6 +1461,12 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        "JsonValue-Input": string | number | boolean | components["schemas"]["JsonValue-Input"][] | {
+            [key: string]: components["schemas"]["JsonValue-Input"];
+        } | null;
+        "JsonValue-Output": string | number | boolean | components["schemas"]["JsonValue-Output"][] | {
+            [key: string]: components["schemas"]["JsonValue-Output"];
+        } | null;
         /** LogCreateIn */
         LogCreateIn: {
             /** Correlation Id */
@@ -1639,6 +1645,13 @@ export interface components {
             subject_codes: string[];
             /** Title */
             title: string;
+        };
+        /** ProjectShotsExportOut */
+        ProjectShotsExportOut: {
+            /** Project Id */
+            project_id: string;
+            /** Shots */
+            shots: components["schemas"]["ProjectShotOut"][];
         };
         /**
          * QueueTaskOut
@@ -1864,7 +1877,7 @@ export interface components {
             immutable_traits: string;
             /** Mutable Attributes */
             mutable_attributes: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue-Output"];
             };
             /** Reference Asset Ids */
             reference_asset_ids: string[];
@@ -3039,7 +3052,7 @@ export interface operations {
     export_shot_list_api_v1_projects__project_id__shots_export_get: {
         parameters: {
             query?: {
-                format?: string;
+                format?: "json" | "csv";
             };
             header?: {
                 "x-studio-admin-token"?: string | null;
@@ -3051,13 +3064,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Download project shots as JSON or CSV. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ProjectShotsExportOut"];
+                    "text/csv": string;
                 };
             };
             /** @description Validation Error */

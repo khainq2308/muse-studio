@@ -606,7 +606,9 @@
             "type": "string"
           },
           "mutable_attributes": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
             "title": "Mutable Attributes",
             "type": "object"
           },
@@ -1390,6 +1392,68 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "JsonValue-Input": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "JsonValue-Output": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "LogCreateIn": {
         "properties": {
           "correlation_id": {
@@ -1817,6 +1881,27 @@
           "generation_state"
         ],
         "title": "ProjectShotOut",
+        "type": "object"
+      },
+      "ProjectShotsExportOut": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "shots": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectShotOut"
+            },
+            "title": "Shots",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id",
+          "shots"
+        ],
+        "title": "ProjectShotsExportOut",
         "type": "object"
       },
       "QueueTaskOut": {
@@ -2497,7 +2582,9 @@
             "type": "string"
           },
           "mutable_attributes": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
             "title": "Mutable Attributes",
             "type": "object"
           },
@@ -4709,6 +4796,10 @@
             "required": false,
             "schema": {
               "default": "json",
+              "enum": [
+                "json",
+                "csv"
+              ],
               "title": "Format",
               "type": "string"
             }
@@ -4734,10 +4825,17 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectShotsExportOut"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful Response"
+            "description": "Download project shots as JSON or CSV."
           },
           "422": {
             "content": {
