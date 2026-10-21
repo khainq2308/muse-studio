@@ -16,7 +16,7 @@ Audit kiểm tra mọi response 2xx được khai báo: nếu response không c�
 | Lát cắt | Trạng thái | Điều kiện nghiệm thu |
 |---|---|---|
 | Queue tasks/takes + pipeline + batch/continuity | Đã merge ở PR #56 | Các queue task/take, script import, Story Bible, project shots, batch launch/tick/retry, compare A/B và continuity flag responses dùng response model; trạng thái và loại task xuất enum; OpenAPI contract tests bảo vệ hợp đồng |
-| Workflow definition, graph/layout, run/approval | Đang triển khai trong lát cắt kế tiếp | Response DTO cho workflow create, graph update, layout save, dry-run, run/node execution và approval; giữ nguyên các trường node/edge mở rộng; test OpenAPI và integration bảo vệ cả dry-run lẫn run mô phỏng |
+| Workflow definition, graph/layout, run/approval | Đang triển khai trong PR #57 | Response DTO cho workflow create, graph update, layout save, dry-run, run/node execution và approval; giữ nguyên các trường node/edge mở rộng; test OpenAPI và integration bảo vệ cả dry-run lẫn run mô phỏng |
 | Timeline, export và asset-related routes | Chưa triển khai; là lát cắt tiếp theo sau workflow | Timeline sequence/manifest, export job lifecycle và URL/asset metadata có schema cụ thể |
 | Operations: backup, maintenance, metrics, system | Chưa triển khai | Response JSON có model; file/text/204 endpoints khai báo response semantics tương ứng |
 | Toàn bộ frontend API consumer | Chưa triển khai | Consumer migration route-by-route sang generated `components["schemas"]`/operation types; không giữ contract viết tay thay thế |
