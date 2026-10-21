@@ -990,6 +990,13 @@ export interface components {
             /** Proxy Url */
             proxy_url?: string | null;
         };
+        /** AssetMetricsOut */
+        AssetMetricsOut: {
+            /** Total */
+            total: number;
+            /** Total Bytes */
+            total_bytes: number;
+        };
         /** AssetOut */
         AssetOut: {
             /** Asset Type */
@@ -1049,6 +1056,39 @@ export interface components {
              */
             volume: number;
         };
+        /**
+         * BackupManifestOut
+         * @description Typed known fields while retaining forward-compatible manifest metadata.
+         */
+        BackupManifestOut: {
+            /** Created At */
+            created_at?: string | null;
+            /** Excluded Tables */
+            excluded_tables?: string[];
+            /** Format Version */
+            format_version?: string | null;
+            /** Media Files */
+            media_files?: number | null;
+            /** Missing Media */
+            missing_media?: string[];
+            /** Project Id */
+            project_id?: string | null;
+            /** Project Name */
+            project_name?: string | null;
+            /** Tables */
+            tables?: {
+                [key: string]: number;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /** BackupMetricsOut */
+        BackupMetricsOut: {
+            /** Total */
+            total: number;
+            /** Total Bytes */
+            total_bytes: number;
+        };
         /** BackupOut */
         BackupOut: {
             /**
@@ -1060,16 +1100,36 @@ export interface components {
             filename: string;
             /** Id */
             id: string;
-            /** Manifest Json */
-            manifest_json: {
-                [key: string]: unknown;
-            };
+            manifest_json: components["schemas"]["BackupManifestOut"];
             /** Project Id */
             project_id: string;
             /** Sha256 */
             sha256: string;
             /** Size Bytes */
             size_bytes: number;
+        };
+        /** BackupRestoreOut */
+        BackupRestoreOut: {
+            /** Project Id */
+            project_id: string;
+            /** Project Name */
+            project_name: string;
+            report: components["schemas"]["BackupRestoreReportOut"];
+        };
+        /** BackupRestoreReportOut */
+        BackupRestoreReportOut: {
+            /** Media Missing */
+            media_missing: string[];
+            /** Media Restored */
+            media_restored: number;
+            /** Rows Skipped */
+            rows_skipped: {
+                [key: string]: number;
+            };
+            /** Tables Restored */
+            tables_restored: {
+                [key: string]: number;
+            };
         };
         /** BatchLaunchIn */
         BatchLaunchIn: {
@@ -1155,7 +1215,7 @@ export interface components {
             immutable_traits: string;
             /** Mutable Attributes */
             mutable_attributes?: {
-                [key: string]: components["schemas"]["JsonValue-Input"];
+                [key: string]: components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Input"];
             };
             /** Reference Asset Ids */
             reference_asset_ids?: string[];
@@ -1287,6 +1347,17 @@ export interface components {
          * @enum {string}
          */
         ConnectionHealthState: "unknown" | "healthy" | "degraded" | "auth_error" | "unavailable";
+        /** ConnectionMetricsOut */
+        ConnectionMetricsOut: {
+            /** Accounts Total */
+            accounts_total: number;
+            /** By Health */
+            by_health: {
+                [key: string]: number;
+            };
+            /** Total */
+            total: number;
+        };
         /** ConnectionOut */
         ConnectionOut: {
             /** Api Key Masked */
@@ -1295,7 +1366,7 @@ export interface components {
             base_url: string;
             /** Capabilities Snapshot */
             capabilities_snapshot: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Output"];
             };
             /** Enabled */
             enabled: boolean;
@@ -1356,6 +1427,64 @@ export interface components {
             shot_id: string;
             /** Take Id */
             take_id: string;
+        };
+        /** CountOut */
+        CountOut: {
+            /** Total */
+            total: number;
+        };
+        /** DiagnosticAccountOut */
+        DiagnosticAccountOut: {
+            /** Api Key Masked */
+            api_key_masked: string;
+            /** Connection Id */
+            connection_id: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Health State */
+            health_state: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Proxy Display Host */
+            proxy_display_host: string | null;
+        };
+        /** DiagnosticAuditEventOut */
+        DiagnosticAuditEventOut: {
+            /** Action */
+            action: string;
+            /** Actor */
+            actor: string;
+            /** Created At */
+            created_at: string | null;
+            /** Details Redacted */
+            details_redacted: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Output"];
+            };
+            /** Id */
+            id: string;
+            /** Target Id */
+            target_id: string;
+            /** Target Type */
+            target_type: string;
+        };
+        /** DiagnosticRecentLogOut */
+        DiagnosticRecentLogOut: {
+            /** Correlation Id */
+            correlation_id: string;
+            /** Created At */
+            created_at: string | null;
+            /** Event */
+            event: string;
+            /** Id */
+            id: string;
+            /** Level */
+            level: string;
+            /** Project Id */
+            project_id: string | null;
+            /** Task Id */
+            task_id: string | null;
         };
         /** EnqueueTaskIn */
         EnqueueTaskIn: {
@@ -1513,14 +1642,20 @@ export interface components {
             /** Unsupported Features */
             unsupported_features: string[];
         };
+        /** ExportMetricsOut */
+        ExportMetricsOut: {
+            /** By State */
+            by_state: {
+                [key: string]: number;
+            };
+            /** Total */
+            total: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        "JsonValue-Input": string | number | boolean | components["schemas"]["JsonValue-Input"][] | {
-            [key: string]: components["schemas"]["JsonValue-Input"];
-        } | null;
         /** LogCreateIn */
         LogCreateIn: {
             /** Correlation Id */
@@ -1534,12 +1669,23 @@ export interface components {
             level: string;
             /** Payload */
             payload?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Input"];
             };
             /** Project Id */
             project_id?: string | null;
             /** Task Id */
             task_id?: string | null;
+        };
+        /** MetricsSummaryOut */
+        MetricsSummaryOut: {
+            assets: components["schemas"]["AssetMetricsOut"];
+            backups: components["schemas"]["BackupMetricsOut"];
+            connections: components["schemas"]["ConnectionMetricsOut"];
+            exports: components["schemas"]["ExportMetricsOut"];
+            projects: components["schemas"]["CountOut"];
+            queue: components["schemas"]["QueueMetricsOut"];
+            service: components["schemas"]["ServiceMetricsOut"];
+            storage: components["schemas"]["StorageMetricsOut"];
         };
         /**
          * NodeExecutionState
@@ -1559,6 +1705,32 @@ export interface components {
              */
             retention_hours: number;
         };
+        /** OrphanCleanupOut */
+        OrphanCleanupOut: {
+            /** Deleted */
+            deleted: number;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Errors */
+            errors: string[];
+            /** Freed Bytes */
+            freed_bytes: number;
+            /** Orphans */
+            orphans: components["schemas"]["OrphanFileOut"][];
+            /** Retention Hours */
+            retention_hours: number;
+            /** Scanned Orphans */
+            scanned_orphans: number;
+        };
+        /** OrphanFileOut */
+        OrphanFileOut: {
+            /** Age Hours */
+            age_hours: number;
+            /** Rel Path */
+            rel_path: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
         /** OrphanScanIn */
         OrphanScanIn: {
             /**
@@ -1566,6 +1738,17 @@ export interface components {
              * @default 24
              */
             retention_hours: number;
+        };
+        /** OrphanScanOut */
+        OrphanScanOut: {
+            /** Count */
+            count: number;
+            /** Orphans */
+            orphans: components["schemas"]["OrphanFileOut"][];
+            /** Retention Hours */
+            retention_hours: number;
+            /** Total Bytes */
+            total_bytes: number;
         };
         /** PipelineLintIssueOut */
         PipelineLintIssueOut: {
@@ -1712,6 +1895,17 @@ export interface components {
             /** Shots */
             shots: components["schemas"]["ProjectShotOut"][];
         };
+        /** QueueMetricsOut */
+        QueueMetricsOut: {
+            /** Depth */
+            depth: number;
+            /** Generation Tasks By State */
+            generation_tasks_by_state: {
+                [key: string]: number;
+            };
+            /** Generation Tasks Total */
+            generation_tasks_total: number;
+        };
         /**
          * QueueTaskOut
          * @description Stable response contract for queue tasks; never expose internal prompt snapshots.
@@ -1795,7 +1989,7 @@ export interface components {
             revision_number: number;
             /** Snapshot Json */
             snapshot_json: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Output"];
             };
         };
         /** ScriptImportIn */
@@ -1831,6 +2025,19 @@ export interface components {
             script_revision_id: string;
             /** Version Number */
             version_number: number;
+        };
+        /** ServiceMetricsOut */
+        ServiceMetricsOut: {
+            /** Environment */
+            environment: string;
+            /** Name */
+            name: string;
+            /** Started At */
+            started_at: number;
+            /** Uptime Seconds */
+            uptime_seconds: number;
+            /** Version */
+            version: string;
         };
         /**
          * ShotApprovalState
@@ -1919,6 +2126,15 @@ export interface components {
             /** Shot Size */
             shot_size?: string | null;
         };
+        /** StorageMetricsOut */
+        StorageMetricsOut: {
+            /** File Count */
+            file_count: number;
+            /** Media Root */
+            media_root: string;
+            /** Total Bytes */
+            total_bytes: number;
+        };
         /** StoryBibleEntryOut */
         StoryBibleEntryOut: {
             /** Code Name */
@@ -1954,6 +2170,39 @@ export interface components {
              * @constant
              */
             status: "recompiled_downstream_shots";
+        };
+        /** StructuredLogOut */
+        StructuredLogOut: {
+            /** Correlation Id */
+            correlation_id: string;
+            /** Created At */
+            created_at: string | null;
+            /** Event */
+            event: string;
+            /** Id */
+            id: string;
+            /** Level */
+            level: string;
+            /** Payload Redacted */
+            payload_redacted: {
+                [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Output"];
+            };
+            /** Project Id */
+            project_id: string | null;
+            /** Task Id */
+            task_id: string | null;
+        };
+        /** SystemDiagnosticsOut */
+        SystemDiagnosticsOut: {
+            /** Accounts */
+            accounts: components["schemas"]["DiagnosticAccountOut"][];
+            /** Generated By */
+            generated_by: string;
+            /** Recent Audit Events */
+            recent_audit_events: components["schemas"]["DiagnosticAuditEventOut"][];
+            /** Recent Logs */
+            recent_logs: components["schemas"]["DiagnosticRecentLogOut"][];
+            summary: components["schemas"]["MetricsSummaryOut"];
         };
         /** TakeComparisonOut */
         TakeComparisonOut: {
@@ -2429,8 +2678,17 @@ export interface components {
             /** Start Node Id */
             start_node_id?: string | null;
         };
+        "muse_orchestrator__api__pipeline__JsonValue-Input": string | number | boolean | components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Input"][] | {
+            [key: string]: components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Input"];
+        } | null;
         "muse_orchestrator__api__pipeline__JsonValue-Output": string | number | boolean | components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Output"][] | {
             [key: string]: components["schemas"]["muse_orchestrator__api__pipeline__JsonValue-Output"];
+        } | null;
+        "muse_orchestrator__api__response_types__JsonValue-Input": string | number | boolean | components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Input"][] | {
+            [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Input"];
+        } | null;
+        "muse_orchestrator__api__response_types__JsonValue-Output": string | number | boolean | components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Output"][] | {
+            [key: string]: components["schemas"]["muse_orchestrator__api__response_types__JsonValue-Output"];
         } | null;
         muse_orchestrator__api__workflows__JsonValue: string | number | boolean | components["schemas"]["muse_orchestrator__api__workflows__JsonValue"][] | {
             [key: string]: components["schemas"]["muse_orchestrator__api__workflows__JsonValue"];
@@ -2531,7 +2789,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/octet-stream": string;
                 };
             };
             /** @description Validation Error */
@@ -2568,9 +2826,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BackupRestoreOut"];
                 };
             };
             /** @description Validation Error */
@@ -2634,7 +2890,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/zip": string;
                 };
             };
             /** @description Validation Error */
@@ -2942,9 +3198,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OrphanCleanupOut"];
                 };
             };
             /** @description Validation Error */
@@ -2979,9 +3233,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OrphanScanOut"];
                 };
             };
             /** @description Validation Error */
@@ -3043,9 +3295,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MetricsSummaryOut"];
                 };
             };
             /** @description Validation Error */
@@ -4271,9 +4521,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SystemDiagnosticsOut"];
                 };
             };
             /** @description Validation Error */
@@ -4310,9 +4558,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["StructuredLogOut"][];
                 };
             };
             /** @description Validation Error */
@@ -4347,9 +4593,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["StructuredLogOut"];
                 };
             };
             /** @description Validation Error */

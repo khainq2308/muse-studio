@@ -164,3 +164,69 @@ def test_timeline_and_export_routes_publish_explicit_response_models() -> None:
     }
     launch_state = components["ExportLaunchOut"]["properties"]["state"]
     assert launch_state.get("enum") == ["queued"] or launch_state.get("const") == "queued"
+
+
+def test_operations_routes_publish_explicit_response_models() -> None:
+    openapi = app.openapi()
+    expected = {
+        ("post", "/api/v1/connections", "201"): "ConnectionOut",
+        ("get", "/api/v1/connections", "200"): "ConnectionOut",
+        ("post", "/api/v1/connections/{connection_id}/test", "200"): "ConnectionOut",
+        ("post", "/api/v1/projects/{project_id}/backup", "201"): "BackupOut",
+        ("get", "/api/v1/projects/{project_id}/backups", "200"): "BackupOut",
+        ("post", "/api/v1/backups/restore", "201"): "BackupRestoreOut",
+        ("post", "/api/v1/maintenance/orphans/scan", "200"): "OrphanScanOut",
+        ("post", "/api/v1/maintenance/orphans/cleanup", "200"): "OrphanCleanupOut",
+        ("get", "/api/v1/metrics/summary", "200"): "MetricsSummaryOut",
+        ("post", "/api/v1/system/logs", "201"): "StructuredLogOut",
+        ("get", "/api/v1/system/logs", "200"): "StructuredLogOut",
+        ("get", "/api/v1/system/diagnostics", "200"): "SystemDiagnosticsOut",
+    }
+    for (method, path, status_code), expected_model in expected.items():
+        schema = _response_schema(openapi, method, path, status_code)
+        if schema.get("type") == "array":
+            schema = schema["items"]
+        assert _model_name(schema) == expected_model, f"{method.upper()} {path}"
+
+    components = openapi["components"]["schemas"]
+    assert _model_name(components["BackupOut"]["properties"]["manifest_json"]) == "BackupManifestOut"
+    assert _model_name(components["BackupRestoreOut"]["properties"]["report"]) == "BackupRestoreReportOut"
+    assert _model_name(components["OrphanScanOut"]["properties"]["orphans"]["items"]) == "OrphanFileOut"
+    assert _model_name(components["OrphanCleanupOut"]["properties"]["orphans"]["items"]) == "OrphanFileOut"
+
+    metrics = components["MetricsSummaryOut"]["properties"]
+    assert _model_name(metrics["service"]) == "ServiceMetricsOut"
+    assert _model_name(metrics["connections"]) == "ConnectionMetricsOut"
+    assert _model_name(metrics["queue"]) == "QueueMetricsOut"
+    assert _model_name(metrics["storage"]) == "StorageMetricsOut"
+
+    diagnostics = components["SystemDiagnosticsOut"]["properties"]
+    assert _model_name(diagnostics["summary"]) == "MetricsSummaryOut"
+    assert _model_name(diagnostics["accounts"]["items"]) == "DiagnosticAccountOut"
+    assert _model_name(diagnostics["recent_audit_events"]["items"]) == "DiagnosticAuditEventOut"
+    assert _model_name(diagnostics["recent_logs"]["items"]) == "DiagnosticRecentLogOut"
+    assert _model_name(components["ConnectionOut"]["properties"]["health_state"]) == "ConnectionHealthState"
+
+
+def test_binary_downloads_and_revision_snapshots_have_concrete_schemas() -> None:
+    openapi = app.openapi()
+
+    asset_content = openapi["paths"]["/api/v1/assets/{asset_id}/download"]["get"]["responses"]["200"]["content"]
+    asset_binary = asset_content["application/octet-stream"]["schema"]
+    assert asset_binary == {"type": "string", "format": "binary"}
+
+    backup_content = openapi["paths"]["/api/v1/backups/{backup_id}/download"]["get"]["responses"]["200"]["content"]
+    backup_binary = backup_content["application/zip"]["schema"]
+    assert backup_binary == {"type": "string", "format": "binary"}
+
+    revision_items = _response_schema(
+        openapi,
+        "get",
+        "/api/v1/projects/{project_id}/revisions",
+        "200",
+    )["items"]
+    assert _model_name(revision_items) == "RevisionOut"
+
+    revision_snapshot = openapi["components"]["schemas"]["RevisionOut"]["properties"]["snapshot_json"]
+    assert revision_snapshot["type"] == "object"
+    assert _model_name(revision_snapshot["additionalProperties"]).endswith("response_types__JsonValue-Output")

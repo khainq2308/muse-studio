@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
-
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 
 from muse_orchestrator.api.dependencies import get_connection_service
+from muse_orchestrator.api.response_types import JsonValue
 from muse_orchestrator.application.services import ConnectionService
 from muse_orchestrator.models.domain import ConnectionHealthState, ProviderConnection
 
@@ -36,7 +35,7 @@ class ConnectionOut(BaseModel):
     enabled: bool
     health_state: ConnectionHealthState
     latency_ms: float | None
-    capabilities_snapshot: dict[str, Any]
+    capabilities_snapshot: dict[str, JsonValue]
     last_error_redacted: str | None
     last_checked_at: datetime | None
 
