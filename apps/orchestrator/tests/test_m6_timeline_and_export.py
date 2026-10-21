@@ -256,6 +256,36 @@ async def test_m6_timeline_assemble_trim_subtitles_and_mp4_export(
 
 
 @pytest.mark.asyncio
+async def test_custom_clip_with_implicit_start_time_is_normalized(
+    client: AsyncClient,
+) -> None:
+    project_response = await client.post(
+        "/api/v1/projects",
+        json={"name": "Implicit Timeline Start"},
+    )
+    assert project_response.status_code == 201, project_response.text
+    project_id = project_response.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/projects/{project_id}/timeline/assemble",
+        json={
+            "custom_clips": [
+                {
+                    "order_index": 1,
+                    "start_time_seconds": None,
+                    "source_duration_seconds": 5.0,
+                    "transition_type": "hard_cut",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["manifest"]["video_clips"][0]["start_time_seconds"] == 0.0
+    assert body["manifest"]["video_clips"][0]["effective_duration_seconds"] == 5.0
+
+
+@pytest.mark.asyncio
 async def test_get_latest_timeline_normalizes_legacy_empty_manifest(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
