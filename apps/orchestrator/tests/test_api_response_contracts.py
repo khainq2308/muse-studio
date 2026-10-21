@@ -206,3 +206,27 @@ def test_operations_routes_publish_explicit_response_models() -> None:
     assert _model_name(diagnostics["recent_audit_events"]["items"]) == "DiagnosticAuditEventOut"
     assert _model_name(diagnostics["recent_logs"]["items"]) == "DiagnosticRecentLogOut"
     assert _model_name(components["ConnectionOut"]["properties"]["health_state"]) == "ConnectionHealthState"
+
+
+def test_binary_downloads_and_revision_snapshots_have_concrete_schemas() -> None:
+    openapi = app.openapi()
+
+    asset_content = openapi["paths"]["/api/v1/assets/{asset_id}/download"]["get"]["responses"]["200"]["content"]
+    asset_binary = asset_content["application/octet-stream"]["schema"]
+    assert asset_binary == {"type": "string", "format": "binary"}
+
+    backup_content = openapi["paths"]["/api/v1/backups/{backup_id}/download"]["get"]["responses"]["200"]["content"]
+    backup_binary = backup_content["application/zip"]["schema"]
+    assert backup_binary == {"type": "string", "format": "binary"}
+
+    revision_items = _response_schema(
+        openapi,
+        "get",
+        "/api/v1/projects/{project_id}/revisions",
+        "200",
+    )["items"]
+    assert _model_name(revision_items) == "RevisionOut"
+
+    revision_snapshot = openapi["components"]["schemas"]["RevisionOut"]["properties"]["snapshot_json"]
+    assert revision_snapshot["type"] == "object"
+    assert _model_name(revision_snapshot["additionalProperties"]) == "JsonValue"
