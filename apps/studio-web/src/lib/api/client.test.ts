@@ -247,7 +247,9 @@ describe("API client", () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(apiRequest(path)).rejects.toThrow(/dot segments|path separators|repeated separators/);
+    await expect(apiRequest(path)).rejects.toThrow(
+      /dot segments|path separators|repeated separators/,
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
