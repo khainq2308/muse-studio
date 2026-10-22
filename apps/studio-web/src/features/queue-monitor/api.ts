@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useRef } from "react";
 import { apiGet, apiPost } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
 import type { components } from "@/lib/api/schema";
@@ -13,9 +13,16 @@ import {
 
 export function useQueueTasks(projectId: string, stateFilter: QueueTaskFilter) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
-  const [pollingStartedAt] = useState(() => Date.now());
+  const pollingKey = `${sessionVersion}:${projectId}:${stateFilter}`;
+  const pollingWindow = useRef({ key: pollingKey, startedAt: Date.now() });
+  if (pollingWindow.current.key !== pollingKey) {
+    pollingWindow.current = { key: pollingKey, startedAt: Date.now() };
+  }
+  const resetPollingWindow = useCallback(() => {
+    pollingWindow.current.startedAt = Date.now();
+  }, []);
 
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.queueTasks(sessionVersion, projectId, stateFilter),
     queryFn: ({ signal }) =>
       apiGet("/api/v1/queue/tasks", {
@@ -28,10 +35,13 @@ export function useQueueTasks(projectId: string, stateFilter: QueueTaskFilter) {
     refetchInterval: (query) =>
       getQueueRefetchInterval(
         query.state.data?.map((task) => task.state),
-        Date.now() - pollingStartedAt,
+        Date.now() - pollingWindow.current.startedAt,
+        query.state.status,
       ),
     refetchIntervalInBackground: false,
   });
+
+  return { ...query, resetPollingWindow };
 }
 
 export interface QueueTaskActionVariables {
@@ -45,7 +55,7 @@ const ACTION_PATHS = {
   cancel: "/api/v1/queue/tasks/{task_id}/cancel",
 } as const;
 
-export function useQueueTaskAction(projectId: string) {
+export function useQueueTaskAction(projectId: string, onActionSuccess?: () => void) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const queryClient = useQueryClient();
 
@@ -54,9 +64,11 @@ export function useQueueTaskAction(projectId: string) {
       apiPost<components["schemas"]["QueueTaskOut"]>(ACTION_PATHS[action], undefined, {
         pathParams: { task_id: taskId },
       }),
-    onSuccess: () =>
-      queryClient.invalidateQueries({
+    onSuccess: () => {
+      onActionSuccess?.();
+      return queryClient.invalidateQueries({
         queryKey: queryKeys.queueTasksPrefix(sessionVersion, projectId),
-      }),
+      });
+    },
   });
 }

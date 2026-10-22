@@ -59,10 +59,15 @@ export function getQueuePollIntervalMs(elapsedMs: number): number | false {
  * Poll while at least one task can still progress, with a bounded 30-minute window.
  * Paused tasks do not keep polling; terminal tasks never keep polling by themselves.
  */
+export type QueueQueryStatus = "pending" | "error" | "success";
+
 export function getQueueRefetchInterval(
   states: readonly QueueTaskState[] | undefined,
   elapsedMs: number,
+  queryStatus: QueueQueryStatus = states === undefined ? "pending" : "success",
 ): number | false {
+  if (queryStatus === "error") return false;
+
   const interval = getQueuePollIntervalMs(elapsedMs);
   if (interval === false) return false;
   if (states && !states.some(isQueueTaskActive)) return false;

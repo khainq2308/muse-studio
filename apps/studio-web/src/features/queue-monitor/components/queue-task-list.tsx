@@ -153,7 +153,7 @@ export function QueueTaskList({ tasks, busyTaskId, onAction }: QueueTaskListProp
               </p>
             )}
 
-            {cancelConfirmationId === task.id && (
+            {cancelConfirmationId === task.id && canCancel && (
               <div
                 role="group"
                 aria-label={`Confirm cancellation for task ${task.id}`}

@@ -23,12 +23,18 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
   const [stateFilter, setStateFilter] = useState<QueueTaskFilter>("all");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const tasksQuery = useQueueTasks(projectId, stateFilter);
-  const actionMutation = useQueueTaskAction(projectId);
+  const actionMutation = useQueueTaskAction(projectId, tasksQuery.resetPollingWindow);
   const tasks = tasksQuery.data ?? [];
   const busyTaskId = actionMutation.isPending ? (actionMutation.variables?.taskId ?? null) : null;
 
   const handleAction = (taskId: string, action: QueueTaskAction) => {
     actionMutation.mutate({ taskId, action });
+  };
+
+  const refreshQueue = () => {
+    actionMutation.reset();
+    tasksQuery.resetPollingWindow();
+    void tasksQuery.refetch();
   };
 
   const actionError =
@@ -64,7 +70,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
         <Button
           type="button"
           variant="outline"
-          onClick={() => void tasksQuery.refetch()}
+          onClick={refreshQueue}
           disabled={tasksQuery.isFetching}
         >
           <RefreshCw
@@ -75,17 +81,17 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
         </Button>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-3" aria-label="Queue summary">
+      <div className="grid gap-3 sm:grid-cols-3" role="group" aria-label="Queue summary">
         <article className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Matching tasks</p>
+          <p className="text-sm text-muted-foreground">Tasks in current filter</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{tasks.length}</p>
         </article>
         <article className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Queued / running</p>
+          <p className="text-sm text-muted-foreground">Queued / running in filter</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{activeCount}</p>
         </article>
         <article className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Failed / timed out</p>
+          <p className="text-sm text-muted-foreground">Failed / timed out in filter</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{failedCount}</p>
         </article>
       </div>
@@ -97,7 +103,10 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
         <select
           id="queue-state-filter"
           value={stateFilter}
-          onChange={(event) => setStateFilter(event.target.value as QueueTaskFilter)}
+          onChange={(event) => {
+            actionMutation.reset();
+            setStateFilter(event.target.value as QueueTaskFilter);
+          }}
           className={cn(
             "rounded-md border border-input bg-background px-3 py-2 text-sm",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -144,7 +153,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
               ? "Generation tasks for this project will appear here when work is queued."
               : "Try another state filter or refresh to check for matching tasks."
           }
-          onRetry={() => void tasksQuery.refetch()}
+          onRetry={refreshQueue}
         >
           <QueueTaskList tasks={tasks} busyTaskId={busyTaskId} onAction={handleAction} />
         </QueryState>

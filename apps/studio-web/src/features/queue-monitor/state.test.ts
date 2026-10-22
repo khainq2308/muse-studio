@@ -31,8 +31,10 @@ describe("queue monitor polling policy", () => {
     expect(getQueueRefetchInterval([], 1_000)).toBe(false);
   });
 
-  it("keeps a bounded refresh while the initial request has no data", () => {
-    expect(getQueueRefetchInterval(undefined, 15_000)).toBe(2_000);
-    expect(getQueueRefetchInterval(undefined, QUEUE_POLL_WINDOW_MS + 1)).toBe(false);
+  it("polls a pending initial request but stops polling after a query error", () => {
+    expect(getQueueRefetchInterval(undefined, 15_000, "pending")).toBe(2_000);
+    expect(getQueueRefetchInterval(undefined, QUEUE_POLL_WINDOW_MS + 1, "pending")).toBe(false);
+    expect(getQueueRefetchInterval(undefined, 15_000, "error")).toBe(false);
+    expect(getQueueRefetchInterval(["running"], 15_000, "error")).toBe(false);
   });
 });
