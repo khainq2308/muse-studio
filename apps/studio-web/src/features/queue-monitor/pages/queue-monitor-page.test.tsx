@@ -1,10 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  QueueTask,
-  QueueTaskFilter,
-  QueueTaskPage,
-} from "@/features/queue-monitor/state";
+import type { QueueTask, QueueTaskFilter, QueueTaskPage } from "@/features/queue-monitor/state";
 
 const mocks = vi.hoisted(() => ({
   useQueueTasks: vi.fn(),
