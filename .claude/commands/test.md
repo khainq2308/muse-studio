@@ -1,7 +1,7 @@
 ---
 description: Run test suites for a selected scope and repair failures
 argument-hint: "[orchestrator|media|web|all] [pytest args]"
-allowed-tools: Bash(scripts/test.sh:*), Bash(scripts/doctor.sh:*), Read, Grep, Edit
+allowed-tools: Bash(scripts/test.sh:*), Bash(scripts/doctor.sh:*), Read, Grep, Glob, Edit, Write
 ---
 Run scripts/test.sh with the requested scope (default: all). Pytest arguments apply only to one selected pytest scope; all intentionally runs every suite without filters.
 

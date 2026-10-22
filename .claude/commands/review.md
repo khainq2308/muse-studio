@@ -1,7 +1,7 @@
 ---
 description: Review the current changes with a read-only code reviewer and, for sensitive scope, a security auditor
 argument-hint: "[paths or branch range, default: current diff]"
-allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git status:*), Read, Grep, Glob, Task
+allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git status:*), Read, Grep, Glob, Agent, Task
 ---
 Review target: supplied paths or branch range (default current diff).
 

@@ -1,10 +1,16 @@
-"""Validate agent docs/links, skill mirrors, platform config and script syntax."""
+"""Validate agent docs/links, skill mirrors, platform config and script syntax.
+
+Usage: python3 scripts/check_agent_assets.py [--sync-mirrors]
+--sync-mirrors copies every canonical .agents/skills/<skill>/ tree over its host mirrors
+(.claude/skills/ always; .gemini/skills/ only for skills already mirrored there).
+"""
 from __future__ import annotations
 
 import json
 import re
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -12,6 +18,10 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_DOCS = ("README.md", "AGENTS.md", "CLAUDE.md", "GEMINI.md", "docs/AGENT_WORKFLOW.md")
 SKILL_ROOT = ROOT / ".agents" / "skills"
 CLAUDE_SKILLS = ROOT / ".claude" / "skills"
+GEMINI_SKILLS = ROOT / ".gemini" / "skills"
+ANTIGRAVITY_RULES = ROOT / ".agents" / "rules"
+ANTIGRAVITY_TRIGGERS = {"always_on", "model_decision", "glob", "manual"}
+_MIRROR_IGNORED_PARTS = {"__pycache__", ".DS_Store"}
 FRONT = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
 LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 INLINE_CODE = re.compile(r"(?<!\x60)\x60([^\x60\n]+)\x60(?!\x60)")
@@ -51,6 +61,7 @@ def markdown_files() -> list[Path]:
         ".claude/commands",
         ".claude/agents",
         ".gemini/agents",
+        ".agents/rules",
     )
     for relative in folders:
         folder = ROOT / relative
@@ -123,6 +134,152 @@ def check_code_paths(paths: list[Path]) -> list[str]:
                     errors.append(
                         f"{source.relative_to(ROOT)}: broken inline code path reference: {raw_path}"
                     )
+    return errors
+
+
+def skill_tree(folder: Path) -> dict[str, bytes]:
+    """Map relative file path -> bytes for a skill directory, ignoring caches."""
+    files: dict[str, bytes] = {}
+    if not folder.is_dir():
+        return files
+    for path in folder.rglob("*"):
+        rel = path.relative_to(folder)
+        if not path.is_file() or _MIRROR_IGNORED_PARTS & set(rel.parts) or path.suffix == ".pyc":
+            continue
+        files[rel.as_posix()] = path.read_bytes()
+    return files
+
+
+def compare_mirror(canonical: Path, mirror: Path) -> list[str]:
+    source, copy = skill_tree(canonical), skill_tree(mirror)
+    label = mirror.relative_to(ROOT).as_posix() if mirror.is_relative_to(ROOT) else mirror.as_posix()
+    errors = [f"missing skill mirror file: {label}/{rel}" for rel in sorted(source.keys() - copy.keys())]
+    errors += [f"extra file in skill mirror (not in canonical): {label}/{rel}" for rel in sorted(copy.keys() - source.keys())]
+    errors += [
+        f"stale skill mirror: {label}/{rel}; edit the canonical copy, then run "
+        "python3 scripts/check_agent_assets.py --sync-mirrors"
+        for rel in sorted(source.keys() & copy.keys())
+        if source[rel] != copy[rel]
+    ]
+    return errors
+
+
+def mirror_targets() -> list[tuple[Path, Path]]:
+    pairs: list[tuple[Path, Path]] = []
+    for skill in sorted(path.parent for path in SKILL_ROOT.glob("*/SKILL.md")):
+        pairs.append((skill, CLAUDE_SKILLS / skill.name))
+        # Gemini CLI reads .agents/skills natively; any .gemini/skills copy must not drift.
+        if (GEMINI_SKILLS / skill.name).is_dir():
+            pairs.append((skill, GEMINI_SKILLS / skill.name))
+    return pairs
+
+
+def check_skill_mirrors() -> list[str]:
+    errors: list[str] = []
+    canonical_names = {path.parent.name for path in SKILL_ROOT.glob("*/SKILL.md")}
+    for host_root in (CLAUDE_SKILLS, GEMINI_SKILLS):
+        if host_root.is_dir():
+            for orphan in sorted(p.name for p in host_root.iterdir() if p.is_dir() and p.name not in canonical_names):
+                errors.append(f"skill mirror without canonical source: {(host_root / orphan).relative_to(ROOT)}")
+    for canonical, mirror in mirror_targets():
+        errors.extend(compare_mirror(canonical, mirror))
+    return errors
+
+
+def sync_skill_mirrors() -> int:
+    for canonical, mirror in mirror_targets():
+        if mirror.exists():
+            shutil.rmtree(mirror)
+        shutil.copytree(
+            canonical, mirror, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
+        )
+        print(f"synced {canonical.relative_to(ROOT)} -> {mirror.relative_to(ROOT)}")
+    return 0
+
+
+def check_antigravity_rules() -> list[str]:
+    """Antigravity silently discards rules without a valid trigger, so fail loudly here."""
+    errors: list[str] = []
+    if not ANTIGRAVITY_RULES.is_dir():
+        return errors
+    for path in sorted(ANTIGRAVITY_RULES.glob("*.md")):
+        label = path.relative_to(ROOT)
+        meta = frontmatter(path)
+        if meta is None:
+            errors.append(f"{label}: Antigravity rule needs YAML front matter with a trigger")
+            continue
+        trigger = re.search(r"(?m)^trigger:\s*(\S+)\s*$", meta)
+        if not trigger or trigger.group(1) not in ANTIGRAVITY_TRIGGERS:
+            errors.append(f"{label}: trigger must be one of {sorted(ANTIGRAVITY_TRIGGERS)}")
+            continue
+        if trigger.group(1) == "glob" and not re.search(r"(?m)^globs?:\s*\S", meta):
+            errors.append(f"{label}: glob trigger requires globs")
+        if not re.search(r"(?m)^description:\s*\S", meta):
+            errors.append(f"{label}: description is required (model_decision) and recommended for every rule")
+    return errors
+
+
+def _load_json(relative: str, errors: list[str]) -> dict:
+    path = ROOT / relative
+    if not path.is_file():
+        errors.append(f"missing hook config: {relative}")
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"{relative}: invalid JSON: {exc}")
+        return {}
+    if not isinstance(data, dict):
+        errors.append(f"{relative}: top level must be an object")
+        return {}
+    return data
+
+
+def _handlers(groups: object, *, grouped: bool) -> list[tuple[set[str], str]]:
+    """Return (matcher tools, command) pairs for a hook event's configuration list."""
+    pairs: list[tuple[set[str], str]] = []
+    for group in groups if isinstance(groups, list) else []:
+        if not isinstance(group, dict):
+            continue
+        if grouped:
+            tools = {item.strip() for item in str(group.get("matcher", "")).split("|") if item.strip()}
+            for hook in group.get("hooks", []) or []:
+                if isinstance(hook, dict):
+                    pairs.append((tools, str(hook.get("command", ""))))
+        else:
+            pairs.append((set(), str(group.get("command", ""))))
+    return pairs
+
+
+def check_host_hook_configs() -> list[str]:
+    errors: list[str] = []
+
+    codex = _load_json(".codex/hooks.json", errors).get("hooks", {})
+    codex_script = ".codex/hooks/agent_guard_hook.py"
+    pre = _handlers(codex.get("PreToolUse"), grouped=True)
+    if not any({"Bash", "apply_patch"} <= tools and codex_script in cmd for tools, cmd in pre):
+        errors.append(".codex/hooks.json: PreToolUse must match Bash|apply_patch and run " + codex_script)
+    if not any(codex_script in cmd for _, cmd in _handlers(codex.get("Stop"), grouped=True)):
+        errors.append(".codex/hooks.json: Stop must run " + codex_script)
+    if not (ROOT / codex_script).is_file():
+        errors.append(f"missing {codex_script}")
+
+    antigravity = _load_json(".agents/hooks.json", errors)
+    ag_script = ".agents/hooks/antigravity_hook.py"
+    required_tools = {"run_command", "write_to_file", "replace_file_content", "multi_replace_file_content", "view_file"}
+    events: dict[str, list[tuple[set[str], str]]] = {}
+    for config in antigravity.values():
+        if not isinstance(config, dict):
+            continue
+        for event, groups in config.items():
+            events.setdefault(event, []).extend(_handlers(groups, grouped=event in {"PreToolUse", "PostToolUse"}))
+    if not any(required_tools <= tools and ag_script in cmd and cmd.rstrip().endswith("PreToolUse") for tools, cmd in events.get("PreToolUse", [])):
+        errors.append(".agents/hooks.json: PreToolUse must match " + "|".join(sorted(required_tools)) + f" and pass PreToolUse to {ag_script}")
+    for event in ("Stop", "SessionStart"):
+        if not any(ag_script in cmd and cmd.rstrip().endswith(event) for _, cmd in events.get(event, [])):
+            errors.append(f".agents/hooks.json: {event} must run {ag_script} {event}")
+    if not (ROOT / ag_script).is_file():
+        errors.append(f"missing {ag_script}")
     return errors
 
 
@@ -283,7 +440,7 @@ def check_configs() -> list[str]:
 def check_syntax() -> list[str]:
     errors: list[str] = []
     python_files: set[Path] = set()
-    for relative in (".claude/hooks", ".gemini/hooks", "scripts"):
+    for relative in (".claude/hooks", ".gemini/hooks", ".codex/hooks", ".agents/hooks", "scripts"):
         folder = ROOT / relative
         if folder.is_dir():
             python_files.update(folder.rglob("*.py"))
@@ -318,7 +475,11 @@ def check_syntax() -> list[str]:
     return errors
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if "--sync-mirrors" in argv:
+        return sync_skill_mirrors()
+
     errors: list[str] = []
     for relative in REQUIRED_DOCS:
         if not (ROOT / relative).is_file():
@@ -341,20 +502,15 @@ def main() -> int:
         if not canonical_skills:
             errors.append("no shared SKILL.md found")
         for skill in canonical_skills:
-            relative = skill.relative_to(SKILL_ROOT)
             errors.extend(check_frontmatter(skill, skill.parent.name))
-            mirror = CLAUDE_SKILLS / relative
-            if not mirror.is_file():
-                errors.append(f"missing Claude skill mirror: {mirror.relative_to(ROOT)}")
-            elif mirror.read_bytes() != skill.read_bytes():
-                errors.append(
-                    f"stale skill mirror: {mirror.relative_to(ROOT)}; edit canonical skill then sync"
-                )
+        errors.extend(check_skill_mirrors())
 
     markdown = markdown_files()
     errors.extend(check_links(markdown))
     errors.extend(check_code_paths(markdown))
     errors.extend(check_configs())
+    errors.extend(check_host_hook_configs())
+    errors.extend(check_antigravity_rules())
     errors.extend(check_syntax())
 
     if errors:
@@ -364,8 +520,8 @@ def main() -> int:
         return 1
 
     print(
-        f"[OK] {len(markdown)} agent Markdown files; shared skills mirrored; "
-        "links, configs and script syntax valid."
+        f"[OK] {len(markdown)} agent Markdown files; skill trees mirrored; Claude/Gemini/"
+        "Codex/Antigravity hook configs, links and script syntax valid."
     )
     return 0
 

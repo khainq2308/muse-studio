@@ -12,7 +12,7 @@ Verify the migration directory/configuration and current database initialization
 2. Review autogenerate output manually: renames, backfills, server defaults and enum changes need particular attention.
 3. For populated tables, add nullable/server-default columns first, backfill separately, then add constraints and indexes.
 4. Write a meaningful downgrade and document irreversible operations.
-5. Test upgrade/downgrade/upgrade on a throwaway database, check model drift, and run the orchestrator tests.
+5. Test upgrade/downgrade/upgrade on a throwaway database, check model drift, and run the orchestrator tests. Name the throwaway database explicitly, for example `DATABASE_URL='sqlite+aiosqlite:////tmp/muse_mig.db' alembic upgrade head`; the shared shell guard refuses `alembic upgrade/downgrade/stamp` without `--sql` or an explicit SQLite URL.
 
 ## PostgreSQL offline DDL
 Alembic output dialect comes from the configured URL. Do not use the default SQLite URL for PostgreSQL DDL. Where settings read DATABASE_URL, use a placeholder PostgreSQL URL for offline rendering only:

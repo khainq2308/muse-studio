@@ -10,27 +10,18 @@ from pathlib import Path
 
 # Resolve from this script, not from an undocumented host environment variable or current cwd.
 ROOT = Path(__file__).resolve().parents[2]
-HOOKS = ROOT / ".claude" / "hooks"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from agent_guard.files import check_edit, check_read  # noqa: E402
+from agent_guard.shell import check_command  # noqa: E402
+
 PRUNED_DIRS = {".git", "node_modules", ".venv", "venv", "storage", "__pycache__"}
 
-def run_guard(script: str, payload: dict) -> int:
-    env = os.environ.copy()
-    env["CLAUDE_PROJECT_DIR"] = str(ROOT)
-    try:
-        proc = subprocess.run(
-            [sys.executable, str(HOOKS / script)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            timeout=10,
-            env=env,
-            cwd=ROOT,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        print(f"[gemini safety guard] Cannot run {script}: {exc}", file=sys.stderr)
-        return 2
-    if proc.returncode != 0:
-        print(proc.stderr.rstrip() or f"{script} failed with exit {proc.returncode}", file=sys.stderr)
+
+def deny_if(message: str | None) -> int:
+    """Map a shared-policy verdict to Gemini's blocking exit code."""
+    if message:
+        print(message, file=sys.stderr)
         return 2
     return 0
 
@@ -249,26 +240,25 @@ def main() -> int:
         return 2
 
     if tool_name == "run_shell_command":
-        result = run_guard("guard_bash.py", {
-            "tool_name": "Bash",
-            "tool_input": {"command": str(args.get("command") or args.get("command_line") or "")}
-        })
+        result = deny_if(check_command(str(args.get("command") or args.get("command_line") or "")))
     elif tool_name in {"write_file", "replace"}:
-        mapped = dict(args)
-        mapped["file_path"] = mapped.get("file_path") or mapped.get("path") or mapped.get("target_file") or ""
-        if "content" not in mapped and "new_string" not in mapped:
-            mapped["new_string"] = mapped.get("replacement") or mapped.get("replace_text") or ""
-        result = run_guard("pre_edit_guard.py", {"tool_name": "Write" if tool_name == "write_file" else "Edit", "tool_input": mapped})
+        raw_path = args.get("file_path") or args.get("path") or args.get("target_file") or ""
+        content = "\n".join(
+            str(args.get(key) or "")
+            for key in ("content", "new_string", "replacement", "replace_text")
+            if args.get(key)
+        )
+        result = deny_if(check_edit(ROOT, raw_path, content))
     elif tool_name == "read_file":
-        mapped = dict(args)
-        mapped["file_path"] = mapped.get("file_path") or mapped.get("path") or mapped.get("absolute_path") or ""
-        result = run_guard("pre_read_guard.py", {"tool_name": "Read", "tool_input": mapped})
+        raw_path = args.get("file_path") or args.get("path") or args.get("absolute_path") or ""
+        result = deny_if(check_read(ROOT, raw_path, require_path=True))
     elif tool_name in {"grep_search", "glob"}:
-        mapped = dict(args)
-        mapped["path"] = mapped.get("path") or mapped.get("dir_path") or ""
-        mapped["glob"] = mapped.get("glob") or mapped.get("include") or ""
-        mapped["pattern"] = mapped.get("pattern") or ""
-        result = run_guard("pre_read_guard.py", {"tool_name": "Grep" if tool_name == "grep_search" else "Glob", "tool_input": mapped})
+        raw_path = args.get("path") or args.get("dir_path") or ""
+        patterns = [
+            value for value in (args.get("glob"), args.get("include"), args.get("pattern"))
+            if isinstance(value, str) and value
+        ]
+        result = deny_if(check_read(ROOT, raw_path, patterns))
         if result == 0 and tool_name == "grep_search":
             result = check_grep_search_paths(args)
     elif tool_name == "read_many_files":

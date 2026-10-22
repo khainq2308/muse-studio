@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash
 model: inherit
 ---
 
-You write tests for MuseStudio. Reply in Vietnamese; test code in English. Use the `orchestrator-testing` skill for fixtures and patterns.
+You write tests for MuseStudio. Reply in Vietnamese; test code in English. Read `AGENTS.md` and `.agents/skills/orchestrator-testing/SKILL.md` (fixtures and patterns) before writing tests.
 
 ## Principles
 - Test behavior and contracts (HTTP status + body, DB state, files on disk), not private implementation.

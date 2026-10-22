@@ -1,6 +1,6 @@
 # MuseStudio — agent workflow and platform integration guide
 
-This document describes the required execution process for Claude Code, Codex, Gemini CLI, and any other coding agent. `AGENTS.md` is the compact policy entrypoint; this file is the operational playbook.
+This document describes the required execution process for Claude Code, Codex, Gemini CLI, Google Antigravity, and any other coding agent. `AGENTS.md` is the compact policy entrypoint; this file is the operational playbook.
 
 ## 1. Architecture of the agent kit
 
@@ -11,7 +11,8 @@ The kit has four layers. Keep platform-specific configuration thin and keep engi
 | Repository contract | `AGENTS.md` | Project context, engineering invariants, task lifecycle, definition of done | Portable Markdown. Codex reads it natively; other hosts should be pointed to it by their entrypoint. |
 | Task playbooks | `.agents/skills/<skill>/SKILL.md` | On-demand, repeatable procedures and their references | Shared Agent Skills format; Codex and Gemini CLI support `.agents/skills`. Claude's project skills are mirrored under `.claude/skills`. |
 | Deterministic checks | `scripts/` | Tests, lint, layering, policy/asset validation and local dev commands | Tool-neutral shell/Python where dependencies are available. Prefer these over host-specific command logic. |
-| Host adapters | `.claude/`, `.codex/`, `.gemini/` | Native subagent definitions, slash commands, hooks, permissions and event mapping | Platform-specific. Keep these files small and point them to shared rules/scripts. |
+| Hook policy | `scripts/agent_guard/` | Shell, file-read/edit, post-edit lint, session context and completion-gate decisions shared by every host | Stdlib Python with no host payloads. Unit-tested in `scripts/tests/`. |
+| Host adapters | `.claude/`, `.codex/`, `.gemini/`, `.agents/hooks.json` + `.agents/hooks/` + `.agents/rules/` (Antigravity) | Native subagent definitions, slash commands, hook event mapping, permissions and scoped rules | Platform-specific. Keep these files small: translate the host event, call `scripts/agent_guard/`, map the verdict back. |
 
 The same instruction prose is not enough to make hooks portable: each host has its own event names, payload shape, permission model, and block/continue contract. Share the policy function or check, then implement a thin adapter that translates the host event. Never copy a host's hook JSON and assume another runtime will understand it.
 
@@ -84,16 +85,18 @@ A missing command or dependency is **not a pass**. Use `scripts/doctor.sh`, reco
 
 ## 3. Platform mapping
 
-| Capability | Claude Code | Codex | Gemini CLI | Any other agent |
-|---|---|---|---|---|
-| Persistent repo rules | `CLAUDE.md` points to `AGENTS.md` | `AGENTS.md` | `GEMINI.md` points to `AGENTS.md` | Configure its system/project prompt to read `AGENTS.md` |
-| Reusable skills | `.claude/skills/` mirror | `.agents/skills/` | `.agents/skills/` | Read the relevant `SKILL.md` explicitly |
-| Specialist agents | `.claude/agents/*.md` | `.codex/agents/*.toml` | `.gemini/agents/*.md` | Map the role brief into the host's supported agent format |
-| Task commands | `.claude/commands/*.md` | Invoke a shared skill or script | Invoke a shared skill or script | Invoke documented workflow + script |
-| Hooks | `.claude/settings.json` + `.claude/hooks/` | Use the installed Codex hook interface/config if enabled | Use Gemini CLI `settings.json` hook events | Write an adapter for the host's event contract |
-| Tests/architecture commands | `scripts/` | `scripts/` | `scripts/` | `scripts/` |
+| Capability | Claude Code | Codex | Gemini CLI | Google Antigravity | Any other agent |
+|---|---|---|---|---|---|
+| Persistent repo rules | `CLAUDE.md` points to `AGENTS.md` | `AGENTS.md` | `GEMINI.md` points to `AGENTS.md` | `AGENTS.md` (always on) + glob-scoped `.agents/rules/*.md` | Configure its system/project prompt to read `AGENTS.md` |
+| Reusable skills | `.claude/skills/` mirror | `.agents/skills/` | `.agents/skills/` | `.agents/skills/` | Read the relevant `SKILL.md` explicitly |
+| Specialist agents | `.claude/agents/*.md` | `.codex/agents/*.toml` | `.gemini/agents/*.md` | No workspace file format; give the role brief from Phase B when defining a subagent | Map the role brief into the host's supported agent format |
+| Task commands | `.claude/commands/*.md` | Invoke a shared skill or script | Invoke a shared skill or script | Invoke a shared skill or script | Invoke documented workflow + script |
+| Hook config | `.claude/settings.json` | `.codex/hooks.json` (review and trust with `/hooks`) | `.gemini/settings.json` | `.agents/hooks.json` (Customizations → Hooks) | Write an adapter for the host's event contract |
+| Hook adapter | `.claude/hooks/*.py` | `.codex/hooks/agent_guard_hook.py` | `.gemini/hooks/before_tool.py` | `.agents/hooks/antigravity_hook.py` | Call `scripts/agent_guard/` |
+| Hook coverage | shell, read/search, edit, post-edit lint, session context, completion gate | shell, `apply_patch` edits, completion gate | shell, read/search, edit | shell, read/search, edit, session context, completion gate | — |
+| Tests/architecture commands | `scripts/` | `scripts/` | `scripts/` | `scripts/` | `scripts/` |
 
-Subagent and hook formats are intentionally not interchangeable. The Codex reviewer/auditor profiles set sandbox_mode to read-only, but this declaration is not proof that the active runtime enforces it. Follow [Codex read-only sandbox validation](CODEX_SANDBOX_VALIDATION.md): run profiles only under a confirmed read-only parent sandbox, and use a disposable checkout with no credentials if enforcement is uncertain. Before authoring a native adapter, verify the current host/version schema. Platform upgrades can change hooks, permission prompts, names and payloads.
+Subagent and hook formats are intentionally not interchangeable. Repository tests prove each adapter's payload mapping and verdicts against the documented contracts; they do not prove that a host loaded the hook. Verify activation in the running host (`/hooks` in Claude Code and Codex, `/hooks panel` in Gemini CLI, Customizations → Hooks in Antigravity) with one allowed and one blocked command before relying on it. The Codex reviewer/auditor profiles set sandbox_mode to read-only, but this declaration is not proof that the active runtime enforces it. Follow [Codex read-only sandbox validation](CODEX_SANDBOX_VALIDATION.md): run profiles only under a confirmed read-only parent sandbox, and use a disposable checkout with no credentials if enforcement is uncertain. Before authoring a native adapter, verify the current host/version schema. Platform upgrades can change hooks, permission prompts, names and payloads.
 
 ## 4. Command-equivalent workflows
 
@@ -114,7 +117,7 @@ Do not require custom slash-command support to perform repository tasks. Start f
 ## 5. Shared skills contract
 
 - `.agents/skills/` is canonical for shared skill content.
-- `.claude/skills/` mirrors those skill directories for Claude Code's native discovery. Mirror content is checked by `scripts/check_agent_assets.py`; edit the canonical copy and update its mirror in the same change.
+- `.claude/skills/` mirrors those skill directories for Claude Code's native discovery; any skill also present under `.gemini/skills/` must be an identical copy. `scripts/check_agent_assets.py` compares the complete skill trees (scripts, references and data, not only `SKILL.md`). Edit the canonical copy, then run `python3 scripts/check_agent_assets.py --sync-mirrors` in the same change.
 - Keep front matter valid and portable: `name` and `description` first; do not require host-only tool names, slash commands or environment variables in a shared skill.
 - Keep host-specific instructions in the entrypoint/adapter, not in the shared skill's core steps.
 - Put stable detailed procedures in a skill; keep `AGENTS.md` short enough to act as an always-loaded contract.
