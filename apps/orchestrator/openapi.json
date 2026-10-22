@@ -703,6 +703,13 @@
           "total_shots": {
             "title": "Total Shots",
             "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/BatchWarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -804,6 +811,33 @@
           "state"
         ],
         "title": "BatchTickStepOut",
+        "type": "object"
+      },
+      "BatchWarningOut": {
+        "properties": {
+          "code": {
+            "const": "frame_chain_continuity_not_guaranteed",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "shot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shot Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "shot_ids"
+        ],
+        "title": "BatchWarningOut",
         "type": "object"
       },
       "BibleEntryCreateIn": {

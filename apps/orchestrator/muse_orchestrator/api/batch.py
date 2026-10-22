@@ -1,6 +1,6 @@
 from __future__ import annotations
 import uuid
-from typing import Any
+from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from muse_orchestrator.infrastructure.repositories import StudioRepository
@@ -40,6 +40,12 @@ class ContinuityFlagIn(BaseModel):
     model_id: str = Field(default="muse-video-mock-v1", min_length=1, max_length=128)
 
 
+class BatchWarningOut(BaseModel):
+    code: Literal["frame_chain_continuity_not_guaranteed"]
+    message: str
+    shot_ids: list[str]
+
+
 class BatchLaunchOut(BaseModel):
     batch_id: str
     total_shots: int
@@ -49,6 +55,30 @@ class BatchLaunchOut(BaseModel):
     enqueued_task_ids: list[str]
     skipped_shot_ids: list[str]
     blocked_shot_ids: list[str]
+    warnings: list[BatchWarningOut] = Field(default_factory=list)
+
+
+def _frame_chain_warnings(conn: Any, shots: list[Any], skipped: list[str]) -> list[dict[str, Any]]:
+    """Warn when frame-chained shots will render on a connection that has not shown
+    real first-frame conditioning; such gateways may silently ignore the frame."""
+    status_value = (conn.capabilities_snapshot or {}).get("video_first_frame", "unknown")
+    if status_value == "supported":
+        return []
+    chained = [
+        s.id for s in shots
+        if s.continuity_mode == "frame_chain" and s.previous_shot_id and s.id not in skipped
+    ]
+    if not chained:
+        return []
+    return [{
+        "code": "frame_chain_continuity_not_guaranteed",
+        "message": (
+            f"Connection '{conn.name}' first-frame conditioning is '{status_value}': frame-chained "
+            "shots will render, but the video may not start from the previous shot's last frame. "
+            "Run a connection test against a gateway that advertises video_first_frame support."
+        ),
+        "shot_ids": chained,
+    }]
 
 
 class BatchTickStepOut(BaseModel):
@@ -245,6 +275,7 @@ async def launch_batch_render(
         "enqueued_task_ids": enqueued_task_ids,
         "skipped_shot_ids": skipped_shot_ids,
         "blocked_shot_ids": blocked_shot_ids,
+        "warnings": _frame_chain_warnings(conn, target_shots, skipped_shot_ids),
     }
 
 

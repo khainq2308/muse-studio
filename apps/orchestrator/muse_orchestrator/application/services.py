@@ -161,6 +161,22 @@ class ProjectService:
         return await self.repository.list_project_revisions(project_id)
 
 
+async def _video_first_frame_status(provider: Any, healthy: bool) -> str:
+    """``supported`` only when the gateway advertises real first-frame conditioning.
+
+    The mock provider writes placeholder frames, and a gateway that does not advertise
+    the capability may silently ignore the frame (observed with upstream muse2api).
+    """
+    if isinstance(provider, MockVideoProvider):
+        return "unsupported"
+    if not healthy:
+        return "unknown"
+    advertised = await provider.first_frame_capability()
+    if advertised is None:
+        return "unknown"
+    return "supported" if advertised else "unsupported"
+
+
 class ConnectionService:
     def __init__(self, repository: StudioRepository, secret_vault: SecretVault = vault) -> None:
         self.repository = repository
@@ -251,6 +267,7 @@ class ConnectionService:
             "per_account_proxy": "supported" if accounts else "unsupported",
             "account_count": len(accounts),
             "quota_lookup": "unsupported",
+            "video_first_frame": await _video_first_frame_status(provider, health.healthy),
         }
         return await self.repository.save_connection(connection)
 

@@ -1224,6 +1224,8 @@ export interface components {
             skipped_unchanged_count: number;
             /** Total Shots */
             total_shots: number;
+            /** Warnings */
+            warnings?: components["schemas"]["BatchWarningOut"][];
         };
         /** BatchTickOut */
         BatchTickOut: {
@@ -1253,6 +1255,18 @@ export interface components {
             state: components["schemas"]["QueueTaskState"];
             /** Task Id */
             task_id: string;
+        };
+        /** BatchWarningOut */
+        BatchWarningOut: {
+            /**
+             * Code
+             * @constant
+             */
+            code: "frame_chain_continuity_not_guaranteed";
+            /** Message */
+            message: string;
+            /** Shot Ids */
+            shot_ids: string[];
         };
         /** BibleEntryCreateIn */
         BibleEntryCreateIn: {

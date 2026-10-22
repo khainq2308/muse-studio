@@ -156,8 +156,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Pinned gateway revision the adapter contract is verified against: upstream 949f326
-      # plus the first-frame driver patch, kept on the khainq2308 fork until upstream merges it.
-      MUSE2API_REF: bf26146c5e7c1f3225fc8bd7d179e1ee8bd72e97
+      # plus the first-frame driver patch and the readyz video_first_frame capability, kept
+      # on the khainq2308 fork until upstream merges them.
+      MUSE2API_REF: 0f7600590e99762927813d826e6bc87aa592f305
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
