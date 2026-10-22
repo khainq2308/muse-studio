@@ -21,14 +21,14 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_hardening_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.application.services import ProjectService
-from muse_orchestrator.core.config import SecretRedactor, settings
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.infrastructure.repositories import StudioRepository
-from muse_orchestrator.main import app
-from muse_orchestrator.models.domain import Base
-from muse_orchestrator.providers.base import ProviderFailure, VideoGenerationRequest
-from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
+from muse_orchestrator.application.services import ProjectService  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.core.config import SecretRedactor, settings  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.infrastructure.repositories import StudioRepository  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.main import app  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.models.domain import Base  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.providers.base import ProviderFailure, VideoGenerationRequest  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter  # noqa: E402 -- environment must be configured before app/database import
 
 SCRIPT = """
 SCENE 1: Cafe

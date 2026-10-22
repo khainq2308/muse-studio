@@ -18,9 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_restore_hardening_")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.main import app
-from muse_orchestrator.models.domain import (
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.main import app  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.models.domain import (  # noqa: E402 -- environment must be configured before app/database import
     Asset,
     Base,
     ExportJobRecord,
