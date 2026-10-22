@@ -525,12 +525,23 @@ class GenerationQueueService:
                 ds.first_frame_asset_id = new_frame
                 changed = True
             if not new_frame:
-                if ds.generation_state == ShotGenerationState.NOT_STARTED:
+                # No valid conditioning input any more: a previous success (or failure)
+                # no longer reflects this shot's continuity. Lint blocks keep priority.
+                if ds.generation_state not in (
+                    ShotGenerationState.BLOCKED_UPSTREAM_FRAME,
+                    ShotGenerationState.BLOCKED_REFERENCE,
+                ):
                     ds.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
                     changed = True
                 continue
             if ds.generation_state == ShotGenerationState.BLOCKED_UPSTREAM_FRAME:
-                ds.generation_state = ShotGenerationState.NOT_STARTED
+                # Unblocked: keep the selected take when it was rendered on this frame.
+                rendered_on = await GenerationQueueService._selected_take_conditioning(db, ds)
+                ds.generation_state = (
+                    ShotGenerationState.SUCCEEDED
+                    if rendered_on is not _UNSET and rendered_on == new_frame
+                    else ShotGenerationState.NOT_STARTED
+                )
                 changed = True
             elif ds.generation_state == ShotGenerationState.SUCCEEDED:
                 rendered_on = await GenerationQueueService._selected_take_conditioning(db, ds)

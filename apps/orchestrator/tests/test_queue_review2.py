@@ -476,9 +476,11 @@ async def test_upstream_reselection_skips_active_downstream_and_dispatch_fails_s
 @pytest.mark.asyncio
 async def test_selecting_take_without_last_frame_clears_last_frame(client: AsyncClient):
     pid, _cid, s1, s2 = await _chain_and_render(client)
+    assert (await _shots(client, pid))[s2["id"]]["generation_state"] == "succeeded"
     takes = (await client.get(f"/api/v1/queue/shots/{s1['id']}/takes")).json()
     async with STATE["maker"]() as db:
         take = await db.get(ShotTakeRecord, takes[0]["id"])
+        original_last_frame = take.last_frame_asset_id
         take.last_frame_asset_id = None
         await db.commit()
     sel = (await client.post(f"/api/v1/queue/shots/{s1['id']}/takes/{takes[0]['id']}/select")).json()
@@ -486,6 +488,19 @@ async def test_selecting_take_without_last_frame_clears_last_frame(client: Async
     st = await _shots(client, pid)
     assert st[s1["id"]]["last_frame_asset_id"] is None
     assert st[s2["id"]]["first_frame_asset_id"] is None
+    # A downstream success no longer reflects valid continuity once its input is gone.
+    assert st[s2["id"]]["generation_state"] == "blocked_upstream_frame"
+
+    # Restoring the frame its selected take was rendered on unblocks it as succeeded
+    # (no paid re-render needed).
+    async with STATE["maker"]() as db:
+        take = await db.get(ShotTakeRecord, takes[0]["id"])
+        take.last_frame_asset_id = original_last_frame
+        await db.commit()
+    await client.post(f"/api/v1/queue/shots/{s1['id']}/takes/{takes[0]['id']}/select")
+    st = await _shots(client, pid)
+    assert st[s2["id"]]["first_frame_asset_id"] == original_last_frame
+    assert st[s2["id"]]["generation_state"] == "succeeded"
 
 
 @pytest.mark.asyncio
