@@ -155,7 +155,7 @@ function buildUrl(
   query?: QueryParams,
   pathParams?: Record<string, string | number>,
 ): string {
-  const matches = [...path.matchAll(/\\{([^{}]+)\\}/g)];
+  const matches = [...path.matchAll(/\{([^{}]+)\}/g)];
   const names = [...new Set(matches.map((match) => match[1]!))];
 
   if (matches.length > 0) {
@@ -170,7 +170,7 @@ function buildUrl(
     if (unexpected.length > 0) {
       throw new Error(`Unexpected API path parameter(s): ${unexpected.join(", ")}.`);
     }
-    path = path.replace(/\\{([^{}]+)\\}/g, (_match, name: string) =>
+    path = path.replace(/\{([^{}]+)\}/g, (_match, name: string) =>
       encodePathSegment(String(pathParams[name]!)),
     );
   } else if (pathParams && Object.keys(pathParams).length > 0) {
