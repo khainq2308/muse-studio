@@ -147,17 +147,19 @@ describe("QueueMonitorPage", () => {
       reset: vi.fn(),
     };
     let resultSetShrank = false;
-    mocks.useQueueTasks.mockImplementation((_projectId: string, _filter: QueueTaskFilter, offset: number) => {
-      if (offset >= 50) resultSetShrank = true;
-      if (!resultSetShrank) return query;
-      return {
-        ...query,
-        data:
-          offset === 0
-            ? makePage({ total: 20, has_more: false })
-            : makePage({ items: [], total: 20, offset, has_more: false }),
-      };
-    });
+    mocks.useQueueTasks.mockImplementation(
+      (_projectId: string, _filter: QueueTaskFilter, offset: number) => {
+        if (offset >= 50) resultSetShrank = true;
+        if (!resultSetShrank) return query;
+        return {
+          ...query,
+          data:
+            offset === 0
+              ? makePage({ total: 20, has_more: false })
+              : makePage({ items: [], total: 20, offset, has_more: false }),
+        };
+      },
+    );
     mocks.useQueueTaskAction.mockReturnValue(mutation);
     render(<QueueMonitorPage projectId="project-1" />);
 
