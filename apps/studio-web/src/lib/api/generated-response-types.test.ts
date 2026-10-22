@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
-import { apiGet, apiPostFromOpenApi, type ApiGetPath } from "@/lib/api/client";
+import { apiGet, apiPost, type ApiGetPath } from "@/lib/api/client";
 import type { components, paths } from "@/lib/api/schema";
 
 type GetResponse<Path extends ApiGetPath> = ReturnType<typeof apiGet<Path>>;
@@ -31,7 +31,7 @@ describe("OpenAPI-inferred API client responses", () => {
       Promise<components["schemas"]["QueueTaskPageOut"]>
     >();
     function pauseTaskResponse() {
-      return apiPostFromOpenApi("/api/v1/queue/tasks/{task_id}/pause", undefined, {
+      return apiPost("/api/v1/queue/tasks/{task_id}/pause", undefined, {
         pathParams: { task_id: "task-1" },
       });
     }
@@ -78,5 +78,13 @@ function compileTimeRejectionExamples() {
 
   // @ts-expect-error Endpoints with no query parameters reject arbitrary query objects.
   apiGet("/api/v1/projects", { query: { unexpected_param: 1 } });
+
+  // @ts-expect-error Mutation paths must exist in the generated OpenAPI contract.
+  apiPost("/api/v1/not-in-openapi", undefined);
+
+  // @ts-expect-error Mutation path parameter names must match the generated operation.
+  apiPost("/api/v1/queue/tasks/{task_id}/pause", undefined, {
+    pathParams: { wrong_task_id: "task-1" },
+  });
 }
 void compileTimeRejectionExamples;

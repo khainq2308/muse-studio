@@ -106,7 +106,16 @@ describe("API client", () => {
       .mockResolvedValueOnce(jsonResponse({ id: "deleted" }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await apiPost("/api/v1/projects", { name: "Created" });
+    await apiPost("/api/v1/queue/tasks", {
+      shot_id: "shot-1",
+      connection_id: "connection-1",
+      task_type: "video",
+      model_id: "muse-video-mock-v1",
+      priority: 10,
+      idempotency_key: "client-test-1",
+      force_retry: false,
+      max_polls: 60,
+    });
     await apiPut("/api/v1/projects/project-1", { name: "Replaced" });
     await apiPatch("/api/v1/projects/project-1", { name: "Patched" });
     await apiDelete("/api/v1/projects/project-1");
@@ -117,7 +126,16 @@ describe("API client", () => {
       "PATCH",
       "DELETE",
     ]);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ name: "Created" });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      shot_id: "shot-1",
+      connection_id: "connection-1",
+      task_type: "video",
+      model_id: "muse-video-mock-v1",
+      priority: 10,
+      idempotency_key: "client-test-1",
+      force_retry: false,
+      max_polls: 60,
+    });
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Content-Type")).toBe(
       "application/json",
     );
