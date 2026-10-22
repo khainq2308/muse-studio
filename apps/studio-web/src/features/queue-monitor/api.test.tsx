@@ -1,12 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  getQueueRefetchInterval,
-  QUEUE_POLL_WINDOW_MS,
-  type QueueTask,
-  type QueueTaskActionVariables,
-  type QueueTaskState,
-} from "@/features/queue-monitor/state";
+import { QUEUE_POLL_WINDOW_MS, type QueueTaskFilter, type QueueTaskState } from "@/features/queue-monitor/state";
 
 const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
@@ -59,9 +53,13 @@ describe("Queue Monitor query hooks", () => {
       return {} as never;
     });
 
+    const initialProps: { projectId: string; stateFilter: QueueTaskFilter } = {
+      projectId: "project-1",
+      stateFilter: "all",
+    };
     const { result, rerender } = renderHook(
       ({ projectId, stateFilter }) => useQueueTasks(projectId, stateFilter),
-      { initialProps: { projectId: "project-1", stateFilter: "all" as const } },
+      { initialProps },
     );
 
     const runningQuery = {
@@ -89,17 +87,11 @@ describe("Queue Monitor query hooks", () => {
     expect(options?.refetchInterval(runningQuery)).toBe(2_000);
   });
 
-  it("restarts polling after a successful pause/resume/cancel mutation", async () => {
+  it("restarts polling after a successful queue action mutation", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-22T00:00:00.000Z"));
 
-    let queryOptions: QueryOptionsShape | undefined;
-    mocks.useQuery.mockImplementation((value: unknown) => {
-      queryOptions = value as QueryOptionsShape;
-      return {} as never;
-    });
-    const invalidateQueries = mocks.invalidateQueries;
-    mocks.useQueryClient.mockReturnValue({ invalidateQueries });
+    mocks.useQueryClient.mockReturnValue({ invalidateQueries: mocks.invalidateQueries });
     let mutationOptions: MutationOptionsShape | undefined;
     mocks.useMutation.mockImplementation((value: unknown) => {
       mutationOptions = value as MutationOptionsShape;
@@ -114,6 +106,6 @@ describe("Queue Monitor query hooks", () => {
       await mutationOptions?.onSuccess?.();
     });
     expect(resetWindow).toHaveBeenCalledTimes(1);
-    expect(invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(1);
   });
 });
