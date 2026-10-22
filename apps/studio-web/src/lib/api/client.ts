@@ -13,10 +13,13 @@ export type ApiGetPath = {
       ? never
       : Path
     : never;
-}[keyof paths] & string;
+}[keyof paths] &
+  string;
 
-type ApiOperation<Path extends keyof paths, Method extends HttpMethod> =
-  Method extends keyof paths[Path] ? NonNullable<paths[Path][Method]> : never;
+type ApiOperation<
+  Path extends keyof paths,
+  Method extends HttpMethod,
+> = Method extends keyof paths[Path] ? NonNullable<paths[Path][Method]> : never;
 
 type ApiPathParams<Path extends ApiGetPath> = Path extends keyof paths
   ? ApiOperation<Path, "get"> extends { parameters: { path: infer Params } }
