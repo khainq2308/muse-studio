@@ -1985,7 +1985,6 @@
         "title": "ExportMetricsOut",
         "type": "object"
       },
-
       "LogCreateIn": {
         "properties": {
           "correlation_id": {
@@ -4188,7 +4187,6 @@
         "title": "TimelineWarningOut",
         "type": "object"
       },
-
       "WorkflowApprovalNodeOut": {
         "properties": {
           "cache_hit": {
