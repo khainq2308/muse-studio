@@ -21,8 +21,8 @@ type ApiOperation<Path extends keyof paths, Method extends HttpMethod> =
 type ApiPathParams<Path extends ApiGetPath> = Path extends keyof paths
   ? ApiOperation<Path, "get"> extends { parameters: { path: infer Params } }
     ? Params
-    : {}
-  : {};
+    : Record<never, never>
+  : Record<never, never>;
 
 type ApiGetOptions = Omit<ApiRequestOptions, "method" | "body" | "pathParams">;
 type ApiGetArguments<Path extends ApiGetPath> = keyof ApiPathParams<Path> extends never
