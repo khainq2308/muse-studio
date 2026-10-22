@@ -125,6 +125,8 @@ jobs:
       - name: Generate frontend TypeScript schema for contract sync
         working-directory: apps/studio-web
         run: npm run gen:api
+      - name: Report generated frontend schema diff for contract sync
+        run: git diff --unified=3 -- apps/studio-web/src/lib/api/schema.d.ts | sed -n '1,1000p'
       - name: Upload generated frontend schema for contract sync
         uses: actions/upload-artifact@v4
         with:
