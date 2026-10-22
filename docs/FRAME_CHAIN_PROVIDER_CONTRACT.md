@@ -9,9 +9,39 @@ Frame chaining has two different contracts to satisfy:
 
 This change addresses the first contract and provides source-backed compatibility aliases for two known request-schema variants. It does not claim live-provider verification.
 
+## Conditioning-frame contract (C1)
+
+Source: `apps/orchestrator/muse_orchestrator/services/generation_guards.py`, `services/generation_queue.py`, `application/pipeline_service.py`.
+
+- `shot.first_frame_asset_id` is **only the conditioning input** of the next video generation of that shot. It is either set by the operator (`PATCH` shot, validated to belong to the same project) or written by the queue at enqueue time with the frame resolved from the upstream shot.
+- Shots no longer store their own extracted opening frame. A completed take keeps its own boundary frames on `take.first_frame_asset_id` / `take.last_frame_asset_id`; the queue copies only the last frame to `shot.last_frame_asset_id`. A legacy shot whose `first_frame_asset_id` points at a frame extracted from one of its own takes is treated as having no conditioning input.
+- Only shots with `continuity_mode = frame_chain` are conditioned. With `previous_shot_id`, the frame is the last frame of the upstream shot's **selected take** (legacy rows without a selected take fall back to `upstream.last_frame_asset_id`); it must exist and belong to the same project, otherwise the shot is blocked (`blocked_upstream_frame`). Without `previous_shot_id`, an operator-set frame that no longer exists or belongs to another project fails closed (`conditioning_frame_invalid`) instead of silently becoming text-to-video.
+- Changing `continuity_mode` or `previous_shot_id` clears `first_frame_asset_id` unless the same request sets a new one.
+- Deleting an asset with `force=true` detaches it from `shot.first_frame_asset_id` / `last_frame_asset_id` and take frame columns, then recompiles lint in the same transaction.
+
+### Enqueue and dispatch guard
+
+Every enqueue path (`POST /queue/tasks`, batch launch, retry-failed, flag-continuity, frame-chain auto-enqueue) and the dispatch step call the same guard (`evaluate_generation_guard`). It refuses work, in this order, for: an explicit `BLOCKED_REFERENCE` shot state (enqueue only), any Prompt Linter blocker (`lint_blocker`), a disabled connection (`connection_disabled`), a missing upstream frame (`blocked_upstream_frame`) or an invalid operator frame (`conditioning_frame_invalid`).
+
+At enqueue the queue stores a **request snapshot** in the task history: `duration_seconds`, `aspect_ratio`, the resolved conditioning frame and its source (`upstream` / `operator` / `none`). Immediately before every paid dispatch (including resume and recovery) the guard runs again — lint blockers are therefore re-checked at dispatch — and the freshly resolved conditioning frame is compared with the snapshot. A mismatch (upstream take re-selected, continuity edited) fails the task with `stale_conditioning_frame` and returns the shot to `NOT_STARTED`; the operator re-enqueues to render on the current frame. Dispatch uses the snapshot's duration and aspect ratio, not the live (possibly edited) shot. Tasks enqueued before snapshots existed fall back to the live resolution.
+
+### Task failure categories introduced by this contract
+
+| `error_category` | Meaning | Retry |
+|---|---|---|
+| `lint_blocker` | Prompt Linter still reports a blocker at enqueue or dispatch. | Fix the shot, then enqueue again. |
+| `blocked_upstream_frame` | No validated last frame on the upstream shot's selected take. | Generate/select the upstream take first. |
+| `conditioning_frame_invalid` | Operator-set first frame is missing or belongs to another project. | Set a valid frame or clear it. |
+| `stale_conditioning_frame` | Conditioning frame changed between enqueue and dispatch. | Re-enqueue explicitly. |
+| `dispatch_outcome_unknown` | The worker step was cancelled (job timeout/shutdown) after the provider request may have been sent and before an external task id was stored. The task is FAILED and non-retryable; it is not re-sent automatically to avoid a duplicate paid generation. | Check the provider dashboard, then retry explicitly. |
+
+### One active task per shot and task type
+
+At most one `QUEUED`/`RUNNING`/`PAUSED` task may exist per `(shot_id, task_type)`. The queue returns the existing active task instead of creating a second one, and Alembic revision `0002_uniqueness` enforces it with the partial unique index `uq_generation_tasks_active_shot_type` (predicate on the stored enum names `QUEUED`, `RUNNING`, `PAUSED`). A lost concurrent insert returns the winning task rather than a 500. On upgrade, pre-existing duplicates are repaired by keeping the newest active task and cancelling the others with `error_category = duplicate_active_task`.
+
 ## Local frame handoff
 
-Before dispatching a frame-chained video task with a first-frame asset, the queue:
+Before dispatching a frame-chained video task, the queue takes the conditioning frame validated against the request snapshot (see above) and:
 
 - verifies the Asset belongs to the same project as the shot;
 - only permits PNG, JPEG, or WebP and rejects empty or greater-than-20-MiB files;
@@ -30,11 +60,11 @@ These are source-level observations, not a live probe of the user's deployment:
 
 The adapter supports an explicit `MUSE2API_VIDEO_PAYLOAD_PROFILE` setting:
 
-- `compat` (default) preserves the historical aliases: both `image` and `first_frame_image`, plus both `size` and `aspect_ratio`. This avoids a behavior change before the configured fork is identified, but duplicates a base64 data URI and may enlarge a request substantially.
+- `compat` (code default, **development/test only**) preserves the historical aliases: both `image` and `first_frame_image`, plus both `size` and `aspect_ratio`. It duplicates a base64 data URI and may enlarge a request substantially. `core/config.py` refuses to start with `compat` whenever `ENVIRONMENT` is not one of `development`, `dev`, `local`, `test`, `testing`; the development Compose file defaults to `compat`, the production Compose/CI configuration must set a provider-specific profile.
 - `czg86389-hub` sends `first_frame_image` and `aspect_ratio` only.
 - `www222fff` sends `image` and `size` only. The accepted representation of `size` is deliberately not inferred from the name or set to an aspect ratio. Set `MUSE2API_VIDEO_SIZE` to a value confirmed for the actual deployed gateway; the application refuses this profile when that value is missing.
 
-The profile removes the duplicate frame field for the two provider-specific configurations. It does not itself prove that the deployment accepts the chosen field or that generated output is visually conditioned on the frame. Keep `compat` until the deployment is identified, and test the selected profile against that exact version before treating frame chaining as verified. The queue continues to enforce the 20-MiB raw-frame limit.
+The profile removes the duplicate frame field for the two provider-specific configurations. It does not itself prove that the deployment accepts the chosen field or that generated output is visually conditioned on the frame. `compat` may be used only on a local development instance while the deployed fork is unknown; any non-development deployment must choose `czg86389-hub` or `www222fff` (with `MUSE2API_VIDEO_SIZE`) based on the identified gateway, and that profile must be tested against the exact deployed version before frame chaining is treated as verified. The queue continues to enforce the 20-MiB raw-frame limit.
 
 ## Verification status and operational test
 
