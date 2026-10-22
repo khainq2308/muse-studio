@@ -122,6 +122,16 @@ jobs:
         run: python scripts/audit_openapi_responses.py
       - name: Audit response_model declarations for queue and batch routers
         run: python scripts/audit_api_response_models.py --report --require-typed projects --require-typed connections --require-typed assets --require-typed pipeline --require-typed workflows --require-typed queue --require-typed batch --require-typed timeline --require-typed connection_accounts --require-typed metrics --require-typed maintenance --require-typed backups --require-typed system
+      - name: Capture generated OpenAPI TypeScript schema (temporary)
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 61
+        working-directory: apps/studio-web
+        run: |
+          cp src/lib/api/schema.d.ts /tmp/schema.original.d.ts
+          npm run gen:api
+          printf 'GENERATED_SCHEMA_BASE64_BEGIN\n'
+          base64 -w0 src/lib/api/schema.d.ts
+          printf '\nGENERATED_SCHEMA_BASE64_END\n'
+          mv /tmp/schema.original.d.ts src/lib/api/schema.d.ts
       - name: Check generated frontend TypeScript schema
         working-directory: apps/studio-web
         run: npm run gen:api:check
@@ -156,6 +166,15 @@ jobs:
       - name: Install locked frontend dependencies
         working-directory: apps/studio-web
         run: npm ci --no-audit --no-fund
+      - name: Capture Prettier output for Queue Monitor files (temporary)
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 61
+        working-directory: apps/studio-web
+        run: |
+          for file in src/features/queue-monitor/api.ts src/lib/api/client.ts src/lib/api/queryKeys.ts; do
+            printf 'FORMATTED_FILE_BEGIN:%s\n' "$file"
+            npx prettier "$file" | base64 -w0
+            printf '\nFORMATTED_FILE_END:%s\n' "$file"
+          done
       - name: Lint frontend
         working-directory: apps/studio-web
         run: npm run lint
