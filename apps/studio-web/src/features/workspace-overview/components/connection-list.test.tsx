@@ -1,27 +1,42 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConnectionSummary } from "@/entities/connection/api";
+import type { components } from "@/lib/api/schema";
 import { ConnectionList } from "@/features/workspace-overview/components/connection-list";
 
 afterEach(() => cleanup());
 
-const connections: ConnectionSummary[] = [
-  {
-    id: "connection-no-latency",
-    name: "Connection without latency",
+type ConnectionOut = components["schemas"]["ConnectionOut"];
+
+function makeConnection(overrides: Partial<ConnectionOut> = {}): ConnectionOut {
+  return {
+    id: "connection-default",
+    name: "Default connection",
     provider_type: "muse2api",
     base_url: "https://provider.example.test",
+    api_key_masked: "[NOT_SET]",
+    proxy_display_host: null,
+    timeout_seconds: 30,
+    max_concurrency: 2,
+    enabled: true,
     health_state: "healthy",
     latency_ms: null,
-  },
-  {
+    capabilities_snapshot: {},
+    last_error_redacted: null,
+    last_checked_at: null,
+    ...overrides,
+  };
+}
+
+const connections: ConnectionOut[] = [
+  makeConnection({
+    id: "connection-no-latency",
+    name: "Connection without latency",
+  }),
+  makeConnection({
     id: "connection-with-latency",
     name: "Connection with fractional latency",
-    provider_type: "muse2api",
-    base_url: "https://provider.example.test",
-    health_state: "healthy",
     latency_ms: 12.36,
-  },
+  }),
 ];
 
 describe("ConnectionList", () => {

@@ -1,10 +1,10 @@
 import { Film } from "lucide-react";
-import type { ProjectSummary } from "@/entities/project/api";
+import type { components } from "@/lib/api/schema";
 import { QueryState } from "@/components/shared/query-state";
 import { ResourceCard } from "@/components/shared/resource-card";
 
 interface ProjectListProps {
-  projects: ProjectSummary[];
+  projects: components["schemas"]["ProjectOut"][];
   isLoading: boolean;
   isError: boolean;
   errorMessage: string;
