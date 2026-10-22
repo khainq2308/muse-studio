@@ -48,5 +48,11 @@ function compileTimeRejectionExamples() {
 
   // @ts-expect-error Query strings belong in the query option, not the path.
   apiGet("/api/v1/projects?limit=5");
+
+  // @ts-expect-error Text-only endpoints must use apiGetText, not the JSON client.
+  apiGet("/api/v1/metrics/prometheus");
+
+  // @ts-expect-error Binary-only endpoints must use downloadFile, not the JSON client.
+  apiGet("/api/v1/assets/{asset_id}/download", { pathParams: { asset_id: "asset-1" } });
 }
 void compileTimeRejectionExamples;
