@@ -1,13 +1,9 @@
 from __future__ import annotations
-import functools as _p3_functools
-import inspect as _p3_inspect
-import json as _p3_json
 import uuid
 from dataclasses import asdict
 from typing import Any, Literal
 from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse as _P3JSONResponse
 from pydantic import BaseModel, Field
 
 from muse_orchestrator.api.arq_dispatch import schedule_export_job
@@ -621,63 +617,3 @@ async def get_export_job_status(
     elif job.state == ExportJobState.FAILED:
         result["message"] = job.error_message_redacted or "Export failed."
     return result
-
-# --- P3 HARDENING: PRESERVE ROUTE SIGNATURE & INCLUDE unsupported_features IN ALL 422 RESPONSES ---
-def _install_p3_timeline_api_patch() -> None:
-    orig_ep = globals().get("launch_ffmpeg_export")
-    if orig_ep is None or getattr(orig_ep, "_p3_installed", False):
-        return
-
-    orig_sig = _p3_inspect.signature(orig_ep)
-
-    @_p3_functools.wraps(orig_ep)
-    async def _p3_export_wrapper(*args: Any, **kwargs: Any) -> Any:
-        bound = orig_sig.bind_partial(*args, **kwargs)
-        b_args = bound.arguments
-        project_id = b_args.get("project_id")
-        payload = b_args.get("payload")
-        repository = b_args.get("repository")
-
-        early_unsupported: list[str] = []
-        if repository is not None and project_id:
-            try:
-                seq_id = getattr(payload, "sequence_id", None) if payload else None
-                if seq_id:
-                    seq_obj = await repository.get_timeline_sequence(seq_id)
-                else:
-                    seq_obj = await repository.get_latest_timeline_sequence(project_id)
-                if seq_obj and seq_obj.project_id == project_id:
-                    early_unsupported = _unsupported_export_features(seq_obj)
-            except Exception:
-                early_unsupported = []
-
-        try:
-            resp = await orig_ep(*args, **kwargs)
-            if isinstance(resp, _P3JSONResponse) and resp.status_code == 422:
-                data = _p3_json.loads(resp.body.decode("utf-8") or "{}")
-                if isinstance(data, dict) and "unsupported_features" not in data:
-                    data["unsupported_features"] = early_unsupported
-                    return _P3JSONResponse(status_code=422, content=data)
-            return resp
-        except HTTPException as exc:
-            if exc.status_code == 422:
-                if isinstance(exc.detail, dict):
-                    content = dict(exc.detail)
-                    content.setdefault("unsupported_features", early_unsupported)
-                else:
-                    content = {"detail": str(exc.detail), "unsupported_features": early_unsupported}
-                return _P3JSONResponse(status_code=422, content=content)
-            raise
-
-    _p3_export_wrapper.__signature__ = orig_sig
-    _p3_export_wrapper._p3_installed = True
-    globals()["launch_ffmpeg_export"] = _p3_export_wrapper
-
-    for r in router.routes:
-        if getattr(r, "endpoint", None) is orig_ep:
-            r.endpoint = _p3_export_wrapper
-            if hasattr(r, "dependant") and hasattr(r.dependant, "call"):
-                r.dependant.call = _p3_export_wrapper
-
-
-_install_p3_timeline_api_patch()

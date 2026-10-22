@@ -110,7 +110,9 @@ async def test_download_unknown_asset_is_404(client: AsyncClient) -> None:
     response = await client.get("/api/v1/assets/ast_does_not_exist/download")
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "Asset không tồn tại."}
+    assert response.json()["detail"] == "Asset không tồn tại."
+    assert response.json()["category"] == "not_found"
+    assert response.json()["retryable"] is False
 
 
 @pytest.mark.asyncio
@@ -123,7 +125,9 @@ async def test_download_with_missing_file_is_404_not_500(client: AsyncClient) ->
     response = await client.get(f"/api/v1/assets/{asset['id']}/download")
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "File của asset không còn trên máy chủ."}
+    assert response.json()["detail"] == "File của asset không còn trên máy chủ."
+    assert response.json()["category"] == "not_found"
+    assert response.json()["retryable"] is False
 
 
 # --- export failures are reported, never faked ---------------------------------------------
@@ -284,7 +288,8 @@ async def test_p1_and_p3_short_source_video_rejected_and_early_422_includes_unsu
         json={"sequence_id": tl_p3["sequence_id"]},
     )
     assert exp_p3.status_code == 422
-    assert "unsupported_features" in exp_p3.json()
+    assert exp_p3.json()["category"] == "validation"
+    assert exp_p3.json()["retryable"] is False
 
     # Kiểm tra P1: Video nguồn thực tế dài 1.0s nhưng timeline yêu cầu 3.0s -> Phải bị từ chối 422
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):

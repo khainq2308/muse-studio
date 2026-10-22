@@ -813,6 +813,13 @@ class GenerationQueueService:
             p_status = await provider.get_task(task.external_task_id)
         except ProviderFailure as exc:
             return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "poll")
+        except Exception as exc:
+            unexpected = ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                f"Unexpected provider poll error ({type(exc).__name__}).",
+                retryable=False,
+            )
+            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, unexpected, raw_secret, "poll")
         await db.refresh(task)
         await db.refresh(shot)
         if task.state in (

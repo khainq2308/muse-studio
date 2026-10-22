@@ -257,6 +257,8 @@ async def autosave_canvas_layout(
         raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
 
     ver = await repository.get_workflow_version(workflow_id, wf.current_version)
+    if ver is None:
+        raise HTTPException(status_code=404, detail="Workflow version không tồn tại.")
     ver.ui_layout_json = payload.ui_layout
     await repository.commit_workflow_changes()
     return {"workflow_id": workflow_id, "version_number": ver.version_number, "ui_layout_saved": True}
@@ -275,6 +277,8 @@ async def execute_workflow(
         raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
 
     ver = await repository.get_workflow_version(workflow_id, wf.current_version)
+    if ver is None:
+        raise HTTPException(status_code=404, detail="Workflow version không tồn tại.")
 
     nodes_def, edges_def = WorkflowEngine.parse_graph_json(ver.nodes_json, ver.edges_json)
     full_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def)

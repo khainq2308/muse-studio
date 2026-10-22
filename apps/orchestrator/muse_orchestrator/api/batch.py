@@ -248,9 +248,14 @@ async def tick_project_batch_queue(
 
     # Kiểm tra xem có shot nào vừa được mở khoá khỏi BLOCKED_UPSTREAM_FRAME nhờ Frame Chaining không
     # Nếu có và vừa được chuyển về NOT_STARTED (có first_frame_asset_id), tự động enqueue vào cùng Connection!
-    if active_tasks:
-        default_conn_id = connection_id or active_tasks[0].connection_id
-        default_model_id = active_tasks[0].model_id
+    default_conn_id = connection_id or (active_tasks[0].connection_id if active_tasks else None)
+    default_model_id = active_tasks[0].model_id if active_tasks else "muse-video-mock-v1"
+    if not default_conn_id:
+        prior_tasks = await repository.list_project_generation_tasks(project_id)
+        if prior_tasks:
+            default_conn_id = prior_tasks[-1].connection_id
+            default_model_id = prior_tasks[-1].model_id
+    if default_conn_id:
         conn = await repository.get_connection(default_conn_id)
         if conn:
             ready_chained_shots = await repository.list_ready_frame_chain_shots(project_id)
@@ -386,7 +391,14 @@ async def compare_shot_takes_ab(
     """So sánh A/B giữa 2 Takes của cùng một Shot (Mục 3.8 PRD)."""
     ta = await repository.get_shot_take(take_a_id)
     tb = await repository.get_shot_take(take_b_id)
-    if not ta or not tb or ta.shot_id != shot_id or tb.shot_id != shot_id:
+    if (
+        not ta
+        or not tb
+        or ta.project_id != project_id
+        or tb.project_id != project_id
+        or ta.shot_id != shot_id
+        or tb.shot_id != shot_id
+    ):
         raise HTTPException(status_code=404, detail="Một trong hai Takes không thuộc về Shot này.")
 
     def _info(t: ShotTakeRecord) -> dict[str, Any]:

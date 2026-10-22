@@ -502,6 +502,48 @@ class BackupService:
             for original_row, obj in restored_rows.get("generation_tasks", []):
                 obj.result_asset_id = id_maps.get("assets", {}).get(original_row.get("result_asset_id"))
                 obj.take_id = id_maps.get("shot_takes", {}).get(original_row.get("take_id"))
+            for _original_row, trk_obj in restored_rows.get("timeline_tracks", []):
+                remapped_clips: list[dict[str, Any]] = []
+                for clip_item in (trk_obj.clips_json or []):
+                    if not isinstance(clip_item, dict):
+                        continue
+                    c_copy = dict(clip_item)
+                    if c_copy.get("shot_id"):
+                        c_copy["shot_id"] = id_maps.get("shots", {}).get(c_copy["shot_id"])
+                    if c_copy.get("take_id"):
+                        c_copy["take_id"] = id_maps.get("shot_takes", {}).get(c_copy["take_id"])
+                    if c_copy.get("asset_id"):
+                        c_copy["asset_id"] = id_maps.get("assets", {}).get(c_copy["asset_id"])
+                    remapped_clips.append(c_copy)
+                trk_obj.clips_json = remapped_clips
+            for _original_row, seq_obj in restored_rows.get("timeline_sequences", []):
+                if isinstance(seq_obj.manifest_json, dict) and seq_obj.manifest_json:
+                    manifest_copy = dict(seq_obj.manifest_json)
+                    manifest_copy["sequence_id"] = seq_obj.id
+                    manifest_copy["project_id"] = seq_obj.project_id
+                    if isinstance(manifest_copy.get("video_clips"), list):
+                        v_clips: list[dict[str, Any]] = []
+                        for vc in manifest_copy["video_clips"]:
+                            if isinstance(vc, dict):
+                                vc_copy = dict(vc)
+                                if vc_copy.get("shot_id"):
+                                    vc_copy["shot_id"] = id_maps.get("shots", {}).get(vc_copy["shot_id"])
+                                if vc_copy.get("take_id"):
+                                    vc_copy["take_id"] = id_maps.get("shot_takes", {}).get(vc_copy["take_id"])
+                                if vc_copy.get("asset_id"):
+                                    vc_copy["asset_id"] = id_maps.get("assets", {}).get(vc_copy["asset_id"])
+                                v_clips.append(vc_copy)
+                        manifest_copy["video_clips"] = v_clips
+                    if isinstance(manifest_copy.get("audio_tracks"), list):
+                        a_tracks: list[dict[str, Any]] = []
+                        for at in manifest_copy["audio_tracks"]:
+                            if isinstance(at, dict):
+                                at_copy = dict(at)
+                                if at_copy.get("asset_id"):
+                                    at_copy["asset_id"] = id_maps.get("assets", {}).get(at_copy["asset_id"])
+                                a_tracks.append(at_copy)
+                        manifest_copy["audio_tracks"] = a_tracks
+                    seq_obj.manifest_json = manifest_copy
 
             await db.commit()
 

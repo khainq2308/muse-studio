@@ -119,6 +119,9 @@ class ConnectionService:
             raise ApplicationError(422, "Connection name cannot be blank.")
         if not base_url.startswith(("http://", "https://")):
             raise ApplicationError(422, "Base URL must start with http:// or https://.")
+        for existing in await self.repository.list_connections():
+            if existing.name.lower() == name.lower():
+                raise ApplicationError(409, f"Connection '{name}' already exists.")
         api_key = values.get("api_key")
         connection = ProviderConnection(
             id=f"conn_{uuid.uuid4().hex[:8]}",
@@ -263,13 +266,14 @@ class AssetService:
             raise ApplicationError(404, "Asset không tồn tại.")
         if asset.is_locked_reference and not force:
             raise ApplicationError(409, "Asset đang được khoá làm Reference.")
+        candidate = (self.storage.root_path / asset.storage_rel_path).resolve()
         try:
-            file_path: Path | None = self.storage.resolve_safe_path(asset.storage_rel_path)
-        except AssetStorageError as exc:
-            raise ApplicationError(500, "Stored asset path is invalid or missing.") from exc
+            candidate.relative_to(self.storage.root_path)
+        except ValueError as exc:
+            raise ApplicationError(500, "Stored asset path escaped the media root.") from exc
         shared_path = await self.repository.has_other_asset_with_storage_path(
             asset.storage_rel_path, asset.id
         )
         await self.repository.delete_asset(asset)
-        if not shared_path:
-            file_path.unlink(missing_ok=True)
+        if not shared_path and candidate.is_file():
+            candidate.unlink(missing_ok=True)

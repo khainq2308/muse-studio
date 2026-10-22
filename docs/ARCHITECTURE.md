@@ -44,9 +44,9 @@ The mock provider remains a demo/test seam and writes tiny valid PNG placeholder
 
 ## Timeline export
 
-POST /api/v1/projects/{id}/timeline/exports renders the sequence's real video clips with FFmpeg: each clip is trimmed, scaled and padded to the output frame, then joined with a hard cut (concat) or cross dissolve (xfade); timeline gaps are filled with black. The exporter runs off the event loop and then verifies the file with FFprobe (H.264 video, AAC audio, expected size, duration within tolerance). Clips must be video assets that belong to the same project.
+POST /api/v1/projects/{id}/timeline/exports validates the sequence's video clips, persists a QUEUED export job (202 Accepted) and hands the FFmpeg render to the ARQ worker (`process_export_job`). Each clip is trimmed, scaled and padded to the output frame, then joined with a hard cut (concat) or cross dissolve (xfade); timeline gaps are filled with black. The worker runs FFmpeg off the event loop and verifies the file with FFprobe (H.264 video, AAC audio, expected size, container and video stream duration within tolerance). Clips must be video assets that belong to the same project.
 
-An export that cannot produce a verified MP4 is never reported as successful: a missing FFmpeg/FFprobe (503), an FFmpeg failure or a failed verification (422) is stored as a FAILED export job, returned as an error, and creates no asset. The finished file is served by GET /api/v1/assets/{asset_id}/download.
+An export that cannot produce a verified MP4 is never reported as successful: a missing FFmpeg/FFprobe, an FFmpeg failure or a failed verification is recorded by the worker as a FAILED export job (polled via GET /api/v1/projects/{id}/timeline/exports/{export_id}) and creates no asset. The finished file is served by GET /api/v1/assets/{asset_id}/download.
 
 Not rendered yet, and listed as unsupported_features in every response of an export that reaches rendering (success, or a stored FAILED job): clip audio (the output carries a silent AAC track), title card, subtitles and extra audio tracks. Requests rejected before rendering (unknown sequence, clips without a project video) carry no such list.
 

@@ -398,6 +398,8 @@ async def upsert_story_bible_entry(
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> StoryBibleUpsertOut:
+    if not await repository.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
     existing = await repository.get_story_bible_entry(project_id, payload.code_name)
 
     if existing:
@@ -481,7 +483,22 @@ async def update_and_review_shot(
     if not shot or shot.project_id != project_id:
         raise HTTPException(status_code=404, detail="Không tìm thấy Shot trong dự án.")
 
-    for field_name, val in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "continuity_mode" in updates and updates["continuity_mode"] is not None:
+        if updates["continuity_mode"] not in ("standard", "frame_chain"):
+            raise HTTPException(status_code=422, detail="continuity_mode phải là 'standard' hoặc 'frame_chain'.")
+    if "previous_shot_id" in updates and updates["previous_shot_id"] is not None:
+        if updates["previous_shot_id"] == shot_id:
+            raise HTTPException(status_code=422, detail="Shot không thể trỏ previous_shot_id vào chính nó.")
+        prev_shot = await repository.get_shot(updates["previous_shot_id"])
+        if not prev_shot or prev_shot.project_id != project_id:
+            raise HTTPException(status_code=422, detail="previous_shot_id không thuộc dự án này.")
+    if "first_frame_asset_id" in updates and updates["first_frame_asset_id"] is not None:
+        ff_asset = await repository.get_asset(updates["first_frame_asset_id"])
+        if not ff_asset or ff_asset.project_id != project_id:
+            raise HTTPException(status_code=422, detail="first_frame_asset_id không thuộc dự án này.")
+
+    for field_name, val in updates.items():
         setattr(shot, field_name, val)
 
     await repository.commit_pipeline_changes()

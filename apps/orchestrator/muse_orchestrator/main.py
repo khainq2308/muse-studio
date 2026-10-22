@@ -4,9 +4,13 @@ from collections.abc import AsyncGenerator
 import logging
 from arq import create_pool
 from arq.connections import RedisSettings
+from typing import Any
 from fastapi import Depends, FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.core.config import SecretRedactor, settings
@@ -71,24 +75,88 @@ app.add_middleware(
 )
 
 
+_ERROR_STATUS_DEFAULTS: dict[int, tuple[str, bool]] = {
+    400: ("invalid_request", False),
+    401: ("auth_failed", False),
+    403: ("forbidden", False),
+    404: ("not_found", False),
+    409: ("conflict", False),
+    413: ("payload_too_large", False),
+    422: ("validation", False),
+    429: ("rate_limited", True),
+    500: ("internal_error", False),
+    502: ("upstream_5xx", True),
+    503: ("service_unavailable", True),
+    504: ("upstream_timeout", True),
+}
+
+
+def _error_envelope_response(
+    status_code: int,
+    detail: Any,
+    *,
+    category: str | None = None,
+    retryable: bool | None = None,
+) -> JSONResponse:
+    default_cat, default_retry = _ERROR_STATUS_DEFAULTS.get(
+        status_code,
+        ("upstream_5xx" if status_code >= 500 else "invalid_request", status_code in {502, 503, 504}),
+    )
+    if isinstance(detail, str):
+        safe_detail: Any = SecretRedactor.redact_text(detail)
+    elif isinstance(detail, dict):
+        safe_detail = SecretRedactor.redact_dict(detail)
+    else:
+        safe_detail = jsonable_encoder(detail)
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": safe_detail,
+            "category": category or default_cat,
+            "retryable": default_retry if retryable is None else retryable,
+        },
+    )
+
+
 @app.exception_handler(ApplicationError)
 async def application_error_handler(_request: Request, exc: ApplicationError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return _error_envelope_response(exc.status_code, exc.detail)
 
 
 @app.exception_handler(AssetStorageError)
-async def asset_storage_exception_handler(request: Request, exc: AssetStorageError) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        content={"detail": SecretRedactor.redact_text(str(exc))},
+async def asset_storage_exception_handler(_request: Request, exc: AssetStorageError) -> JSONResponse:
+    return _error_envelope_response(
+        status.HTTP_400_BAD_REQUEST,
+        str(exc),
+        category="invalid_request",
+        retryable=False,
     )
 
 
 @app.exception_handler(WorkflowValidationError)
-async def workflow_validation_exception_handler(request: Request, exc: WorkflowValidationError) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": SecretRedactor.redact_text(str(exc))},
+async def workflow_validation_exception_handler(_request: Request, exc: WorkflowValidationError) -> JSONResponse:
+    return _error_envelope_response(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        str(exc),
+        category="validation",
+        retryable=False,
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    return _error_envelope_response(exc.status_code, exc.detail)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    return _error_envelope_response(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        exc.errors(),
+        category="validation",
+        retryable=False,
     )
 
 

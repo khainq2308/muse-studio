@@ -122,8 +122,8 @@ async def test_diagnostics_bundle_is_redacted(client: AsyncClient):
     assert "summary" in bundle
     assert any(a["label"] == "diag-acct" for a in bundle["accounts"])
     assert bundle["recent_logs"], "expected the created log in diagnostics"
-    # masked values are present instead of raw secrets (format: first3...last4)
-    assert any("..." in (a.get("api_key_masked") or "") for a in bundle["accounts"])
+    # masked values are present instead of raw secrets
+    assert any("*" in (a.get("api_key_masked") or "") for a in bundle["accounts"])
 
 
 @pytest.mark.asyncio

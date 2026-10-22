@@ -97,8 +97,11 @@ async def update_account(
     service: ConnectionAccountService = Depends(get_account_service),
 ) -> AccountOut:
     await service.require_account_for_connection(connection_id, account_id)
+    raw_updates = payload.model_dump(exclude_unset=True)
     values: dict[str, Any] = {
-        key: value for key, value in payload.model_dump().items() if value is not None
+        key: value
+        for key, value in raw_updates.items()
+        if value is not None or key == "proxy_url"
     }
     account = await service.update_account(account_id, values)
     return _to_account_out(account)

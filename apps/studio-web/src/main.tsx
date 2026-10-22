@@ -20,9 +20,9 @@ const queryClient = new QueryClient({
 // Only authenticated resource data is session-scoped. Keep health/status queries intact.
 useSessionStore.subscribe((state, previousState) => {
   if (state.sessionVersion !== previousState.sessionVersion) {
-    queryClient.removeQueries({ queryKey: ["projects"] });
-    queryClient.removeQueries({ queryKey: ["connections"] });
-    queryClient.removeQueries({ queryKey: ["queue-tasks"] });
+    queryClient.removeQueries({
+      predicate: (query) => query.queryKey[0] !== "system",
+    });
   }
 });
 

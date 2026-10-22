@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 
 from muse_orchestrator.core.security import SecretVault, vault
-from muse_orchestrator.providers.base import ProviderFailure
+from muse_orchestrator.providers.base import ErrorCategory, ProviderFailure
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
 
 from muse_orchestrator.application.services import ApplicationError
@@ -212,7 +212,11 @@ class ConnectionAccountService:
             if health.healthy:
                 await provider.list_models()
         except ProviderFailure as exc:
-            account.health_state = ConnectionHealthState.DEGRADED
+            account.health_state = (
+                ConnectionHealthState.AUTH_ERROR
+                if exc.category == ErrorCategory.AUTH_FAILED
+                else ConnectionHealthState.DEGRADED
+            )
             account.last_error_redacted = SecretRedactor.redact_text(
                 str(exc), [raw_api_key or "", raw_proxy_url or ""]
             )

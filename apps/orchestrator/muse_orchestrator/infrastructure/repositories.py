@@ -122,14 +122,14 @@ class StudioRepository:
 
     async def get_workflow_version(
         self, workflow_id: str, version_number: int
-    ) -> WorkflowVersion:
+    ) -> WorkflowVersion | None:
         result = await self.session.execute(
             select(WorkflowVersion).where(
                 WorkflowVersion.workflow_id == workflow_id,
                 WorkflowVersion.version_number == version_number,
             )
         )
-        return result.scalar_one()
+        return result.scalar_one_or_none()
 
     async def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
         return await self.session.get(WorkflowRun, run_id)
