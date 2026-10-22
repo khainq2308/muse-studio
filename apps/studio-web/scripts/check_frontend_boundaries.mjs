@@ -309,6 +309,75 @@ for (const file of collectFiles(srcRoot)) {
   }
 }
 
+// The dev and preview servers proxy the (possibly unauthenticated) development API, so they
+// must default to loopback. Only docker-compose.yml may pass `--host 0.0.0.0` explicitly,
+// because it publishes the container port on the host's 127.0.0.1 only.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+function checkDevServerExposure() {
+  const packageJson = JSON.parse(readFileSync(path.join(appRoot, "package.json"), "utf8"));
+  for (const name of ["dev", "preview"]) {
+    const script = packageJson.scripts?.[name] ?? "";
+    const hostFlag = /--host(?:[=\s]+(\S+))?/.exec(script);
+    if (hostFlag && !LOOPBACK_HOSTS.has(hostFlag[1] ?? "")) {
+      failures.push(
+        `package.json: "${name}" must not expose Vite beyond loopback ("${script}"); ` +
+          "pass --host only from the Compose dev command.",
+      );
+    }
+  }
+
+  const configPath = path.join(appRoot, "vite.config.ts");
+  const config = ts.createSourceFile(
+    configPath,
+    readFileSync(configPath, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const constants = new Map();
+  const hosts = new Map();
+  function literalValue(node) {
+    if (ts.isStringLiteralLike(node)) return node.text;
+    if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+    if (ts.isIdentifier(node) && constants.has(node.text)) return constants.get(node.text);
+    return undefined;
+  }
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const value = literalValue(node.initializer);
+      if (value !== undefined) constants.set(node.name.text, value);
+    }
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name)) {
+      const parent = node.parent?.parent;
+      const section =
+        parent && ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name)
+          ? parent.name.text
+          : null;
+      if (node.name.text === "host" && (section === "server" || section === "preview")) {
+        hosts.set(section, literalValue(node.initializer));
+      }
+      if (node.name.text === "changeOrigin" && literalValue(node.initializer) === true) {
+        failures.push(
+          "vite.config.ts: proxy changeOrigin must stay disabled so the API's Host checks see " +
+            "the browser-facing host.",
+        );
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(config);
+  for (const section of ["server", "preview"]) {
+    if (!LOOPBACK_HOSTS.has(hosts.get(section))) {
+      failures.push(
+        `vite.config.ts: ${section}.host must be an explicit loopback literal ` +
+          `(found ${JSON.stringify(hosts.get(section) ?? null)}).`,
+      );
+    }
+  }
+}
+
+checkDevServerExposure();
+
 if (failures.length > 0) {
   console.error("Frontend boundary check failed:");
   for (const failure of failures) console.error(` - ${failure}`);

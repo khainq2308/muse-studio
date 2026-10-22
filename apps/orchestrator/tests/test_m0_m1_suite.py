@@ -11,19 +11,19 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.main import app
-from muse_orchestrator.core.config import SecretRedactor
-from muse_orchestrator.core.database import get_db
-from muse_orchestrator.models.domain import Base
-from muse_orchestrator.providers.base import classify_http_error
-from muse_orchestrator.services.prompt_compiler import (
+from muse_orchestrator.main import app  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.core.config import SecretRedactor  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.models.domain import Base  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.providers.base import classify_http_error  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.services.prompt_compiler import (  # noqa: E402 -- environment must be configured before app/database import
     PromptCompiler,
     ShotSpec,
     StyleBibleLock,
     CharacterLock,
     LocationLock,
 )
-from muse_orchestrator.services.workflow_engine import (
+from muse_orchestrator.services.workflow_engine import (  # noqa: E402 -- environment must be configured before app/database import
     WorkflowEngine,
     WorkflowNodeDef,
     WorkflowEdgeDef,

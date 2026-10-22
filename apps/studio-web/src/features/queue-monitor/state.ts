@@ -45,6 +45,24 @@ export const QUEUE_TASK_STATE_TONES: Record<QueueTaskState, string> = {
   canceled: "border border-border bg-muted text-muted-foreground",
 };
 
+const UNKNOWN_STATE_TONE = "border border-border bg-muted text-muted-foreground";
+
+/**
+ * Label for a task state. A newer backend may add a state before the client is regenerated;
+ * show the raw value rather than an empty badge.
+ */
+export function queueTaskStateLabel(state: QueueTaskState): string {
+  return Object.prototype.hasOwnProperty.call(QUEUE_TASK_STATE_LABELS, state)
+    ? QUEUE_TASK_STATE_LABELS[state]
+    : `Unknown state (${String(state) || "empty"})`;
+}
+
+export function queueTaskStateTone(state: QueueTaskState): string {
+  return Object.prototype.hasOwnProperty.call(QUEUE_TASK_STATE_TONES, state)
+    ? QUEUE_TASK_STATE_TONES[state]
+    : UNKNOWN_STATE_TONE;
+}
+
 export const QUEUE_POLL_WINDOW_MS = 30 * 60 * 1_000;
 
 export function isQueueTaskActive(state: QueueTaskState): boolean {
@@ -58,19 +76,35 @@ export function getQueuePollIntervalMs(elapsedMs: number): number | false {
   return 10_000;
 }
 
+/** Slowest backoff step; used while a retryable refresh error is being ridden out. */
+export const QUEUE_ERROR_POLL_INTERVAL_MS = 10_000;
+
+export type QueueQueryStatus = "pending" | "error" | "success";
+
 /**
  * Poll while at least one task can still progress, with a bounded 30-minute window.
  * Paused tasks do not keep polling; terminal tasks never keep polling by themselves.
+ * After a retryable error (network failure, timeout, 429, transient 5xx) polling continues at
+ * the slowest interval so a brief outage does not freeze the monitor; a non-retryable error
+ * (auth, validation, not found) stops polling until the user refreshes or retries.
  */
-export type QueueQueryStatus = "pending" | "error" | "success";
-
 export function getQueueRefetchInterval(
   states: readonly QueueTaskState[] | undefined,
   elapsedMs: number,
   queryStatus: QueueQueryStatus = states === undefined ? "pending" : "success",
   projectActiveCount?: number,
+  errorIsRetryable = false,
 ): number | false {
-  if (queryStatus === "error") return false;
+  if (queryStatus === "error") {
+    if (!errorIsRetryable) return false;
+    const interval = getQueueRefetchInterval(
+      states,
+      elapsedMs,
+      states === undefined ? "pending" : "success",
+      projectActiveCount,
+    );
+    return interval === false ? false : Math.max(interval, QUEUE_ERROR_POLL_INTERVAL_MS);
+  }
 
   const interval = getQueuePollIntervalMs(elapsedMs);
   if (interval === false) return false;

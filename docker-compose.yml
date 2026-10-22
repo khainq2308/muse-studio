@@ -99,6 +99,9 @@ services:
       dockerfile: Dockerfile
     container_name: muse-studio-web
     restart: unless-stopped
+    # Vite defaults to loopback. Inside the container it must listen on all interfaces so the
+    # published port works; the port below is bound to the host's 127.0.0.1 only.
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     environment:
       # Browser requests stay same-origin; Vite makes the upstream request inside Compose.
       VITE_ORCHESTRATOR_URL: "."

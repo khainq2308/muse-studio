@@ -2,10 +2,12 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  notFound,
   Outlet,
-  redirect,
+  rootRouteId,
 } from "@tanstack/react-router";
 import AppShell from "@/app/app-shell";
+import NotFoundPage from "@/app/not-found-page";
 import ProjectModuleRoute from "@/app/project-module-route";
 import { isProjectModule } from "@/app/project-modules";
 import OverviewPage from "@/features/workspace-overview/pages/overview-page";
@@ -13,9 +15,8 @@ import OverviewPage from "@/features/workspace-overview/pages/overview-page";
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
   notFoundComponent: () => (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-3 px-6 py-12">
-      <h1 className="text-2xl font-semibold">404 - Page not found</h1>
-      <p className="text-muted-foreground">The page you requested doesn't exist.</p>
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-12">
+      <NotFoundPage />
     </main>
   ),
 });
@@ -36,8 +37,9 @@ const projectModuleRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: "/projects/$projectId/$module",
   beforeLoad: ({ params }) => {
+    // Unknown modules get the same 404 page as any other unknown URL.
     if (!isProjectModule(params.module)) {
-      throw redirect({ to: "/" });
+      throw notFound({ routeId: rootRouteId });
     }
   },
   component: ProjectModuleRoute,

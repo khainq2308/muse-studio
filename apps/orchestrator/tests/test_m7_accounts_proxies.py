@@ -12,16 +12,16 @@ _TEMP_MEDIA_DIR = tempfile.mkdtemp(prefix="muse_m7_acct_test_")
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["MEDIA_ROOT"] = _TEMP_MEDIA_DIR
 
-from muse_orchestrator.core.database import get_db
+from muse_orchestrator.core.database import get_db  # noqa: E402 -- environment must be configured before app/database import
 
-from muse_orchestrator.main import app
-from muse_orchestrator.models.domain import (
+from muse_orchestrator.main import app  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.models.domain import (  # noqa: E402 -- environment must be configured before app/database import
     Base,
     ConnectionAccount,
     ConnectionHealthState,
 )
-from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
-from muse_orchestrator.services.account_pool import (
+from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter  # noqa: E402 -- environment must be configured before app/database import
+from muse_orchestrator.services.account_pool import (  # noqa: E402 -- environment must be configured before app/database import
     build_provider_for_account,
     resolve_task_account,
     select_account,

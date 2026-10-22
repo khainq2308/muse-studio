@@ -1,7 +1,25 @@
+# Container hardening (all limits can be overridden from the environment / .env):
+# - every service: no-new-privileges, a memory limit and a PID (process + thread) limit;
+# - cap_drop ALL everywhere. The postgres and redis entrypoints start as root to fix data
+#   directory ownership and then switch users, so they get back exactly the capabilities
+#   that needs (verified with fresh volumes on postgres:16-alpine and redis:7-alpine);
+# - read_only root filesystem only for studio-web (nginx). The orchestrator is not read-only:
+#   FastAPI spools multipart uploads/restores (up to ~520 MiB) to /tmp, and a tmpfs would
+#   count those bytes against the container memory limit.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
   postgres:
+    <<: *hardening
     image: postgres:16-alpine
     restart: unless-stopped
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    pids_limit: ${POSTGRES_PIDS_LIMIT:-256}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-muse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in .env}
@@ -16,8 +34,12 @@ services:
     networks: [backend]
 
   redis:
+    <<: *hardening
     image: redis:7-alpine
     restart: unless-stopped
+    cap_add: [CHOWN, SETUID, SETGID]
+    mem_limit: ${REDIS_MEM_LIMIT:-512m}
+    pids_limit: ${REDIS_PIDS_LIMIT:-64}
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -29,10 +51,13 @@ services:
     networks: [backend]
 
   orchestrator-api:
+    <<: *hardening
     build:
       context: .
       dockerfile: apps/orchestrator/Dockerfile.prod
     restart: unless-stopped
+    mem_limit: ${ORCHESTRATOR_API_MEM_LIMIT:-2g}
+    pids_limit: ${ORCHESTRATOR_API_PIDS_LIMIT:-512}
     environment: &orchestrator-env
       ENVIRONMENT: production
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-muse}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-musestudio}
@@ -50,7 +75,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      # Liveness only (the process answers HTTP). Switch to /readyz (DB + Redis) once the
+      # orchestrator exposes that route.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2)"]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -58,10 +85,14 @@ services:
     networks: [backend]
 
   orchestrator-worker:
+    <<: *hardening
     build:
       context: .
       dockerfile: apps/orchestrator/Dockerfile.prod
     restart: unless-stopped
+    # FFmpeg exports are multi-threaded; every thread counts against pids_limit.
+    mem_limit: ${ORCHESTRATOR_WORKER_MEM_LIMIT:-2g}
+    pids_limit: ${ORCHESTRATOR_WORKER_PIDS_LIMIT:-1024}
     command: ["arq", "muse_orchestrator.workers.queue_worker.WorkerSettings"]
     environment: *orchestrator-env
     volumes:
@@ -73,20 +104,46 @@ services:
         condition: service_healthy
       orchestrator-api:
         condition: service_healthy
+    healthcheck:
+      # `arq --check` exits non-zero unless the worker's Redis health-check key exists. The
+      # worker writes it at start-up and then every health_check_interval (arq default 3600 s,
+      # key TTL interval + 1 s), so this detects a dead or long-wedged worker.
+      test: ["CMD", "arq", "--check", "muse_orchestrator.workers.queue_worker.WorkerSettings"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
     networks: [backend]
 
   studio-web:
+    <<: *hardening
     build:
       context: ./apps/studio-web
       dockerfile: Dockerfile.prod
       args:
         VITE_ORCHESTRATOR_URL: "."
     restart: unless-stopped
+    mem_limit: ${STUDIO_WEB_MEM_LIMIT:-256m}
+    pids_limit: ${STUDIO_WEB_PIDS_LIMIT:-128}
+    # nginx runs as the non-root "nginx" user (uid/gid 101) and only writes its PID file,
+    # request-body temp files and /tmp. Large API responses are streamed
+    # (proxy_max_temp_file_size 0) and large upload bodies are not buffered.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,uid=101,gid=101
+      - /var/cache/nginx:size=64m,uid=101,gid=101
+      - /var/run:size=1m,uid=101,gid=101
     ports:
       - "127.0.0.1:${STUDIO_WEB_PORT:-8080}:8080"
     depends_on:
       orchestrator-api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/index.html"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     networks: [backend]
 
 networks:

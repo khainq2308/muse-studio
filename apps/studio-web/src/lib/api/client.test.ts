@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  LONG_REQUEST_TIMEOUT_MS,
   apiDelete,
   apiGet,
   apiPatch,
@@ -88,14 +90,84 @@ describe("API client", () => {
     expect(window.localStorage.length).toBe(0);
   });
 
-  it("passes AbortSignal through to fetch", async () => {
+  it("propagates the caller's AbortSignal to fetch and rejects as an abort", async () => {
     const controller = new AbortController();
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse([]));
+    let fetchSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn<typeof fetch>((_url, init) => {
+      fetchSignal = init?.signal ?? undefined;
+      return new Promise<Response>(() => undefined);
+    });
     vi.stubGlobal("fetch", fetchMock);
 
-    await apiGet("/api/v1/projects", { signal: controller.signal });
+    const request = apiGet("/api/v1/projects", { signal: controller.signal });
+    expect(fetchSignal?.aborted).toBe(false);
+    controller.abort();
 
-    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    await expect(request).rejects.not.toBeInstanceOf(ApiError);
+    expect(fetchSignal?.aborted).toBe(true);
+  });
+
+  it("times out a request that never resolves with a retryable timeout ApiError", async () => {
+    vi.useFakeTimers();
+    let fetchSignal: AbortSignal | undefined;
+    // Simulates a hung upstream that also ignores AbortSignal.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((_url, init) => {
+        fetchSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => undefined);
+      }),
+    );
+
+    const request = apiGet("/api/v1/projects");
+    const settled = vi.fn();
+    request.then(settled, settled);
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS - 1);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    const error = await request.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 0, category: "timeout", retryable: true });
+    expect(fetchSignal?.aborted).toBe(true);
+  });
+
+  it("applies the timeout to a stalled response body and honors a per-call override", async () => {
+    vi.useFakeTimers();
+    const stalledBody = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: () => new Promise(() => undefined),
+    } as unknown as Response;
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(stalledBody));
+
+    const request = apiGet("/api/v1/projects", { timeoutMs: 1_000 });
+    const outcome = request.catch((reason: unknown) => reason);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(outcome).resolves.toMatchObject({ category: "timeout", retryable: true });
+  });
+
+  it("gives multipart uploads the long timeout by default", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() => new Promise<Response>(() => undefined)),
+    );
+    const form = new FormData();
+    form.append("file", new Blob(["zip"]), "backup.zip");
+
+    const request = apiRequest("/api/v1/backups/restore", { method: "POST", body: form });
+    const settled = vi.fn();
+    request.then(settled, settled);
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS * 2);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(LONG_REQUEST_TIMEOUT_MS);
+    await expect(request).rejects.toMatchObject({ category: "timeout" });
   });
 
   it("sends the expected HTTP methods and JSON bodies", async () => {

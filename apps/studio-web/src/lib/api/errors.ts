@@ -18,6 +18,9 @@ export function authErrorMessage(
   resource: string,
 ): string {
   if (!isAuthError(error)) {
+    if (error instanceof ApiError && error.category === "timeout") {
+      return `Loading ${resource} timed out. Check the Orchestrator and retry.`;
+    }
     return `Could not load ${resource}. Check the Orchestrator and retry.`;
   }
 
@@ -29,14 +32,22 @@ export function authErrorMessage(
   return `The configured admin token was rejected while reading ${resource}. Update the token and reconnect.`;
 }
 
-export function shouldRetryApiRequest(failureCount: number, error: unknown): boolean {
-  if (failureCount >= MAX_RETRIES) return false;
+/**
+ * Whether a failed request may succeed if repeated unchanged: network failures, timeouts,
+ * rate limits and transient gateway errors. Auth, validation and not-found errors are final.
+ */
+export function isRetryableApiError(error: unknown): boolean {
   if (!(error instanceof ApiError)) return true;
   if (NON_RETRYABLE_HTTP_STATUSES.has(error.status)) return false;
   if (error.retryable !== undefined) return error.retryable;
   if (error.status === 429) return true;
   if (error.status >= 500) return TRANSIENT_SERVER_STATUSES.has(error.status);
   return true;
+}
+
+export function shouldRetryApiRequest(failureCount: number, error: unknown): boolean {
+  if (failureCount >= MAX_RETRIES) return false;
+  return isRetryableApiError(error);
 }
 
 /** TanStack Query retryDelay: honor Retry-After (bounded), else exponential backoff. */

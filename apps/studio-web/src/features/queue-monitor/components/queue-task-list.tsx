@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Pause, Play, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  QUEUE_TASK_STATE_LABELS,
-  QUEUE_TASK_STATE_TONES,
   QUEUE_TERMINAL_TASK_STATES,
+  queueTaskStateLabel,
+  queueTaskStateTone,
   type QueueTask,
   type QueueTaskAction,
 } from "@/features/queue-monitor/state";
@@ -12,17 +12,47 @@ import { cn } from "@/lib/utils";
 
 interface QueueTaskListProps {
   tasks: QueueTask[];
-  busyTaskId: string | null;
+  /** Tasks with an in-flight pause/resume/cancel request. */
+  busyTaskIds: ReadonlySet<string>;
   onAction: (taskId: string, action: QueueTaskAction) => void;
 }
 
-export function QueueTaskList({ tasks, busyTaskId, onAction }: QueueTaskListProps) {
+export function QueueTaskList({ tasks, busyTaskIds, onAction }: QueueTaskListProps) {
   const [cancelConfirmationId, setCancelConfirmationId] = useState<string | null>(null);
+  const cancelButtons = useRef(new Map<string, HTMLButtonElement>());
+  const keepTaskButton = useRef<HTMLButtonElement | null>(null);
+  const returnFocusTo = useRef<string | null>(null);
+
+  const openCancelConfirmation = (taskId: string) => {
+    returnFocusTo.current = null;
+    setCancelConfirmationId(taskId);
+  };
+  const dismissCancelConfirmation = useCallback((taskId: string) => {
+    returnFocusTo.current = taskId;
+    setCancelConfirmationId(null);
+  }, []);
+
+  useEffect(() => {
+    if (cancelConfirmationId) {
+      // Start on the safe choice so Enter/Space cannot cancel the task by accident.
+      keepTaskButton.current?.focus();
+      return;
+    }
+    const taskId = returnFocusTo.current;
+    returnFocusTo.current = null;
+    if (taskId) cancelButtons.current.get(taskId)?.focus();
+  }, [cancelConfirmationId]);
+
+  const onConfirmationKeyDown = (event: KeyboardEvent<HTMLDivElement>, taskId: string) => {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    dismissCancelConfirmation(taskId);
+  };
 
   return (
     <div className="space-y-3">
       {tasks.map((task) => {
-        const busy = busyTaskId === task.id;
+        const busy = busyTaskIds.has(task.id);
         const canPause = task.state === "queued" || task.state === "running";
         const canResume = task.state === "paused";
         const canCancel = !QUEUE_TERMINAL_TASK_STATES.includes(task.state);
@@ -42,10 +72,10 @@ export function QueueTaskList({ tasks, busyTaskId, onAction }: QueueTaskListProp
                     data-testid="queue-task-state"
                     className={cn(
                       "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium",
-                      QUEUE_TASK_STATE_TONES[task.state],
+                      queueTaskStateTone(task.state),
                     )}
                   >
-                    {QUEUE_TASK_STATE_LABELS[task.state]}
+                    {queueTaskStateLabel(task.state)}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -90,8 +120,13 @@ export function QueueTaskList({ tasks, busyTaskId, onAction }: QueueTaskListProp
                     variant="outline"
                     size="sm"
                     aria-label={`Cancel task ${task.id}`}
+                    aria-haspopup="dialog"
                     disabled={busy}
-                    onClick={() => setCancelConfirmationId(task.id)}
+                    ref={(element) => {
+                      if (element) cancelButtons.current.set(task.id, element);
+                      else cancelButtons.current.delete(task.id);
+                    }}
+                    onClick={() => openCancelConfirmation(task.id)}
                   >
                     <XCircle className="mr-1 size-4" aria-hidden="true" />
                     Cancel
@@ -155,14 +190,16 @@ export function QueueTaskList({ tasks, busyTaskId, onAction }: QueueTaskListProp
 
             {cancelConfirmationId === task.id && canCancel && (
               <div
-                role="group"
+                role="alertdialog"
                 aria-label={`Confirm cancellation for task ${task.id}`}
+                aria-describedby={`cancel-confirmation-${task.id}`}
+                onKeyDown={(event) => onConfirmationKeyDown(event, task.id)}
                 className={cn(
                   "mt-4 flex flex-col gap-3 rounded-lg border border-destructive/30",
                   "bg-destructive/5 p-3 sm:flex-row sm:items-center sm:justify-between",
                 )}
               >
-                <p className="text-sm">
+                <p id={`cancel-confirmation-${task.id}`} className="text-sm">
                   Cancel this task? This cannot be undone and may stop generation.
                 </p>
                 <div className="flex items-center gap-2">
@@ -171,7 +208,7 @@ export function QueueTaskList({ tasks, busyTaskId, onAction }: QueueTaskListProp
                     size="sm"
                     disabled={busy}
                     onClick={() => {
-                      setCancelConfirmationId(null);
+                      dismissCancelConfirmation(task.id);
                       onAction(task.id, "cancel");
                     }}
                   >
@@ -181,7 +218,8 @@ export function QueueTaskList({ tasks, busyTaskId, onAction }: QueueTaskListProp
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setCancelConfirmationId(null)}
+                    ref={keepTaskButton}
+                    onClick={() => dismissCancelConfirmation(task.id)}
                   >
                     Keep task
                   </Button>

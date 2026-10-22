@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useRef } from "react";
 import { apiGet, apiPost } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
 import {
@@ -8,6 +8,7 @@ import {
   type QueueTaskAction,
   type QueueTaskFilter,
 } from "@/features/queue-monitor/state";
+import { isRetryableApiError } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 export function useQueueTasks(projectId: string, stateFilter: QueueTaskFilter, offset: number) {
@@ -41,6 +42,7 @@ export function useQueueTasks(projectId: string, stateFilter: QueueTaskFilter, o
         stateFilter === "all" || stateFilter === "queued" || stateFilter === "running"
           ? query.state.data?.summary.active_tasks
           : undefined,
+        query.state.status === "error" && isRetryableApiError(query.state.error),
       ),
     refetchIntervalInBackground: false,
   });
@@ -69,7 +71,9 @@ export function useQueueTaskAction(projectId: string, onActionSettled?: () => vo
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const queryClient = useQueryClient();
 
+  const mutationKey = queryKeys.queueTaskActions(sessionVersion, projectId);
   const mutation = useMutation({
+    mutationKey,
     mutationFn: ({ taskId, action }: QueueTaskActionScope) =>
       apiPost(ACTION_PATHS[action], undefined, {
         pathParams: { task_id: taskId },
@@ -82,11 +86,23 @@ export function useQueueTaskAction(projectId: string, onActionSettled?: () => vo
     },
   });
 
+  // useMutation only tracks its latest call; read every in-flight action for this project so
+  // concurrent actions on different tasks each keep their own busy state.
+  const pendingTaskIdList = useMutationState({
+    filters: { mutationKey, status: "pending" },
+    select: (pending) => (pending.state.variables as QueueTaskActionScope | undefined)?.taskId,
+  });
+  const pendingTaskIdKey = pendingTaskIdList.filter(Boolean).sort().join("\u0000");
+  const pendingTaskIds = useMemo<ReadonlySet<string>>(
+    () => new Set(pendingTaskIdKey ? pendingTaskIdKey.split("\u0000") : []),
+    [pendingTaskIdKey],
+  );
+
   const { mutate: rawMutate } = mutation;
   const mutate = useCallback(
     (variables: QueueTaskActionVariables) => rawMutate({ ...variables, projectId, sessionVersion }),
     [projectId, rawMutate, sessionVersion],
   );
 
-  return { ...mutation, mutate };
+  return { ...mutation, mutate, pendingTaskIds };
 }

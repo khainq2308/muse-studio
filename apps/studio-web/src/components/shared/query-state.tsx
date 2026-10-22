@@ -6,6 +6,11 @@ interface QueryStateProps {
   isLoading: boolean;
   isError: boolean;
   isEmpty: boolean;
+  /**
+   * Previously loaded data is still available. A failed background refresh then shows an
+   * inline alert above the last data instead of replacing it.
+   */
+  hasData?: boolean;
   loadingMessage: string;
   errorMessage: string;
   emptyTitle: string;
@@ -18,6 +23,7 @@ export function QueryState({
   isLoading,
   isError,
   isEmpty,
+  hasData = false,
   loadingMessage,
   errorMessage,
   emptyTitle,
@@ -34,32 +40,44 @@ export function QueryState({
     );
   }
 
-  if (isError) {
-    return (
-      <div
-        role="alert"
-        className="flex flex-col items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4"
-      >
-        <div className="flex items-start gap-2 text-sm text-muted-foreground">
-          <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
-          <p>{errorMessage}</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          <RefreshCw aria-hidden="true" />
-          Retry
-        </Button>
+  const errorAlert = isError ? (
+    <div
+      role="alert"
+      className="flex flex-col items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4"
+    >
+      <div className="flex items-start gap-2 text-sm text-muted-foreground">
+        <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+        <p>
+          {hasData && "Refresh failed; showing the last loaded results. "}
+          {errorMessage}
+        </p>
       </div>
-    );
-  }
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        <RefreshCw aria-hidden="true" />
+        Retry
+      </Button>
+    </div>
+  ) : null;
+
+  if (isError && !hasData) return errorAlert;
 
   if (isEmpty) {
     return (
-      <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
-        <p className="text-sm font-medium">{emptyTitle}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
+      <div className="space-y-3">
+        {errorAlert}
+        <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
+          <p className="text-sm font-medium">{emptyTitle}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
+        </div>
       </div>
     );
   }
 
-  return children;
+  if (!errorAlert) return children;
+  return (
+    <div className="space-y-3">
+      {errorAlert}
+      {children}
+    </div>
+  );
 }
