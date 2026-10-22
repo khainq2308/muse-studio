@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -204,10 +205,12 @@ _ERROR_RESPONSE_DESCRIPTIONS = {
 }
 _COMMON_ERROR_RESPONSES = {
     code: {
-        "model": ErrorEnvelope,
         "description": description,
-        # Make the actual JSON error payload explicit in OpenAPI as well as at runtime.
-        "content": {"application/json": {}},
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+            }
+        },
     }
     for code, description in _ERROR_RESPONSE_DESCRIPTIONS.items()
 }
@@ -224,6 +227,21 @@ app.include_router(metrics_router, dependencies=_protected_dependencies, respons
 app.include_router(maintenance_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
 app.include_router(backups_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
 app.include_router(system_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+
+
+def _custom_openapi() -> dict[str, Any]:
+    """Publish the same ErrorEnvelope component used by the shared error responses."""
+    if app.openapi_schema is not None:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    schema.setdefault("components", {}).setdefault("schemas", {})["ErrorEnvelope"] = (
+        ErrorEnvelope.model_json_schema()
+    )
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
 
 
 @app.get("/healthz", responses=_COMMON_ERROR_RESPONSES)
