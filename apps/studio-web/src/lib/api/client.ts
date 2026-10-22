@@ -27,10 +27,71 @@ type ApiPathParams<Path extends ApiGetPath> = Path extends keyof paths
     : Record<never, never>
   : Record<never, never>;
 
-type ApiGetOptions = Omit<ApiRequestOptions, "method" | "body" | "pathParams">;
+type ApiQueryParams<Path extends ApiGetPath> = Path extends keyof paths
+  ? ApiOperation<Path, "get"> extends { parameters: { query?: infer Query } }
+    ? Exclude<Query, undefined>
+    : never
+  : never;
+
+type ApiGetOptions<Path extends ApiGetPath> = Omit<
+  ApiRequestOptions,
+  "method" | "body" | "pathParams" | "query"
+> & {
+  query?: ApiQueryParams<Path>;
+};
 type ApiGetArguments<Path extends ApiGetPath> = keyof ApiPathParams<Path> extends never
-  ? [options?: ApiGetOptions]
-  : [options: ApiGetOptions & { pathParams: ApiPathParams<Path> }];
+  ? [options?: ApiGetOptions<Path>]
+  : [options: ApiGetOptions<Path> & { pathParams: ApiPathParams<Path> }];
+
+type ApiPostPath = {
+  [Path in keyof paths]: paths[Path] extends { post: infer Operation }
+    ? [JsonSuccessBody<NonNullable<Operation>>] extends [never]
+      ? never
+      : Path
+    : never;
+}[keyof paths] &
+  string;
+
+type ApiPostPathParams<Path extends ApiPostPath> = Path extends keyof paths
+  ? ApiOperation<Path, "post"> extends { parameters: { path: infer Params } }
+    ? Params
+    : Record<never, never>
+  : Record<never, never>;
+
+type ApiPostQueryParams<Path extends ApiPostPath> = Path extends keyof paths
+  ? ApiOperation<Path, "post"> extends { parameters: { query?: infer Query } }
+    ? Exclude<Query, undefined>
+    : never
+  : never;
+
+type JsonRequestBody<Operation> = Operation extends { requestBody: infer RequestBody }
+  ? RequestBody extends { content: infer Content }
+    ? Content extends { "application/json": infer Body }
+      ? Body
+      : never
+    : never
+  : never;
+
+type ApiPostOptions<Path extends ApiPostPath> = Omit<
+  ApiRequestOptions,
+  "method" | "body" | "pathParams" | "query"
+> & {
+  query?: ApiPostQueryParams<Path>;
+  pathParams?: ApiPostPathParams<Path>;
+};
+
+type ApiPostArguments<Path extends ApiPostPath> = [
+  JsonRequestBody<ApiOperation<Path, "post">>,
+] extends [never]
+  ? keyof ApiPostPathParams<Path> extends never
+    ? [body?: undefined, options?: ApiPostOptions<Path>]
+    : [body: undefined, options: ApiPostOptions<Path> & { pathParams: ApiPostPathParams<Path> }]
+  : keyof ApiPostPathParams<Path> extends never
+    ? [body: JsonRequestBody<ApiOperation<Path, "post">>, options?: ApiPostOptions<Path>]
+    : [
+        body: JsonRequestBody<ApiOperation<Path, "post">>,
+        options: ApiPostOptions<Path> & { pathParams: ApiPostPathParams<Path> },
+      ];
 
 type JsonSuccessBody<Operation> = Operation extends { responses: infer Responses }
   ? {
@@ -333,12 +394,16 @@ export async function apiGetText(
   return response.text();
 }
 
-export function apiPost<T>(
-  path: string,
-  body?: unknown,
-  options: Omit<ApiRequestOptions, "method" | "body"> = {},
-) {
-  return apiRequest<T>(path, { ...options, method: "POST", body });
+export function apiPost<Path extends ApiPostPath>(
+  path: Path,
+  ...args: ApiPostArguments<Path>
+): Promise<ApiJsonResponse<Path, "post">> {
+  const [body, options = {}] = args as unknown as [unknown?, ApiRequestOptions?];
+  return apiRequest<ApiJsonResponse<Path, "post">>(path, {
+    ...options,
+    method: "POST",
+    body,
+  });
 }
 
 export function apiPut<T>(

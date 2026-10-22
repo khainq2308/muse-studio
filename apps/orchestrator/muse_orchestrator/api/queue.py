@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from muse_orchestrator.api.dependencies import get_studio_repository
 from muse_orchestrator.infrastructure.repositories import StudioRepository
@@ -58,6 +58,21 @@ class QueueTaskOut(BaseModel):
 
 class EnqueuedQueueTaskOut(QueueTaskOut):
     created_new: bool
+
+
+class QueueTaskSummaryOut(BaseModel):
+    total_tasks: int
+    active_tasks: int
+    failed_tasks: int
+
+
+class QueueTaskPageOut(BaseModel):
+    items: list[QueueTaskOut]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    summary: QueueTaskSummaryOut
 
 
 class ShotTakeOut(BaseModel):
@@ -151,25 +166,43 @@ async def enqueue_generation_task(
     return out
 
 
-@router.get("/tasks", response_model=list[QueueTaskOut])
+@router.get("/tasks", response_model=QueueTaskPageOut)
 async def list_queue_tasks(
     project_id: str | None = None,
     connection_id: str | None = None,
     state: QueueTaskState | None = None,
     model_id: str | None = None,
     account_used: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     repository: StudioRepository = Depends(get_studio_repository),
-) -> list[QueueTaskOut]:
-    state_filter = state
-
+    actor: str = Depends(verify_single_admin),
+) -> QueueTaskPageOut:
     rows = await repository.list_queue_tasks(
         project_id=project_id,
         connection_id=connection_id,
-        state=state_filter,
+        state=state,
+        model_id=model_id,
+        account_used=account_used,
+        limit=limit,
+        offset=offset,
+    )
+    total = await repository.count_queue_tasks(
+        project_id=project_id,
+        connection_id=connection_id,
+        state=state,
         model_id=model_id,
         account_used=account_used,
     )
-    return [_serialize_task(r) for r in rows]
+    summary = await repository.summarize_queue_tasks(project_id=project_id)
+    return {
+        "items": [_serialize_task(row) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(rows) < total,
+        "summary": summary,
+    }
 
 
 @router.post("/tasks/{task_id}/step", response_model=QueueTaskOut)
@@ -192,10 +225,14 @@ async def pause_task(task_id: str, repository: StudioRepository = Depends(get_st
     task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
-    if task.state in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
-        task.state = QueueTaskState.PAUSED
-        task.history_log = list(task.history_log or []) + ["Paused by operator."]
-        await repository.save_queue_task(task)
+    if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot pause a task in state '{task.state.value}'.",
+        )
+    task.state = QueueTaskState.PAUSED
+    task.history_log = list(task.history_log or []) + ["Paused by operator."]
+    await repository.save_queue_task(task)
     return _serialize_task(task)
 
 
@@ -204,10 +241,14 @@ async def resume_task(task_id: str, request: Request, repository: StudioReposito
     task = await repository.get_generation_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
-    if task.state == QueueTaskState.PAUSED:
-        task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
-        task.history_log = list(task.history_log or []) + ["Resumed by operator."]
-        await repository.save_queue_task(task)
+    if task.state != QueueTaskState.PAUSED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot resume a task in state '{task.state.value}'.",
+        )
+    task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
+    task.history_log = list(task.history_log or []) + ["Resumed by operator."]
+    await repository.save_queue_task(task)
     await schedule_generation_task(request, task)
     return _serialize_task(task)
 
@@ -223,8 +264,10 @@ async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_s
         QueueTaskState.CANCELED,
         QueueTaskState.POLL_TIMEOUT,
     ):
-        # Do not rewrite a finished task (and its shot) into CANCELED.
-        return _serialize_task(task)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot cancel a task in terminal state '{task.state.value}'.",
+        )
     task.state = QueueTaskState.CANCELED
     task.finished_at = datetime.now(timezone.utc)
     shot = await repository.get_shot(task.shot_id)
@@ -236,7 +279,11 @@ async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_s
 
 
 @router.get("/shots/{shot_id}/takes", response_model=list[ShotTakeOut])
-async def list_shot_takes(shot_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[ShotTakeOut]:
+async def list_shot_takes(
+    shot_id: str,
+    repository: StudioRepository = Depends(get_studio_repository),
+    actor: str = Depends(verify_single_admin),
+) -> list[ShotTakeOut]:
     rows = await repository.list_shot_takes(shot_id)
     return [
         {

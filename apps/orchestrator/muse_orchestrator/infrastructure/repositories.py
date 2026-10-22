@@ -276,10 +276,12 @@ class StudioRepository:
         state: QueueTaskState | None = None,
         model_id: str | None = None,
         account_used: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[GenerationTaskRecord]:
         stmt = select(GenerationTaskRecord).order_by(
-            GenerationTaskRecord.priority.desc(),
             GenerationTaskRecord.created_at.desc(),
+            GenerationTaskRecord.id.desc(),
         )
         if project_id:
             stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
@@ -291,8 +293,51 @@ class StudioRepository:
             stmt = stmt.where(GenerationTaskRecord.model_id == model_id)
         if account_used:
             stmt = stmt.where(GenerationTaskRecord.account_used == account_used)
-        result = await self.session.execute(stmt)
+        result = await self.session.execute(stmt.limit(limit).offset(offset))
         return list(result.scalars().all())
+
+    async def count_queue_tasks(
+        self,
+        *,
+        project_id: str | None = None,
+        connection_id: str | None = None,
+        state: QueueTaskState | None = None,
+        model_id: str | None = None,
+        account_used: str | None = None,
+    ) -> int:
+        stmt = select(func.count(GenerationTaskRecord.id))
+        if project_id:
+            stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
+        if connection_id:
+            stmt = stmt.where(GenerationTaskRecord.connection_id == connection_id)
+        if state is not None:
+            stmt = stmt.where(GenerationTaskRecord.state == state)
+        if model_id:
+            stmt = stmt.where(GenerationTaskRecord.model_id == model_id)
+        if account_used:
+            stmt = stmt.where(GenerationTaskRecord.account_used == account_used)
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def summarize_queue_tasks(self, *, project_id: str | None = None) -> dict[str, int]:
+        stmt = select(GenerationTaskRecord.state, func.count(GenerationTaskRecord.id)).group_by(
+            GenerationTaskRecord.state
+        )
+        if project_id:
+            stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
+        result = await self.session.execute(stmt)
+        by_state = {state.value: int(count) for state, count in result.all()}
+        active = by_state.get(QueueTaskState.QUEUED.value, 0) + by_state.get(
+            QueueTaskState.RUNNING.value, 0
+        )
+        failed = by_state.get(QueueTaskState.FAILED.value, 0) + by_state.get(
+            QueueTaskState.POLL_TIMEOUT.value, 0
+        )
+        return {
+            "total_tasks": sum(by_state.values()),
+            "active_tasks": active,
+            "failed_tasks": failed,
+        }
 
     async def save_queue_task(
         self,

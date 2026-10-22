@@ -2791,6 +2791,46 @@
         "title": "QueueTaskOut",
         "type": "object"
       },
+      "QueueTaskPageOut": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QueueTaskOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/QueueTaskSummaryOut"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset",
+          "has_more",
+          "summary"
+        ],
+        "title": "QueueTaskPageOut",
+        "type": "object"
+      },
       "QueueTaskState": {
         "enum": [
           "queued",
@@ -2803,6 +2843,29 @@
         ],
         "title": "QueueTaskState",
         "type": "string"
+      },
+      "QueueTaskSummaryOut": {
+        "properties": {
+          "active_tasks": {
+            "title": "Active Tasks",
+            "type": "integer"
+          },
+          "failed_tasks": {
+            "title": "Failed Tasks",
+            "type": "integer"
+          },
+          "total_tasks": {
+            "title": "Total Tasks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_tasks",
+          "active_tasks",
+          "failed_tasks"
+        ],
+        "title": "QueueTaskSummaryOut",
+        "type": "object"
       },
       "RetryFailedTasksOut": {
         "properties": {
@@ -7967,6 +8030,29 @@
             }
           },
           {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
             "in": "header",
             "name": "x-studio-admin-token",
             "required": false,
@@ -7988,11 +8074,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/QueueTaskOut"
-                  },
-                  "title": "Response List Queue Tasks Api V1 Queue Tasks Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/QueueTaskPageOut"
                 }
               }
             },

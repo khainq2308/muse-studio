@@ -22,6 +22,7 @@ useSessionStore.subscribe((state, previousState) => {
   if (state.sessionVersion !== previousState.sessionVersion) {
     queryClient.removeQueries({ queryKey: ["projects"] });
     queryClient.removeQueries({ queryKey: ["connections"] });
+    queryClient.removeQueries({ queryKey: ["queue-tasks"] });
   }
 });
 

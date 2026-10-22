@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-test("production build deep link matches the registered project-module route", async ({ page }) => {
+test("production build deep link renders the Queue Monitor and uses the same-origin queue API", async ({
+  page,
+}) => {
   const requestedFetchUrls: Array<{ origin: string; pathname: string }> = [];
 
   page.on("request", (request) => {
@@ -18,10 +20,22 @@ test("production build deep link matches the registered project-module route", a
   });
 
   await page.route("**/api/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const body =
+      pathname === "/api/v1/queue/tasks"
+        ? {
+            items: [],
+            total: 0,
+            limit: 50,
+            offset: 0,
+            has_more: false,
+            summary: { total_tasks: 0, active_tasks: 0, failed_tasks: 0 },
+          }
+        : [];
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([]),
+      body: JSON.stringify(body),
     });
   });
 
@@ -31,13 +45,17 @@ test("production build deep link matches the registered project-module route", a
   await expect(route).toHaveAttribute("data-project-id", "test-project");
   await expect(route).toHaveAttribute("data-module", "queue-monitor");
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Queue monitor" })).toBeVisible();
-  await expect(page.getByTestId("project-module-placeholder")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Queue Monitor" })).toBeVisible();
+  await expect(page.getByTestId("queue-monitor-page")).toBeVisible();
+  await expect(page.getByText("No queue tasks yet", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Provider connections" })).toHaveCount(0);
   await expect.poll(() => requestedFetchUrls.map(({ pathname }) => pathname)).toContain("/healthz");
+  expect(requestedFetchUrls.map(({ pathname }) => pathname)).toContain("/api/v1/queue/tasks");
   expect(requestedFetchUrls.map(({ pathname }) => pathname)).not.toContain("/api/v1/projects");
   expect(requestedFetchUrls.map(({ pathname }) => pathname)).not.toContain("/api/v1/connections");
+
+  await page.screenshot({ path: "test-results/queue-monitor.png", fullPage: true });
 
   const appOrigin = new URL(page.url()).origin;
   expect(requestedFetchUrls.length).toBeGreaterThan(0);
