@@ -10,9 +10,10 @@ gateway keys or provider tokens into chats, tickets, commits or logs.
 
 ## 1. Start muse2api with the browser driver
 
-In the muse2api checkout (tested revision: fork khainq2308/muse2api `bf26146`, branch
-`feat/image-to-video-first-frame`, which is upstream `949f326` plus the first-frame driver patch;
-without that patch muse.ai ignores the first frame; check `git log -1` and
+In the muse2api checkout (tested revision: fork khainq2308/muse2api `0f76005`, branch
+`feat/image-to-video-first-frame`, which is upstream `949f326` plus the first-frame driver patch
+and the `/readyz` `video_first_frame` capability; without that patch muse.ai ignores the first
+frame; check `git log -1` and
 re-run the contract tests if you upgrade):
 
 ```bash
