@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { RefreshCw } from "lucide-react";
 import { QueryState } from "@/components/shared/query-state";
@@ -31,7 +31,17 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
   const total = tasksQuery.data?.total ?? 0;
   const summary = tasksQuery.data?.summary;
   const isPageOutOfRange = Boolean(tasksQuery.data && offset >= total && offset > 0);
+  const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  const { reset: resetAction } = actionMutation;
   const busyTaskId = actionMutation.isPending ? (actionMutation.variables?.taskId ?? null) : null;
+
+  // A new session must not show an action error (or pending state) from the previous one.
+  const actionSessionVersion = useRef(sessionVersion);
+  useEffect(() => {
+    if (actionSessionVersion.current === sessionVersion) return;
+    actionSessionVersion.current = sessionVersion;
+    resetAction();
+  }, [resetAction, sessionVersion]);
 
   useEffect(() => {
     if (!tasksQuery.data || !isPageOutOfRange) return;

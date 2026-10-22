@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/client";
-import { authErrorMessage, isAuthError, shouldRetryApiRequest } from "@/lib/api/errors";
+import {
+  apiRetryDelay,
+  authErrorMessage,
+  isAuthError,
+  shouldRetryApiRequest,
+} from "@/lib/api/errors";
 
 describe("shared API error classification", () => {
   it("classifies unauthorized and forbidden responses as auth-related", () => {
@@ -61,5 +66,25 @@ describe("shared API error classification", () => {
 
     expect(shouldRetryApiRequest(0, nonRetryableError)).toBe(false);
     expect(shouldRetryApiRequest(0, retryableError)).toBe(true);
+  });
+
+  it("does not retry 500 or unknown 5xx without an envelope retryable flag", () => {
+    expect(shouldRetryApiRequest(0, new ApiError({ status: 500, detail: null }))).toBe(false);
+    expect(shouldRetryApiRequest(0, new ApiError({ status: 501, detail: null }))).toBe(false);
+    for (const status of [502, 503, 504]) {
+      expect(shouldRetryApiRequest(0, new ApiError({ status, detail: null }))).toBe(true);
+      expect(shouldRetryApiRequest(1, new ApiError({ status, detail: null }))).toBe(false);
+    }
+  });
+
+  it("retries 429 and honors Retry-After within a bound", () => {
+    const limited = new ApiError({ status: 429, detail: null, retryAfterMs: 4_000 });
+    expect(shouldRetryApiRequest(0, limited)).toBe(true);
+    expect(apiRetryDelay(0, limited)).toBe(4_000);
+    expect(
+      apiRetryDelay(0, new ApiError({ status: 429, detail: null, retryAfterMs: 999_999 })),
+    ).toBe(30_000);
+    expect(apiRetryDelay(0, new Error("network"))).toBe(1_000);
+    expect(apiRetryDelay(1, new Error("network"))).toBe(2_000);
   });
 });

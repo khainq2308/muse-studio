@@ -53,6 +53,12 @@ export interface QueueTaskActionVariables {
   action: QueueTaskAction;
 }
 
+/** Scope captured when the mutation starts, so settling invalidates the originating project. */
+interface QueueTaskActionScope extends QueueTaskActionVariables {
+  projectId: string;
+  sessionVersion: number;
+}
+
 const ACTION_PATHS = {
   pause: "/api/v1/queue/tasks/{task_id}/pause",
   resume: "/api/v1/queue/tasks/{task_id}/resume",
@@ -63,16 +69,24 @@ export function useQueueTaskAction(projectId: string, onActionSettled?: () => vo
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: ({ taskId, action }: QueueTaskActionVariables) =>
+  const mutation = useMutation({
+    mutationFn: ({ taskId, action }: QueueTaskActionScope) =>
       apiPost(ACTION_PATHS[action], undefined, {
         pathParams: { task_id: taskId },
       }),
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
       onActionSettled?.();
       return queryClient.invalidateQueries({
-        queryKey: queryKeys.queueTasksPrefix(sessionVersion, projectId),
+        queryKey: queryKeys.queueTasksPrefix(variables.sessionVersion, variables.projectId),
       });
     },
   });
+
+  const { mutate: rawMutate } = mutation;
+  const mutate = useCallback(
+    (variables: QueueTaskActionVariables) => rawMutate({ ...variables, projectId, sessionVersion }),
+    [projectId, rawMutate, sessionVersion],
+  );
+
+  return { ...mutation, mutate };
 }

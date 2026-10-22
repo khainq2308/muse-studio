@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueueTask, QueueTaskFilter, QueueTaskPage } from "@/features/queue-monitor/state";
 
@@ -13,6 +13,7 @@ vi.mock("@/features/queue-monitor/api", () => ({
 }));
 
 import { QueueMonitorPage } from "@/features/queue-monitor/pages/queue-monitor-page";
+import { useSessionStore } from "@/lib/stores/session-store";
 
 function makeTask(): QueueTask {
   return {
@@ -169,6 +170,21 @@ describe("QueueMonitorPage", () => {
       expect(mocks.useQueueTasks).toHaveBeenLastCalledWith("project-1", "all", 0);
     });
     expect(screen.queryByText(/Showing 51–50 of 20 matching tasks/)).toBeNull();
+  });
+
+  it("clears a prior action error when the session changes", () => {
+    const { mutation } = setup({ mutation: { error: new Error("write failed") } });
+    mutation.reset.mockImplementation(() => {
+      mutation.error = null;
+    });
+    const { rerender } = render(<QueueMonitorPage projectId="project-1" />);
+    expect(mutation.reset).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain("write failed");
+
+    act(() => useSessionStore.getState().setAdminToken("session-change-" + Date.now()));
+    expect(mutation.reset).toHaveBeenCalledTimes(1);
+    rerender(<QueueMonitorPage projectId="project-1" />);
+    expect(screen.queryByText(/Could not update queue task: write failed/)).toBeNull();
   });
 
   it("clears a prior action error when the state filter changes", () => {

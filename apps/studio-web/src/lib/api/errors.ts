@@ -3,6 +3,10 @@ import { ApiError } from "@/lib/api/client";
 export type AuthApiError = ApiError & { readonly status: 401 | 403 };
 
 const NON_RETRYABLE_HTTP_STATUSES = new Set([400, 401, 403, 404, 422]);
+/** Gateway/availability failures that are usually transient even without envelope metadata. */
+const TRANSIENT_SERVER_STATUSES = new Set([502, 503, 504]);
+const MAX_RETRIES = 1;
+const MAX_RETRY_DELAY_MS = 30_000;
 
 export function isAuthError(error: unknown): error is AuthApiError {
   return error instanceof ApiError && (error.status === 401 || error.status === 403);
@@ -26,12 +30,19 @@ export function authErrorMessage(
 }
 
 export function shouldRetryApiRequest(failureCount: number, error: unknown): boolean {
-  if (
-    error instanceof ApiError &&
-    (error.retryable === false || NON_RETRYABLE_HTTP_STATUSES.has(error.status))
-  ) {
-    return false;
-  }
+  if (failureCount >= MAX_RETRIES) return false;
+  if (!(error instanceof ApiError)) return true;
+  if (NON_RETRYABLE_HTTP_STATUSES.has(error.status)) return false;
+  if (error.retryable !== undefined) return error.retryable;
+  if (error.status === 429) return true;
+  if (error.status >= 500) return TRANSIENT_SERVER_STATUSES.has(error.status);
+  return true;
+}
 
-  return failureCount < 1;
+/** TanStack Query retryDelay: honor Retry-After (bounded), else exponential backoff. */
+export function apiRetryDelay(failureCount: number, error: unknown): number {
+  if (error instanceof ApiError && error.retryAfterMs !== undefined) {
+    return Math.min(Math.max(0, error.retryAfterMs), MAX_RETRY_DELAY_MS);
+  }
+  return Math.min(1000 * 2 ** failureCount, MAX_RETRY_DELAY_MS);
 }
