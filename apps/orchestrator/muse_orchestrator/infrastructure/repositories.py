@@ -31,6 +31,7 @@ from muse_orchestrator.models.domain import (
 )
 from muse_orchestrator.models.domain import (
     ExportJobRecord,
+    ExportJobState,
     ShotTakeRecord as TimelineShotTakeRecord,
     TimelineClipRecord,
     TimelineSequenceRecord,
@@ -108,6 +109,14 @@ class StudioRepository:
 
     async def get_export_job(self, export_id: str) -> ExportJobRecord | None:
         return await self.session.get(ExportJobRecord, export_id)
+
+    async def list_export_jobs_in_state(self, state: ExportJobState) -> list[ExportJobRecord]:
+        result = await self.session.execute(
+            select(ExportJobRecord)
+            .where(ExportJobRecord.state == state)
+            .order_by(ExportJobRecord.created_at.asc())
+        )
+        return list(result.scalars().all())
 
     async def update_export_job(self, job: ExportJobRecord) -> ExportJobRecord:
         self.session.add(job)
@@ -416,6 +425,9 @@ class StudioRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_scene(self, scene_id: str) -> SceneRecord | None:
+        return await self.session.get(SceneRecord, scene_id)
 
     async def get_shot(self, shot_id: str) -> ShotRecord | None:
         return await self.session.get(ShotRecord, shot_id)

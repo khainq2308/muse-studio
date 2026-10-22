@@ -12,11 +12,13 @@ from muse_orchestrator.models.domain import (
     QueueTaskState,
     ShotTakeRecord,
     BatchRenderJobRecord,
-    SceneRecord,
 )
 from muse_orchestrator.api.pipeline import _recompile_project_shots
 from muse_orchestrator.api.arq_dispatch import schedule_generation_task
-from muse_orchestrator.services.generation_queue import GenerationQueueService
+from muse_orchestrator.services.generation_queue import (
+    GenerationQueueService,
+    conditioning_first_frame_of,
+)
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}", tags=["M5 Batch Render & Continuity QA"])
 
@@ -122,7 +124,7 @@ async def launch_batch_render(
 
     # Validate the scene before recompiling prompts or creating a batch job.
     if payload.scene_id is not None:
-        scene = await repository.session.get(SceneRecord, payload.scene_id)
+        scene = await repository.get_scene(payload.scene_id)
         if scene is None:
             raise HTTPException(status_code=404, detail="Scene không tồn tại.")
         if scene.project_id != project_id:
@@ -147,12 +149,35 @@ async def launch_batch_render(
     blocked_shot_ids: list[str] = []
 
     for s in target_shots:
-        # 1. Kiểm tra Smart Cache: Nếu shot đã có selected_take khớp với prompt_hash hiện tại -> Bỏ qua!
+        # Resolve the frame the shot would be conditioned on. Only a missing/invalid upstream
+        # last frame blocks: an upstream that is merely re-rendering still has a valid
+        # selected last frame.
+        is_frame_chain = s.continuity_mode == "frame_chain"
+        upstream_frame_id: str | None = None
+        upstream_missing = False
+        if is_frame_chain and s.previous_shot_id:
+            prev_shot = await repository.get_shot(s.previous_shot_id)
+            if await GenerationQueueService.upstream_has_valid_last_frame(repository.session, prev_shot):
+                upstream_frame_id = prev_shot.last_frame_asset_id
+            else:
+                upstream_missing = True
+        current_first_frame = upstream_frame_id or s.first_frame_asset_id
+
+        # 1. Smart cache: skip only when the selected take matches the current prompt_hash
+        #    and, for frame-chained shots, was conditioned on the current first frame.
         if payload.only_changed and s.generation_state == ShotGenerationState.SUCCEEDED and s.selected_take_id:
             sel_take = await repository.get_shot_take(s.selected_take_id)
             if sel_take and sel_take.prompt_hash == s.prompt_hash:
-                skipped_shot_ids.append(s.id)
-                continue
+                conditioning_matches = True
+                if is_frame_chain:
+                    sel_task = await repository.get_generation_task(sel_take.task_id)
+                    conditioning_matches = (
+                        sel_task is not None
+                        and conditioning_first_frame_of(sel_task) == current_first_frame
+                    )
+                if conditioning_matches:
+                    skipped_shot_ids.append(s.id)
+                    continue
 
         # 2. Kiểm tra Blocker từ Prompt Linter (VD: BLOCKED_REFERENCE, CAMERA_MOTION_CONFLICT)
         has_blocker = any(i.get("severity") == "blocker" for i in (s.lint_report_json or []))
@@ -162,25 +187,31 @@ async def launch_batch_render(
             continue
 
         # 3. Kiểm tra phụ thuộc Frame Chaining
-        if s.continuity_mode == "frame_chain" and s.previous_shot_id:
-            prev_shot = await repository.get_shot(s.previous_shot_id)
-            if prev_shot and prev_shot.last_frame_asset_id and prev_shot.generation_state == ShotGenerationState.SUCCEEDED:
-                s.first_frame_asset_id = prev_shot.last_frame_asset_id
-            else:
-                s.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
-                blocked_shot_ids.append(s.id)
-                continue
+        if upstream_missing:
+            s.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
+            blocked_shot_ids.append(s.id)
+            continue
+        if upstream_frame_id:
+            s.first_frame_asset_id = upstream_frame_id
 
         prio = 50 if s.id in payload.priority_shot_ids else max(1, 30 - s.sequence_index)
-        task, _ = await GenerationQueueService.enqueue_shot_generation(
-            db=repository.session,
-            shot=s,
-            conn=conn,
-            task_type="video",
-            model_id=payload.model_id,
-            priority=prio,
-            force_retry=not payload.only_changed,
-        )
+        try:
+            task, created = await GenerationQueueService.enqueue_shot_generation(
+                db=repository.session,
+                shot=s,
+                conn=conn,
+                task_type="video",
+                model_id=payload.model_id,
+                priority=prio,
+                force_retry=not payload.only_changed,
+            )
+        except ValueError:
+            blocked_shot_ids.append(s.id)
+            continue
+        if not created and task.state == QueueTaskState.SUCCEEDED:
+            # Same inputs already produced a result: nothing was enqueued.
+            skipped_shot_ids.append(s.id)
+            continue
         enqueued_task_ids.append(task.id)
         tasks_to_schedule.append(task)
 
@@ -225,89 +256,10 @@ async def _resolve_frame_chain_generation_config(
     shot: Any,
     requested_connection_id: str | None = None,
 ) -> tuple[str, str] | None:
-    """Resolve frame-chain config from the take that owns the upstream frame.
-
-    Failed/canceled regenerations must not replace the config for a successful
-    upstream take. An explicit connection override can reuse the upstream model
-    when the target connection has no history yet.
-    """
-    upstream_task = None
-    previous_shot_id = getattr(shot, "previous_shot_id", None)
-    if previous_shot_id:
-        upstream_shot = await repository.get_shot(previous_shot_id)
-        if upstream_shot is not None and upstream_shot.project_id == project_id:
-            # The selected take is authoritative because its last frame is what
-            # is propagated to the downstream shot.
-            selected_take_id = getattr(upstream_shot, "selected_take_id", None)
-            if selected_take_id:
-                selected_take = await repository.get_shot_take(selected_take_id)
-                if (
-                    selected_take is not None
-                    and selected_take.project_id == project_id
-                    and selected_take.shot_id == previous_shot_id
-                ):
-                    candidate = await repository.get_generation_task(selected_take.task_id)
-                    if (
-                        candidate is not None
-                        and candidate.project_id == project_id
-                        and candidate.shot_id == previous_shot_id
-                        and candidate.state == QueueTaskState.SUCCEEDED
-                    ):
-                        upstream_task = candidate
-
-            if upstream_task is None:
-                upstream_task = await repository.get_latest_successful_generation_task_for_shot(
-                    previous_shot_id
-                )
-                if (
-                    upstream_task is not None
-                    and (
-                        upstream_task.project_id != project_id
-                        or upstream_task.shot_id != previous_shot_id
-                        or upstream_task.state != QueueTaskState.SUCCEEDED
-                    )
-                ):
-                    upstream_task = None
-
-    if requested_connection_id is None and upstream_task is not None:
-        return upstream_task.connection_id, upstream_task.model_id
-    if (
-        requested_connection_id is not None
-        and upstream_task is not None
-        and upstream_task.connection_id == requested_connection_id
-    ):
-        return requested_connection_id, upstream_task.model_id
-
-    # Repository results are ordered oldest-to-newest. Failed/canceled tasks
-    # are never valid config sources. This fallback also supports a first shot
-    # with a manual first frame when the project has a successful prior config.
-    project_tasks = await repository.list_project_generation_tasks(project_id)
-    successful_tasks = [
-        task
-        for task in project_tasks
-        if task.project_id == project_id and task.state == QueueTaskState.SUCCEEDED
-    ]
-    if requested_connection_id is None:
-        if successful_tasks:
-            latest = successful_tasks[-1]
-            return latest.connection_id, latest.model_id
-        return None
-
-    matching_tasks = [
-        task for task in successful_tasks
-        if task.connection_id == requested_connection_id
-    ]
-    if matching_tasks:
-        return requested_connection_id, matching_tasks[-1].model_id
-
-    # The operator explicitly selected a new connection. Reuse the successful
-    # upstream take's model instead of leaving the shot stuck due to no history
-    # on this connection or choosing a failed/unrelated task's model.
-    if upstream_task is not None:
-        return requested_connection_id, upstream_task.model_id
-    if successful_tasks:
-        return requested_connection_id, successful_tasks[-1].model_id
-    return None
+    """Backward-compatible alias; the rule lives in the service layer."""
+    return await GenerationQueueService.resolve_frame_chain_generation_config(
+        repository, project_id, shot, requested_connection_id=requested_connection_id
+    )
 
 
 @router.post("/batch/tick", response_model=BatchTickOut)
@@ -327,6 +279,8 @@ async def tick_project_batch_queue(
     - Mỗi tick chỉ bước tối đa `max_steps` task (mặc định 50) để một request không
       làm I/O provider không giới hạn; phần còn lại để tick sau xử lý.
     """
+    if not await repository.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
     active_tasks = await repository.list_active_generation_tasks(
         project_id, connection_id, limit=max_steps
     )
@@ -348,27 +302,11 @@ async def tick_project_batch_queue(
 
     # Kiểm tra xem có shot nào vừa được mở khoá khỏi BLOCKED_UPSTREAM_FRAME nhờ Frame Chaining không
     # Nếu có và vừa được chuyển về NOT_STARTED (có first_frame_asset_id), tự động enqueue vào cùng Connection!
-    ready_chained_shots = await repository.list_ready_frame_chain_shots(project_id)
-    for cs in ready_chained_shots:
-        config = await _resolve_frame_chain_generation_config(
-            repository, project_id, cs, requested_connection_id=connection_id
-        )
-        if config is None:
-            # Leave the shot NOT_STARTED rather than dispatching it with an arbitrary
-            # historical model or the mock provider. A later tick with valid config can retry.
-            continue
-        resolved_connection_id, resolved_model_id = config
-        conn = await repository.get_connection(resolved_connection_id)
-        if conn is None or not conn.enabled:
-            continue
-        new_t, created = await GenerationQueueService.enqueue_shot_generation(
-            db=repository.session,
-            shot=cs,
-            conn=conn,
-            task_type="video",
-            model_id=resolved_model_id,
-            priority=max(1, 30 - cs.sequence_index),
-        )
+    # Shots without a valid config/enabled connection stay NOT_STARTED for a later tick.
+    auto_results = await GenerationQueueService.auto_enqueue_ready_frame_chain_shots(
+        repository, project_id, requested_connection_id=connection_id
+    )
+    for cs, new_t, created in auto_results:
         await schedule_generation_task(request, new_t)
         if created:
             stepped_results.append({
@@ -401,30 +339,62 @@ async def retry_failed_project_tasks(
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> RetryFailedTasksOut:
-    """Chỉ retry các Shot bị lỗi (failed / poll_timeout), giữ nguyên thành quả các Shot đã succeeded."""
-    failed_shots = await repository.list_failed_project_shots(project_id)
+    """Chỉ retry các Shot bị lỗi (failed / poll_timeout), giữ nguyên thành quả các Shot đã succeeded.
 
+    Everything is validated before the first task is created so a bad shot or connection
+    never leaves a partially committed retry behind (400 disabled/missing connection,
+    422 for shots that cannot be enqueued). Shots whose previous connection is now
+    disabled/missing are skipped when no explicit ``connection_id`` is given.
+    """
+    if not await repository.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
+    explicit_conn = None
+    if connection_id is not None:
+        explicit_conn = await repository.get_connection(connection_id)
+        if explicit_conn is None or not explicit_conn.enabled:
+            raise HTTPException(status_code=400, detail="Connection không tồn tại hoặc đang bị tắt.")
+
+    failed_shots = await repository.list_failed_project_shots(project_id)
     if not failed_shots:
         return {"retried_count": 0, "new_task_ids": []}
 
-    new_task_ids: list[str] = []
+    plan: list[tuple[Any, Any, str]] = []
+    precondition_errors: list[dict[str, str]] = []
     for s in failed_shots:
         last_task = await repository.get_latest_generation_task_for_shot(s.id)
-        target_conn_id = connection_id or (last_task.connection_id if last_task else None)
-        if not target_conn_id:
-            continue
-        conn = await repository.get_connection(target_conn_id)
-        if not conn:
+        conn = explicit_conn
+        if conn is None:
+            if last_task is None:
+                continue
+            conn = await repository.get_connection(last_task.connection_id)
+            if conn is None or not conn.enabled:
+                continue
+        error = await GenerationQueueService.check_enqueue_preconditions(repository.session, s)
+        if error is not None:
+            precondition_errors.append({"shot_id": s.id, "message": error})
             continue
         model_id = last_task.model_id if last_task else "muse-video-mock-v1"
-        t, _ = await GenerationQueueService.enqueue_shot_generation(
-            db=repository.session,
-            shot=s,
-            conn=conn,
-            task_type="video",
-            model_id=model_id,
-            force_retry=True,
+        plan.append((s, conn, model_id))
+
+    if precondition_errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "retry_precondition_failed", "shots": precondition_errors},
         )
+
+    new_task_ids: list[str] = []
+    for s, conn, model_id in plan:
+        try:
+            t, _ = await GenerationQueueService.enqueue_shot_generation(
+                db=repository.session,
+                shot=s,
+                conn=conn,
+                task_type="video",
+                model_id=model_id,
+                force_retry=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         new_task_ids.append(t.id)
         await schedule_generation_task(request, t)
 
@@ -447,11 +417,8 @@ async def flag_take_continuity_and_regenerate(
     if not take or not shot or take.shot_id != shot_id or shot.project_id != project_id:
         raise HTTPException(status_code=404, detail="Shot hoặc Take không tồn tại.")
 
-    take.continuity_flagged = payload.continuity_flagged
-    take.director_notes = payload.director_notes
-    await repository.save_take_continuity(take)
-
-    regen_task_id: str | None = None
+    # Validate the regenerate request before persisting anything.
+    conn = None
     if payload.regenerate_now:
         orig_task = await repository.get_generation_task(take.task_id)
         conn_id = payload.connection_id or (orig_task.connection_id if orig_task else None)
@@ -460,15 +427,30 @@ async def flag_take_continuity_and_regenerate(
         conn = await repository.get_connection(conn_id)
         if not conn:
             raise HTTPException(status_code=404, detail="Connection không tồn tại.")
-        new_task, _ = await GenerationQueueService.enqueue_shot_generation(
-            db=repository.session,
-            shot=shot,
-            conn=conn,
-            task_type="video",
-            model_id=payload.model_id or take.model_id,
-            priority=80,
-            force_retry=True,
-        )
+        if not conn.enabled:
+            raise HTTPException(status_code=400, detail="Connection đang bị tắt.")
+        error = await GenerationQueueService.check_enqueue_preconditions(repository.session, shot)
+        if error is not None:
+            raise HTTPException(status_code=422, detail=error)
+
+    take.continuity_flagged = payload.continuity_flagged
+    take.director_notes = payload.director_notes
+    await repository.save_take_continuity(take)
+
+    regen_task_id: str | None = None
+    if conn is not None:
+        try:
+            new_task, _ = await GenerationQueueService.enqueue_shot_generation(
+                db=repository.session,
+                shot=shot,
+                conn=conn,
+                task_type="video",
+                model_id=payload.model_id or take.model_id,
+                priority=80,
+                force_retry=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         regen_task_id = new_task.id
         await schedule_generation_task(request, new_task)
 

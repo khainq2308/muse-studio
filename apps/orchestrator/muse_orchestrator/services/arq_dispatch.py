@@ -6,7 +6,13 @@ from muse_orchestrator.models.domain import GenerationTaskRecord, QueueTaskState
 
 
 def generation_step_job_id(task: GenerationTaskRecord) -> str:
-    """Stable ID for one persisted queue state, allowing idempotent re-scheduling."""
+    """Stable ID for one persisted queue state, allowing idempotent re-scheduling.
+
+    Every step that wants a follow-up job must change the row (``updated_at``), otherwise
+    the follow-up would reuse the ID of the job that is still running and ARQ would drop
+    it. The worker registers the step function with ``keep_result=0`` so a finished job's
+    ID is released immediately for recovery re-enqueueing.
+    """
     updated_at = task.updated_at or task.created_at
     updated_token = updated_at.isoformat() if updated_at else "unknown"
     return f"generation-step:{task.id}:{task.state.value}:{task.poll_count}:{updated_token}"
