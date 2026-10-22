@@ -122,18 +122,9 @@ jobs:
         run: python scripts/audit_openapi_responses.py
       - name: Audit response_model declarations for queue and batch routers
         run: python scripts/audit_api_response_models.py --report --require-typed projects --require-typed connections --require-typed assets --require-typed pipeline --require-typed workflows --require-typed queue --require-typed batch --require-typed timeline --require-typed connection_accounts --require-typed metrics --require-typed maintenance --require-typed backups --require-typed system
-      - name: Generate frontend TypeScript schema for contract sync
+      - name: Check generated frontend TypeScript schema
         working-directory: apps/studio-web
-        run: npm run gen:api
-      - name: Report generated frontend schema diff for contract sync
-        run: git diff --unified=3 -- apps/studio-web/src/lib/api/schema.d.ts | sed -n '1,1000p'
-      - name: Upload generated frontend schema for contract sync
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-frontend-schema-contract-sync
-          path: apps/studio-web/src/lib/api/schema.d.ts
-          if-no-files-found: error
-          retention-days: 1
+        run: npm run gen:api:check
       - name: Ensure generation left the working tree clean
         run: git diff --exit-code -- apps/orchestrator/openapi.json apps/studio-web/src/lib/api/schema.d.ts
 
