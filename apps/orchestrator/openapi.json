@@ -524,6 +524,11 @@
       },
       "BackupRestoreReportOut": {
         "properties": {
+          "exports_neutralized": {
+            "default": 0,
+            "title": "Exports Neutralized",
+            "type": "integer"
+          },
           "media_missing": {
             "items": {
               "type": "string"
@@ -542,12 +547,29 @@
             "title": "Rows Skipped",
             "type": "object"
           },
+          "skipped_rows": {
+            "items": {
+              "$ref": "#/components/schemas/BackupRestoreSkippedRowOut"
+            },
+            "title": "Skipped Rows",
+            "type": "array"
+          },
           "tables_restored": {
             "additionalProperties": {
               "type": "integer"
             },
             "title": "Tables Restored",
             "type": "object"
+          },
+          "tasks_neutralized": {
+            "default": 0,
+            "title": "Tasks Neutralized",
+            "type": "integer"
+          },
+          "tasks_with_placeholder_connection": {
+            "default": 0,
+            "title": "Tasks With Placeholder Connection",
+            "type": "integer"
           }
         },
         "required": [
@@ -557,6 +579,29 @@
           "media_missing"
         ],
         "title": "BackupRestoreReportOut",
+        "type": "object"
+      },
+      "BackupRestoreSkippedRowOut": {
+        "properties": {
+          "original_id": {
+            "title": "Original Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "table": {
+            "title": "Table",
+            "type": "string"
+          }
+        },
+        "required": [
+          "table",
+          "original_id",
+          "reason"
+        ],
+        "title": "BackupRestoreSkippedRowOut",
         "type": "object"
       },
       "BatchLaunchIn": {
@@ -906,6 +951,8 @@
           "start_time_seconds": {
             "anyOf": [
               {
+                "maximum": 86400.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -940,12 +987,14 @@
           },
           "trim_end_seconds": {
             "default": 0.0,
+            "maximum": 600.0,
             "minimum": 0.0,
             "title": "Trim End Seconds",
             "type": "number"
           },
           "trim_start_seconds": {
             "default": 0.0,
+            "maximum": 600.0,
             "minimum": 0.0,
             "title": "Trim Start Seconds",
             "type": "number"
@@ -1894,6 +1943,7 @@
           "resolution": {
             "anyOf": [
               {
+                "pattern": "^\\d{2,4}x\\d{2,4}$",
                 "type": "string"
               },
               {
@@ -2113,7 +2163,7 @@
           "retention_hours": {
             "default": 24.0,
             "maximum": 8760.0,
-            "minimum": 0.0,
+            "minimum": 1.0,
             "title": "Retention Hours",
             "type": "number"
           }
@@ -2198,7 +2248,7 @@
           "retention_hours": {
             "default": 24.0,
             "maximum": 8760.0,
-            "minimum": 0.0,
+            "minimum": 1.0,
             "title": "Retention Hours",
             "type": "number"
           }
@@ -3245,6 +3295,8 @@
           "action": {
             "anyOf": [
               {
+                "maxLength": 4000,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3266,6 +3318,8 @@
           "camera_motion": {
             "anyOf": [
               {
+                "maxLength": 128,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3277,6 +3331,8 @@
           "composition": {
             "anyOf": [
               {
+                "maxLength": 2000,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3288,6 +3344,10 @@
           "continuity_mode": {
             "anyOf": [
               {
+                "enum": [
+                  "standard",
+                  "frame_chain"
+                ],
                 "type": "string"
               },
               {
@@ -3299,6 +3359,8 @@
           "duration_seconds": {
             "anyOf": [
               {
+                "exclusiveMinimum": 0.0,
+                "maximum": 600.0,
                 "type": "number"
               },
               {
@@ -3357,6 +3419,8 @@
           "shot_size": {
             "anyOf": [
               {
+                "maxLength": 128,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -4236,7 +4300,10 @@
             "type": "string"
           },
           "status": {
-            "const": "succeeded",
+            "enum": [
+              "succeeded",
+              "waiting_approval"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -8792,7 +8859,7 @@
     },
     "/api/v1/projects/{project_id}/batch/retry-failed": {
       "post": {
-        "description": "Chỉ retry các Shot bị lỗi (failed / poll_timeout), giữ nguyên thành quả các Shot đã succeeded.",
+        "description": "Chỉ retry các Shot bị lỗi (failed / poll_timeout), giữ nguyên thành quả các Shot đã succeeded.\n\nEverything is validated before the first task is created so a bad shot or connection\nnever leaves a partially committed retry behind (400 disabled/missing connection,\n422 for shots that cannot be enqueued). Shots whose previous connection is now\ndisabled/missing are skipped when no explicit ``connection_id`` is given.",
         "operationId": "retry_failed_project_tasks_api_v1_projects__project_id__batch_retry_failed_post",
         "parameters": [
           {
@@ -12432,7 +12499,7 @@
     },
     "/api/v1/projects/{project_id}/workflows/{workflow_id}/runs/{run_id}/nodes/{node_id}/approve": {
       "post": {
-        "description": "Duyệt cổng ManualApproval và tự động chạy tiếp các node phía sau đang bị blocked.",
+        "description": "Duyệt cổng ManualApproval và chạy tiếp tới cổng ManualApproval kế tiếp (nếu có).",
         "operationId": "approve_manual_gate_and_resume_api_v1_projects__project_id__workflows__workflow_id__runs__run_id__nodes__node_id__approve_post",
         "parameters": [
           {
