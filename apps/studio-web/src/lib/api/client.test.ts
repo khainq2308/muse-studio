@@ -75,12 +75,14 @@ describe("API client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await apiGet("/api/v1/projects", {
-      query: { limit: 10, archived: false, omitted: null },
+    await apiGet("/api/v1/queue/tasks", {
+      query: { project_id: "project-1", state: "running", account_used: null },
     });
 
     const [requestedUrl, init] = fetchMock.mock.calls[0]!;
-    expect(String(requestedUrl)).toContain("/api/v1/projects?limit=10&archived=false");
+    expect(String(requestedUrl)).toContain(
+      "/api/v1/queue/tasks?project_id=project-1&state=running",
+    );
     expect(new Headers(init?.headers).get("X-Studio-Admin-Token")).toBe("test-admin-token");
     expect(window.localStorage.length).toBe(0);
   });

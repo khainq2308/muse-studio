@@ -27,10 +27,21 @@ type ApiPathParams<Path extends ApiGetPath> = Path extends keyof paths
     : Record<never, never>
   : Record<never, never>;
 
-type ApiGetOptions = Omit<ApiRequestOptions, "method" | "body" | "pathParams">;
+type ApiQueryParams<Path extends ApiGetPath> = Path extends keyof paths
+  ? ApiOperation<Path, "get"> extends { parameters: { query?: infer Query } }
+    ? Exclude<Query, undefined>
+    : never
+  : never;
+
+type ApiGetOptions<Path extends ApiGetPath> = Omit<
+  ApiRequestOptions,
+  "method" | "body" | "pathParams" | "query"
+> & {
+  query?: ApiQueryParams<Path>;
+};
 type ApiGetArguments<Path extends ApiGetPath> = keyof ApiPathParams<Path> extends never
-  ? [options?: ApiGetOptions]
-  : [options: ApiGetOptions & { pathParams: ApiPathParams<Path> }];
+  ? [options?: ApiGetOptions<Path>]
+  : [options: ApiGetOptions<Path> & { pathParams: ApiPathParams<Path> }];
 
 type JsonSuccessBody<Operation> = Operation extends { responses: infer Responses }
   ? {

@@ -25,6 +25,12 @@ describe("OpenAPI-inferred API client responses", () => {
       Promise<components["schemas"]["ProjectShotOut"][]>
     >();
   });
+
+  it("derives queue-task response and query contracts from OpenAPI", () => {
+    expectTypeOf<GetResponse<"/api/v1/queue/tasks">>().toEqualTypeOf<
+      Promise<components["schemas"]["QueueTaskOut"][]>
+    >();
+  });
 });
 
 // These examples are deliberately never invoked. npm run build type-checks this file and
@@ -54,5 +60,14 @@ function compileTimeRejectionExamples() {
 
   // @ts-expect-error Binary-only endpoints must use downloadFile, not the JSON client.
   apiGet("/api/v1/assets/{asset_id}/download", { pathParams: { asset_id: "asset-1" } });
+
+  // @ts-expect-error Unknown query parameter names must be rejected by generated GET types.
+  apiGet("/api/v1/queue/tasks", { query: { project_id: "project-1", task_status: "running" } });
+
+  // @ts-expect-error Queue state filters must use the generated enum values.
+  apiGet("/api/v1/queue/tasks", { query: { state: "not-a-queue-state" } });
+
+  // @ts-expect-error Endpoints with no query parameters reject arbitrary query objects.
+  apiGet("/api/v1/projects", { query: { unexpected_param: 1 } });
 }
 void compileTimeRejectionExamples;

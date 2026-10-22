@@ -179,3 +179,11 @@ jobs:
           CI: "true"
           VITE_ORCHESTRATOR_URL: "."
         run: npm run test:e2e
+      - name: Upload Queue Monitor screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue-monitor-ui-evidence
+          path: apps/studio-web/test-results/queue-monitor.png
+          if-no-files-found: ignore
+          retention-days: 7
