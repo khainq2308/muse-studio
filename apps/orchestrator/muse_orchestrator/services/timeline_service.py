@@ -15,7 +15,7 @@ ASPECT_RESOLUTION_MAP: dict[str, str] = {
     "21:9": "2560x1080",
 }
 
-_SAFE_RES_RE = re.compile(r"^\d{3,4}x\d{3,4}$")
+_SAFE_RES_RE = re.compile(r"^\d{2,4}x\d{2,4}$")
 
 # Thresholds shared with analyze_clips_and_detect_anomalies.
 _GAP_TOLERANCE_SECONDS = 0.05
@@ -74,7 +74,10 @@ class TimelineValidationService:
     @staticmethod
     def resolve_resolution(aspect_ratio: str, custom_res: str | None = None) -> str:
         if custom_res and _SAFE_RES_RE.match(custom_res):
-            return custom_res
+            width, height = (int(part) for part in custom_res.split("x"))
+            # libx264/yuv420p requires even dimensions; also bound the encode size.
+            if all(dim % 2 == 0 and 16 <= dim <= 4096 for dim in (width, height)):
+                return custom_res
         return ASPECT_RESOLUTION_MAP.get(aspect_ratio, "1920x1080")
 
     @staticmethod

@@ -175,12 +175,19 @@ async def test_export_rejects_a_clip_using_another_projects_asset(client: AsyncC
     mine = await _project(client, "Mine")
     other = await _project(client, "Other")
     foreign = await _upload(client, other, "secret.mp4", MP4_PLACEHOLDER, "video/mp4")
-    await _assemble(client, mine, [{"asset_id": foreign["id"], "order_index": 1, "source_duration_seconds": 3.0}])
-
-    response = await client.post(f"/api/v1/projects/{mine}/timeline/exports", json={})
+    # DATA-006: the foreign asset is now rejected when the timeline is assembled, before
+    # any sequence referencing it can be persisted or exported.
+    response = await client.post(
+        f"/api/v1/projects/{mine}/timeline/assemble",
+        json={"name": "Cut", "custom_clips": [
+            {"asset_id": foreign["id"], "order_index": 1, "source_duration_seconds": 3.0}
+        ]},
+    )
 
     assert response.status_code == 422
-    assert "clip #1" in response.json()["detail"]
+    assert "custom_clips[0]" in response.json()["detail"]
+    latest = await client.get(f"/api/v1/projects/{mine}/timeline")
+    assert latest.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -262,34 +269,28 @@ async def test_p1_and_p3_short_source_video_rejected_and_early_422_includes_unsu
     p_res = await client.post("/api/v1/projects", json={"name": "P1 P3 Check"}, headers=headers)
     proj_id = p_res.json()["id"]
 
-    # Kiểm tra P3: Early 422 do asset_id không tồn tại vẫn phải có unsupported_features
-    tl_p3 = (
-        await client.post(
-            f"/api/v1/projects/{proj_id}/timeline/assemble",
-            headers=headers,
-            json={
-                "name": "Missing Asset Seq",
-                "title_card": {"title": "Intro", "duration_seconds": 2.0},
-                "custom_clips": [
-                    {
-                        "asset_id": "ast_does_not_exist_999",
-                        "order_index": 1,
-                        "start_time_seconds": 0.0,
-                        "source_duration_seconds": 3.0,
-                    }
-                ],
-            },
-        )
-    ).json()
-
-    exp_p3 = await client.post(
-        f"/api/v1/projects/{proj_id}/timeline/exports",
+    # P3: an unknown asset_id is rejected early with the validation envelope.
+    tl_p3 = await client.post(
+        f"/api/v1/projects/{proj_id}/timeline/assemble",
         headers=headers,
-        json={"sequence_id": tl_p3["sequence_id"]},
+        json={
+            "name": "Missing Asset Seq",
+            "title_card": {"title": "Intro", "duration_seconds": 2.0},
+            "custom_clips": [
+                {
+                    "asset_id": "ast_does_not_exist_999",
+                    "order_index": 1,
+                    "start_time_seconds": 0.0,
+                    "source_duration_seconds": 3.0,
+                }
+            ],
+        },
     )
-    assert exp_p3.status_code == 422
-    assert exp_p3.json()["category"] == "validation"
-    assert exp_p3.json()["retryable"] is False
+    # DATA-006: an unknown asset is rejected at assemble time with the validation envelope,
+    # so no sequence referencing it can reach export.
+    assert tl_p3.status_code == 422
+    assert tl_p3.json()["category"] == "validation"
+    assert tl_p3.json()["retryable"] is False
 
     # Kiểm tra P1: Video nguồn thực tế dài 1.0s nhưng timeline yêu cầu 3.0s -> Phải bị từ chối 422
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):

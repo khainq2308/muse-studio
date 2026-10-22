@@ -148,30 +148,47 @@ class WorkflowEngine:
         nodes_json: list[dict[str, Any]],
         edges_json: list[dict[str, Any]],
     ) -> tuple[list[WorkflowNodeDef], list[WorkflowEdgeDef]]:
+        if not isinstance(nodes_json, list) or not isinstance(edges_json, list):
+            raise WorkflowValidationError("'nodes' và 'edges' phải là danh sách.")
         nodes: list[WorkflowNodeDef] = []
         for raw_n in nodes_json:
-            if not isinstance(raw_n, dict) or not raw_n.get("node_id") or not raw_n.get("node_type"):
-                raise WorkflowValidationError("Mỗi node phải có đầy đủ 'node_id' và 'node_type'.")
-            ntype = str(raw_n["node_type"])
-            if ntype not in NODE_CATALOG and not raw_n.get("inputs") and not raw_n.get("outputs"):
+            if not isinstance(raw_n, dict):
+                raise WorkflowValidationError("Mỗi node phải là một object.")
+            node_id = raw_n.get("node_id")
+            ntype = raw_n.get("node_type")
+            if not isinstance(node_id, str) or not node_id.strip():
+                raise WorkflowValidationError("Mỗi node phải có 'node_id' là chuỗi không rỗng.")
+            if not isinstance(ntype, str) or not ntype.strip():
+                raise WorkflowValidationError(f"Node '{node_id}' phải có 'node_type' là chuỗi không rỗng.")
+            if ntype not in NODE_CATALOG:
                 raise WorkflowValidationError(f"Node type '{ntype}' không nằm trong danh mục hỗ trợ.")
-            raw_in = raw_n.get("inputs") or NODE_CATALOG.get(ntype, {}).get("inputs", {})
-            raw_out = raw_n.get("outputs") or NODE_CATALOG.get(ntype, {}).get("outputs", {})
-            inputs = {
-                k: (v if isinstance(v, PortDef) else PortDef(k, str(v)))
-                for k, v in raw_in.items()
-            }
-            outputs = {
-                k: (v if isinstance(v, PortDef) else PortDef(k, str(v)))
-                for k, v in raw_out.items()
-            }
+            config = raw_n.get("config")
+            if config is None:
+                config = {}
+            if not isinstance(config, dict):
+                raise WorkflowValidationError(f"Node '{node_id}': 'config' phải là object.")
+            catalog = NODE_CATALOG[ntype]
+            port_defs: dict[str, dict[str, PortDef]] = {}
+            for direction in ("inputs", "outputs"):
+                supplied = raw_n.get(direction)
+                expected = catalog[direction]
+                if supplied is not None:
+                    cls._require_port_mapping(node_id, direction, supplied)
+                    # Catalog nodes have fixed, typed ports. An empty mapping is treated as
+                    # "use catalog"; anything else must match the catalog exactly so a client
+                    # cannot retype a port to bypass edge type checking.
+                    if supplied and supplied != expected:
+                        raise WorkflowValidationError(
+                            f"Node '{node_id}' ({ntype}): '{direction}' phải khớp danh mục port chuẩn."
+                        )
+                port_defs[direction] = {k: PortDef(k, v) for k, v in expected.items()}
             nodes.append(
                 WorkflowNodeDef(
-                    node_id=raw_n["node_id"],
+                    node_id=node_id,
                     node_type=ntype,
-                    config=raw_n.get("config", {}),
-                    inputs=inputs,
-                    outputs=outputs,
+                    config=config,
+                    inputs=port_defs["inputs"],
+                    outputs=port_defs["outputs"],
                 )
             )
         edges: list[WorkflowEdgeDef] = []
@@ -180,6 +197,11 @@ class WorkflowEngine:
                 raw_e.get(k) for k in ("edge_id", "source_node_id", "source_port", "target_node_id", "target_port")
             ):
                 raise WorkflowValidationError("Mỗi edge phải có đủ edge_id, source_node_id, source_port, target_node_id, target_port.")
+            if not all(
+                isinstance(raw_e[k], str)
+                for k in ("edge_id", "source_node_id", "source_port", "target_node_id", "target_port")
+            ):
+                raise WorkflowValidationError("Các trường của edge phải là chuỗi.")
             edges.append(
                 WorkflowEdgeDef(
                     edge_id=str(raw_e["edge_id"]),
@@ -192,18 +214,38 @@ class WorkflowEngine:
         return nodes, edges
 
     @staticmethod
+    def _require_port_mapping(node_id: str, direction: str, value: Any) -> None:
+        if not isinstance(value, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in value.items()
+        ):
+            raise WorkflowValidationError(
+                f"Node '{node_id}': '{direction}' phải là object dạng {{port_name: port_type}}."
+            )
+
+    @staticmethod
     def validate_and_plan(
         nodes: list[WorkflowNodeDef],
         edges: list[WorkflowEdgeDef],
+        cache_scope: str | None = None,
     ) -> tuple[list[str], dict[str, str]]:
+        """Validate the DAG and compute Merkle cache keys.
+
+        ``cache_scope`` (e.g. the project id) is folded into every key so that cache
+        entries can never be shared between projects.
+        """
         node_map = {n.node_id: n for n in nodes}
         if len(node_map) != len(nodes):
             raise WorkflowValidationError("Phát hiện node_id bị trùng lặp trong Workflow Graph.")
         adj: dict[str, list[str]] = {n.node_id: [] for n in nodes}
         in_degree: dict[str, int] = {n.node_id: 0 for n in nodes}
         incoming_edges: dict[str, list[WorkflowEdgeDef]] = {n.node_id: [] for n in nodes}
+        seen_edge_ids: set[str] = set()
+        bound_inputs: set[tuple[str, str]] = set()
 
         for edge in edges:
+            if edge.edge_id in seen_edge_ids:
+                raise WorkflowValidationError(f"Phát hiện edge_id bị trùng lặp: '{edge.edge_id}'.")
+            seen_edge_ids.add(edge.edge_id)
             if edge.source_node_id not in node_map or edge.target_node_id not in node_map:
                 raise WorkflowValidationError(f"Cạnh '{edge.edge_id}' trỏ tới node không tồn tại.")
             src_node = node_map[edge.source_node_id]
@@ -219,6 +261,12 @@ class WorkflowEngine:
                 raise WorkflowValidationError(f"Port type không hợp lệ: {src_type} -> {tgt_type}")
             if src_type != tgt_type:
                 raise WorkflowValidationError(f"Type mismatch: {src_type} != {tgt_type}")
+            input_slot = (edge.target_node_id, edge.target_port)
+            if input_slot in bound_inputs:
+                raise WorkflowValidationError(
+                    f"Port đích '{edge.target_port}' trên '{edge.target_node_id}' đã có edge khác nối vào."
+                )
+            bound_inputs.add(input_slot)
 
             adj[edge.source_node_id].append(edge.target_node_id)
             in_degree[edge.target_node_id] += 1
@@ -244,8 +292,11 @@ class WorkflowEngine:
                 f"{e.source_node_id}:{e.source_port}->{e.target_port}:{cache_keys[e.source_node_id]}"
                 for e in sorted(incoming_edges[nid], key=lambda x: (x.source_node_id, x.source_port, x.target_port))
             ]
+            key_material: dict[str, Any] = {"t": node.node_type, "c": node.config, "p": parent_hashes}
+            if cache_scope is not None:
+                key_material["s"] = cache_scope
             payload = json.dumps(
-                {"t": node.node_type, "c": node.config, "p": parent_hashes},
+                key_material,
                 sort_keys=True,
                 ensure_ascii=False,
             )

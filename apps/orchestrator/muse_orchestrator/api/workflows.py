@@ -129,7 +129,7 @@ class WorkflowApprovalNodeOut(BaseModel):
 
 class WorkflowApprovalOut(BaseModel):
     run_id: str
-    status: Literal["succeeded"]
+    status: Literal["succeeded", "waiting_approval"]
     execution_mode: Literal["simulation"]
     node_executions: list[WorkflowApprovalNodeOut]
 
@@ -167,7 +167,7 @@ async def create_workflow(
 
     try:
         nodes_def, edges_def = WorkflowEngine.parse_graph_json(nodes_json, edges_json)
-        execution_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def)
+        execution_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def, cache_scope=project_id)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -218,7 +218,7 @@ async def update_workflow_graph(
 
     try:
         nodes_def, edges_def = WorkflowEngine.parse_graph_json(payload.nodes, payload.edges)
-        execution_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def)
+        execution_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def, cache_scope=project_id)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -281,7 +281,7 @@ async def execute_workflow(
         raise HTTPException(status_code=404, detail="Workflow version không tồn tại.")
 
     nodes_def, edges_def = WorkflowEngine.parse_graph_json(ver.nodes_json, ver.edges_json)
-    full_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def)
+    full_order, cache_keys = WorkflowEngine.validate_and_plan(nodes_def, edges_def, cache_scope=project_id)
     node_map = {n.node_id: n for n in nodes_def}
 
     if payload.run_mode in ("from_here", "downstream") and payload.start_node_id:
@@ -343,8 +343,16 @@ async def execute_workflow(
             node_records.append(n_exec)
             continue
 
-        # Kiểm tra Cache Entry nếu không ép chạy lại (force_rerun)
-        cached = None if payload.force_rerun else await repository.get_workflow_cache_entry(ckey)
+        # Kiểm tra Cache Entry nếu không ép chạy lại (force_rerun). ManualApproval gates are
+        # never served from cache: every run requires a fresh operator decision. Cache rows
+        # are only reused when they belong to this project.
+        cached = (
+            None
+            if payload.force_rerun or nd.node_type == "ManualApproval"
+            else await repository.get_workflow_cache_entry(ckey)
+        )
+        if cached is not None and cached.project_id != project_id:
+            cached = None
         # The original M3 prototype stored placeholder node refs as "verified". Do not
         # trust legacy cache rows without an explicit execution provenance marker.
         if cached is not None and cached.output_refs.get("execution_kind") not in {
@@ -470,9 +478,12 @@ async def approve_manual_gate_and_resume(
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> WorkflowApprovalOut:
-    """Duyệt cổng ManualApproval và tự động chạy tiếp các node phía sau đang bị blocked."""
+    """Duyệt cổng ManualApproval và chạy tiếp tới cổng ManualApproval kế tiếp (nếu có)."""
+    wf = await repository.get_workflow_definition(workflow_id)
+    if not wf or wf.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Workflow không tồn tại.")
     wf_run = await repository.get_workflow_run(run_id)
-    if not wf_run or wf_run.workflow_id != workflow_id:
+    if not wf_run or wf_run.workflow_id != workflow_id or wf_run.project_id != project_id:
         raise HTTPException(status_code=404, detail="Workflow run không tồn tại.")
 
     node_execs = await repository.list_node_executions_for_run(run_id)
@@ -492,42 +503,52 @@ async def approve_manual_gate_and_resume(
         "execution_kind": "approval",
     }
     target.logs = list(target.logs or []) + [f"Approved by {actor}."]
+    # Approvals are deliberately NOT written to the workflow cache: a later run must
+    # stop at the gate again instead of inheriting this decision.
 
-    if not await repository.get_workflow_cache_entry(target.cache_key):
-        repository.stage_workflow_entity(WorkflowCacheEntry(
-            cache_key=target.cache_key,
-            project_id=project_id,
-            node_type=target.node_type,
-            output_refs=target.output_refs,
-        ))
-
-    # Mở khoá và chạy tiếp các node bị blocked phía sau theo thứ tự kế hoạch
+    # Mở khoá các node bị blocked theo thứ tự kế hoạch, nhưng dừng lại ở cổng
+    # ManualApproval tiếp theo: cổng đó phải được duyệt riêng.
+    paused_at_next_gate = False
     for nid in wf_run.execution_plan_order:
-        ne = exec_by_nid[nid]
-        if ne.state == NodeExecutionState.BLOCKED:
-            ne.state = NodeExecutionState.SUCCEEDED
+        ne = exec_by_nid.get(nid)
+        if ne is None or ne.state != NodeExecutionState.BLOCKED:
+            continue
+        if paused_at_next_gate:
+            continue
+        if ne.node_type == "ManualApproval":
+            paused_at_next_gate = True
+            ne.state = NodeExecutionState.WAITING_APPROVAL
             ne.started_at = now
-            ne.ended_at = now
-            ne.output_refs = {
-                "node_id": nid,
-                "status": "simulated",
-                "execution_kind": "simulation",
-                "placeholder": True,
-                "reason": "No production node executor is registered for this node type.",
-            }
             ne.logs = list(ne.logs or []) + [
-                "Resumed state-machine simulation after ManualApproval; no media was generated."
+                "Paused at ManualApproval gate. Waiting for operator approval."
             ]
-            if not await repository.get_workflow_cache_entry(ne.cache_key):
-                repository.stage_workflow_entity(WorkflowCacheEntry(
-                    cache_key=ne.cache_key,
-                    project_id=project_id,
-                    node_type=ne.node_type,
-                    output_refs=ne.output_refs,
-                ))
+            continue
+        ne.state = NodeExecutionState.SUCCEEDED
+        ne.started_at = now
+        ne.ended_at = now
+        ne.output_refs = {
+            "node_id": nid,
+            "status": "simulated",
+            "execution_kind": "simulation",
+            "placeholder": True,
+            "reason": "No production node executor is registered for this node type.",
+        }
+        ne.logs = list(ne.logs or []) + [
+            "Resumed state-machine simulation after ManualApproval; no media was generated."
+        ]
+        if not await repository.get_workflow_cache_entry(ne.cache_key):
+            repository.stage_workflow_entity(WorkflowCacheEntry(
+                cache_key=ne.cache_key,
+                project_id=project_id,
+                node_type=ne.node_type,
+                output_refs=ne.output_refs,
+            ))
 
-    wf_run.status = "succeeded"
-    wf_run.finished_at = now
+    if paused_at_next_gate:
+        wf_run.status = "waiting_approval"
+    else:
+        wf_run.status = "succeeded"
+        wf_run.finished_at = now
     await repository.commit_workflow_changes()
 
     return {
@@ -542,5 +563,6 @@ async def approve_manual_gate_and_resume(
                 "output_refs": exec_by_nid[nid].output_refs,
             }
             for nid in wf_run.execution_plan_order
+            if nid in exec_by_nid
         ],
     }

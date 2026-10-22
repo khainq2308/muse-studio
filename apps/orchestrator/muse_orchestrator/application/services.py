@@ -102,6 +102,8 @@ class ProjectService:
         return await self.repository.create_project_bundle(cloned, revision)
 
     async def list_revisions(self, project_id: str) -> list[ProjectRevision]:
+        if await self.repository.get_project(project_id) is None:
+            raise ApplicationError(404, "Project không tồn tại.")
         return await self.repository.list_project_revisions(project_id)
 
 

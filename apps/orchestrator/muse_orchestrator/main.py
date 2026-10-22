@@ -2,6 +2,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 import logging
+import traceback
 from arq import create_pool
 from arq.connections import RedisSettings
 from typing import Any
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from muse_orchestrator.application.services import ApplicationError
@@ -83,6 +85,32 @@ app.add_middleware(
     allow_methods=_CORS_ALLOWED_METHODS,
     allow_headers=_CORS_ALLOWED_HEADERS,
 )
+
+
+def _host_name(host_header: str) -> str:
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        return host[1 : host.find("]")] if "]" in host else host
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+@app.middleware("http")
+async def dev_host_guard(request: Request, call_next: Any) -> Any:
+    """Mitigate DNS rebinding while the API is unauthenticated with dev defaults.
+
+    Only active when ``settings.insecure_dev_defaults`` is true AND no admin token is
+    configured; production configs (which require a token) are unaffected.
+    """
+    if settings.insecure_dev_defaults and not (settings.studio_admin_token or "").strip():
+        host = _host_name(request.headers.get("host", ""))
+        if host not in settings.dev_allowed_host_set:
+            return _error_envelope_response(
+                status.HTTP_400_BAD_REQUEST,
+                "Host header is not allowed for an unauthenticated development server.",
+                category="invalid_request",
+                retryable=False,
+            )
+    return await call_next(request)
 
 
 _ERROR_STATUS_DEFAULTS: dict[int, tuple[str, bool]] = {
@@ -172,6 +200,43 @@ async def request_validation_exception_handler(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         safe_errors,
         category="validation",
+        retryable=False,
+    )
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(_request: Request, exc: IntegrityError) -> JSONResponse:
+    # A uniqueness/foreign-key race lost against a concurrent writer. Never echo the SQL
+    # statement or bound parameters: they can contain encrypted secrets or user data.
+    logger.warning(
+        "Database integrity conflict: %s",
+        SecretRedactor.redact_text(str(getattr(exc, "orig", "") or type(exc).__name__))[:500],
+    )
+    return _error_envelope_response(
+        status.HTTP_409_CONFLICT,
+        "The request conflicts with existing data.",
+        category="conflict",
+        retryable=False,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Last-resort handler: stable envelope, no internal details in the response body."""
+    redacted_trace = SecretRedactor.redact_text(
+        "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    )
+    logger.error(
+        "Unhandled %s on %s %s\n%s",
+        type(exc).__name__,
+        request.method,
+        request.url.path,
+        redacted_trace,
+    )
+    return _error_envelope_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "Internal server error.",
+        category="internal_error",
         retryable=False,
     )
 

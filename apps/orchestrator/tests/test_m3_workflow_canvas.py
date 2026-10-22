@@ -99,8 +99,17 @@ async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation
         json={"run_mode": "full"},
     )
     run2 = run2_res.json()
-    assert run2["status"] == "succeeded"
-    assert all(n["cache_hit"] is True and n["state"] == "skipped" for n in run2["node_executions"])
+    # BUG-003: ManualApproval is never served from cache. Every upstream node is a cache
+    # hit, but the gate must ask the operator again on each run.
+    assert run2["status"] == "waiting_approval"
+    run2_by_id = {n["node_id"]: n for n in run2["node_executions"]}
+    assert all(
+        n["cache_hit"] is True and n["state"] == "skipped"
+        for nid, n in run2_by_id.items()
+        if nid != "n_approval"
+    )
+    assert run2_by_id["n_approval"]["cache_hit"] is False
+    assert run2_by_id["n_approval"]["state"] == "waiting_approval"
 
     # 6. Sửa cấu hình của node thứ 5 (n_shots: đổi default_duration từ 5.0 sang 8.0)
     # -> 4 node đầu tiên (n_script_in, n_analyze, n_bible, n_scenes) PHẢI giữ nguyên Cache Hit (skipped)

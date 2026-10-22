@@ -1,10 +1,11 @@
 from __future__ import annotations
+import math
 import uuid
 from dataclasses import asdict
 from typing import Any, Literal
 from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from muse_orchestrator.api.arq_dispatch import schedule_export_job
 from muse_orchestrator.api.dependencies import get_studio_repository
@@ -23,20 +24,34 @@ from muse_orchestrator.services.timeline_service import (
 router = APIRouter(prefix="/api/v1/projects/{project_id}/timeline", tags=["M6 Timeline Editor & FFmpeg Export"])
 
 
+MAX_EXPORT_DIMENSION = 4096
+MIN_EXPORT_DIMENSION = 16
+
+
 class ClipEditItemIn(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     shot_id: str | None = None
     take_id: str | None = None
     asset_id: str | None = None
     order_index: int
-    start_time_seconds: float | None = None
+    start_time_seconds: float | None = Field(default=None, ge=0.0, le=86400.0)
     source_duration_seconds: float = Field(default=5.0, ge=0.2, le=600.0)
-    trim_start_seconds: float = Field(default=0.0, ge=0.0)
-    trim_end_seconds: float = Field(default=0.0, ge=0.0)
+    trim_start_seconds: float = Field(default=0.0, ge=0.0, le=600.0)
+    trim_end_seconds: float = Field(default=0.0, ge=0.0, le=600.0)
     transition_type: str = Field(default="hard_cut", pattern=r"^(hard_cut|cross_dissolve)$")
     transition_duration_seconds: float = Field(default=0.0, ge=0.0, le=5.0)
     volume: float = Field(default=1.0, ge=0.0, le=2.0)
     fade_in_seconds: float = Field(default=0.0, ge=0.0, le=10.0)
     fade_out_seconds: float = Field(default=0.0, ge=0.0, le=10.0)
+
+    @model_validator(mode="after")
+    def _trims_leave_playable_media(self) -> "ClipEditItemIn":
+        if self.trim_start_seconds + self.trim_end_seconds >= self.source_duration_seconds:
+            raise ValueError(
+                "trim_start_seconds + trim_end_seconds must be less than source_duration_seconds."
+            )
+        return self
 
 
 class AudioTrackItemIn(BaseModel):
@@ -62,12 +77,42 @@ class TimelineAssembleIn(BaseModel):
     audio_tracks: list[AudioTrackItemIn] = Field(default_factory=list)
     custom_clips: list[ClipEditItemIn] | None = None
 
+    @field_validator("title_card")
+    @classmethod
+    def _validate_title_card_duration(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if "duration_seconds" in value:
+            raw = value["duration_seconds"]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+                raise ValueError("title_card.duration_seconds must be a number.")
+            try:
+                duration = float(raw)
+            except ValueError as exc:
+                raise ValueError("title_card.duration_seconds must be a number.") from exc
+            if not math.isfinite(duration) or duration < 0 or duration > 60:
+                raise ValueError("title_card.duration_seconds must be between 0 and 60.")
+            value = {**value, "duration_seconds": duration}
+        return value
+
 
 class ExportLaunchIn(BaseModel):
     sequence_id: str | None = None
     aspect_ratio: str | None = Field(default=None, pattern=r"^(16:9|9:16|1:1|21:9)$")
     fps: int | None = Field(default=None, ge=12, le=60)
-    resolution: str | None = None
+    resolution: str | None = Field(default=None, pattern=r"^\d{2,4}x\d{2,4}$")
+
+    @field_validator("resolution")
+    @classmethod
+    def _validate_resolution(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        width, height = (int(part) for part in value.split("x"))
+        for dim in (width, height):
+            if dim % 2 or not MIN_EXPORT_DIMENSION <= dim <= MAX_EXPORT_DIMENSION:
+                raise ValueError(
+                    f"resolution dimensions must be even and between {MIN_EXPORT_DIMENSION} "
+                    f"and {MAX_EXPORT_DIMENSION}."
+                )
+        return value
 
 
 TimelineJsonValue = TypeAliasType(
@@ -179,6 +224,38 @@ class ExportJobStatusOut(BaseModel):
     message: str | None = None
 
 
+async def _validate_custom_clip_ownership(
+    project_id: str,
+    position: int,
+    clip: ClipEditItemIn,
+    repository: StudioRepository,
+) -> None:
+    """Reject clips that reference another project's shot/take/asset or mismatched pairs."""
+
+    def reject(reason: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"custom_clips[{position}]: {reason}",
+        )
+
+    if clip.shot_id is not None:
+        shot = await repository.get_shot(clip.shot_id)
+        if shot is None or shot.project_id != project_id:
+            raise reject("shot_id không thuộc dự án này.")
+    if clip.take_id is not None:
+        take = await repository.get_timeline_shot_take(clip.take_id)
+        if take is None or take.project_id != project_id:
+            raise reject("take_id không thuộc dự án này.")
+        if clip.shot_id is not None and take.shot_id != clip.shot_id:
+            raise reject("take_id không thuộc shot_id đã chọn.")
+        if clip.asset_id is not None and take.asset_id != clip.asset_id:
+            raise reject("asset_id không khớp với asset của take_id.")
+    if clip.asset_id is not None:
+        asset = await repository.get_asset(clip.asset_id)
+        if asset is None or asset.project_id != project_id:
+            raise reject("asset_id không thuộc dự án này.")
+
+
 @router.post("/assemble", response_model=TimelineAssembleOut, status_code=status.HTTP_201_CREATED)
 async def assemble_or_update_timeline(
     project_id: str,
@@ -203,6 +280,8 @@ async def assemble_or_update_timeline(
 
     if payload.custom_clips is not None:
         # Người dùng chủ động truyền danh sách clip đã trim/reorder/gap test
+        for position, clip in enumerate(payload.custom_clips):
+            await _validate_custom_clip_ownership(project_id, position, clip, repository)
         for c in sorted(payload.custom_clips, key=lambda x: x.order_index):
             clip_dicts.append(c.model_dump())
         for s in shots:

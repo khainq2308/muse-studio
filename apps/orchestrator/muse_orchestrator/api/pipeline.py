@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Literal
 from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from muse_orchestrator.api.dependencies import get_studio_repository
 from muse_orchestrator.infrastructure.repositories import StudioRepository
@@ -44,18 +44,32 @@ class BibleEntryCreateIn(BaseModel):
     requires_reference_lock: bool = Field(default=False)
 
 
+MAX_SHOT_DURATION_SECONDS = 600.0
+
+
 class ShotUpdateIn(BaseModel):
-    shot_size: str | None = None
-    camera_motion: str | None = None
-    composition: str | None = None
-    action: str | None = None
-    duration_seconds: float | None = None
-    continuity_mode: str | None = None
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    shot_size: str | None = Field(default=None, min_length=1, max_length=128)
+    camera_motion: str | None = Field(default=None, min_length=1, max_length=128)
+    composition: str | None = Field(default=None, min_length=1, max_length=2000)
+    action: str | None = Field(default=None, min_length=1, max_length=4000)
+    duration_seconds: float | None = Field(
+        default=None, gt=0, le=MAX_SHOT_DURATION_SECONDS, allow_inf_nan=False
+    )
+    continuity_mode: Literal["standard", "frame_chain"] | None = None
     previous_shot_id: str | None = None
     first_frame_asset_id: str | None = None
     requires_reference_lock: bool | None = None
     reference_asset_ids: list[str] | None = None
     approval_state: ShotApprovalState | None = None
+
+    @field_validator("shot_size", "camera_motion", "composition", "action")
+    @classmethod
+    def _reject_blank_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("must not be blank")
+        return value
 
 
 class PipelineLintIssueOut(BaseModel):
@@ -137,6 +151,33 @@ class ProjectShotsExportOut(BaseModel):
 
 
 async def _recompile_project_shots(project_id: str, repository: StudioRepository) -> list[ShotRecord]:
+    """Recompile and persist prompts/lint state after an explicit project mutation."""
+    result = await _compile_project_shots(project_id, repository)
+    assert isinstance(result, tuple)
+    return result[0]
+
+
+async def _dry_run_shot_lint(
+    project_id: str,
+    repository: StudioRepository,
+    shot_id: str,
+    overrides: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Compile the would-be state of one shot without mutating or committing anything."""
+    result = await _compile_project_shots(
+        project_id, repository, dry_run_shot_id=shot_id, dry_run_overrides=overrides
+    )
+    assert isinstance(result, list)
+    return result
+
+
+async def _compile_project_shots(
+    project_id: str,
+    repository: StudioRepository,
+    *,
+    dry_run_shot_id: str | None = None,
+    dry_run_overrides: dict[str, Any] | None = None,
+) -> tuple[list[ShotRecord]] | list[dict[str, Any]]:
     """Recompile and persist prompts/lint state after an explicit project mutation.
 
     Read-only list/export handlers must use ``StudioRepository.list_project_shots``
@@ -193,25 +234,44 @@ async def _recompile_project_shots(project_id: str, repository: StudioRepository
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
     previous_spec: ShotSpec | None = None
+    dry_run_lint: list[dict[str, Any]] = []
     for s in shots:
+        values: dict[str, Any] = {
+            "subject_codes": s.subject_codes,
+            "location_code": s.location_code,
+            "shot_size": s.shot_size,
+            "camera_angle": s.camera_angle,
+            "camera_motion": s.camera_motion,
+            "composition": s.composition,
+            "action": s.action,
+            "action_start": s.action_start,
+            "action_end": s.action_end,
+            "continuity_notes": s.continuity_notes,
+            "duration_seconds": s.duration_seconds,
+            "aspect_ratio": s.aspect_ratio,
+            "requires_reference_lock": s.requires_reference_lock,
+            "reference_asset_ids": s.reference_asset_ids,
+        }
+        if dry_run_overrides is not None and s.id == dry_run_shot_id:
+            values.update({k: v for k, v in dry_run_overrides.items() if k in values})
         spec = ShotSpec(
             shot_id=s.id,
             scene_id=s.scene_id,
             sequence_index=s.sequence_index,
-            subject_ids=list(s.subject_codes or []),
-            location_id=s.location_code,
-            shot_size=s.shot_size,
-            camera_angle=s.camera_angle,
-            camera_motion=s.camera_motion,
-            composition=s.composition,
-            action=s.action,
-            action_start=s.action_start,
-            action_end=s.action_end,
-            continuity_notes=s.continuity_notes,
-            duration_seconds=s.duration_seconds,
-            aspect_ratio=s.aspect_ratio,
-            requires_reference_lock=s.requires_reference_lock,
-            reference_asset_ids=list(s.reference_asset_ids or []),
+            subject_ids=list(values["subject_codes"] or []),
+            location_id=values["location_code"],
+            shot_size=values["shot_size"],
+            camera_angle=values["camera_angle"],
+            camera_motion=values["camera_motion"],
+            composition=values["composition"],
+            action=values["action"],
+            action_start=values["action_start"],
+            action_end=values["action_end"],
+            continuity_notes=values["continuity_notes"],
+            duration_seconds=values["duration_seconds"],
+            aspect_ratio=values["aspect_ratio"],
+            requires_reference_lock=values["requires_reference_lock"],
+            reference_asset_ids=list(values["reference_asset_ids"] or []),
         )
         compiled = PromptCompiler.compile_and_lint(
             shot=spec,
@@ -222,20 +282,28 @@ async def _recompile_project_shots(project_id: str, repository: StudioRepository
             previous_shot=previous_spec,
         )
         previous_spec = spec
-        s.prompt_final = compiled.prompt_final
-        s.negative_prompt = compiled.negative_prompt
-        s.prompt_hash = compiled.prompt_hash
-        s.lint_report_json = [
+        lint = [
             {"code": i.code, "severity": i.severity, "message": i.message, "field": i.field}
             for i in compiled.lint_issues
         ]
+        if dry_run_overrides is not None:
+            # Dry run: never mutate ORM state; only report the target shot's lint.
+            if s.id == dry_run_shot_id:
+                dry_run_lint = lint
+            continue
+        s.prompt_final = compiled.prompt_final
+        s.negative_prompt = compiled.negative_prompt
+        s.prompt_hash = compiled.prompt_hash
+        s.lint_report_json = lint
         if any(i.code == "BLOCKED_REFERENCE" for i in compiled.lint_issues):
             s.generation_state = ShotGenerationState.BLOCKED_REFERENCE
         elif s.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
             s.generation_state = ShotGenerationState.NOT_STARTED
 
+    if dry_run_overrides is not None:
+        return dry_run_lint
     await repository.commit_pipeline_changes()
-    return list(shots)
+    return (list(shots),)
 
 
 @router.post("/scripts/import", response_model=ScriptImportOut, status_code=status.HTTP_201_CREATED)
@@ -375,6 +443,8 @@ async def import_and_analyze_script(
 
 @router.get("/story-bible", response_model=list[StoryBibleEntryOut])
 async def get_story_bible(project_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[StoryBibleEntryOut]:
+    if not await repository.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
     rows = await repository.list_story_bible_entries(project_id)
     return [
         {
@@ -515,15 +585,26 @@ async def update_and_review_shot(
             detail=f"Trường '{field_name}' không được phép là null.",
         )
 
-    if "continuity_mode" in updates and updates["continuity_mode"] is not None:
-        if updates["continuity_mode"] not in ("standard", "frame_chain"):
-            raise HTTPException(status_code=422, detail="continuity_mode phải là 'standard' hoặc 'frame_chain'.")
     if "previous_shot_id" in updates and updates["previous_shot_id"] is not None:
         if updates["previous_shot_id"] == shot_id:
             raise HTTPException(status_code=422, detail="Shot không thể trỏ previous_shot_id vào chính nó.")
         prev_shot = await repository.get_shot(updates["previous_shot_id"])
         if not prev_shot or prev_shot.project_id != project_id:
             raise HTTPException(status_code=422, detail="previous_shot_id không thuộc dự án này.")
+        # Walk the predecessor chain: linking to any shot that (transitively) points back
+        # to this shot would create a continuity cycle.
+        visited: set[str] = set()
+        cursor = prev_shot
+        while cursor is not None and cursor.previous_shot_id is not None:
+            if cursor.previous_shot_id == shot_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="previous_shot_id tạo thành vòng lặp continuity giữa các Shot.",
+                )
+            if cursor.previous_shot_id in visited:
+                break
+            visited.add(cursor.previous_shot_id)
+            cursor = await repository.get_shot(cursor.previous_shot_id)
     if "reference_asset_ids" in updates and updates["reference_asset_ids"] is not None:
         await _validate_project_asset_references(project_id, updates["reference_asset_ids"], repository)
     if "first_frame_asset_id" in updates and updates["first_frame_asset_id"] is not None:
@@ -531,23 +612,25 @@ async def update_and_review_shot(
         if not ff_asset or ff_asset.project_id != project_id:
             raise HTTPException(status_code=422, detail="first_frame_asset_id không thuộc dự án này.")
 
+    # Chặn duyệt (approve) nếu trạng thái *sau khi cập nhật* còn lỗi Blocker. The check
+    # runs on a dry-run compile BEFORE any field is assigned or committed, so a rejected
+    # request leaves the database unchanged.
+    would_be_state = updates.get("approval_state", shot.approval_state)
+    if would_be_state == ShotApprovalState.APPROVED:
+        lint = await _dry_run_shot_lint(project_id, repository, shot_id, updates)
+        blockers = [i for i in lint if i.get("severity") == "blocker"]
+        if blockers:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Không thể Approve Shot khi còn lỗi Blocker: {blockers[0]['code']} - {blockers[0]['message']}",
+            )
+
     for field_name, val in updates.items():
         setattr(shot, field_name, val)
 
     await repository.commit_pipeline_changes()
     await _recompile_project_shots(project_id, repository)
     await repository.refresh_pipeline_entity(shot)
-
-    # Chặn duyệt (approve) nếu Shot vẫn còn lỗi Blocker trong Prompt Linter
-    if shot.approval_state == ShotApprovalState.APPROVED:
-        blockers = [i for i in (shot.lint_report_json or []) if i.get("severity") == "blocker"]
-        if blockers:
-            shot.approval_state = ShotApprovalState.NEEDS_REVIEW
-            await repository.commit_pipeline_changes()
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Không thể Approve Shot khi còn lỗi Blocker: {blockers[0]['code']} - {blockers[0]['message']}",
-            )
 
     return {
         "id": shot.id,

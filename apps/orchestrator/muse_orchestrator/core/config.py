@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     orphan_cleanup_retention_hours: float = 24.0
     backup_retention_count: int = 10
 
+    # DNS-rebinding guard: while running with insecure development defaults (no admin
+    # token), only these Host header names are accepted. Comma-separated.
+    dev_allowed_hosts: str = Field(
+        default="localhost,127.0.0.1,::1,testserver,orchestrator-api",
+        validation_alias="DEV_ALLOWED_HOSTS",
+    )
+
+    @property
+    def dev_allowed_host_set(self) -> frozenset[str]:
+        return frozenset(
+            item.strip().lower().strip("[]") for item in self.dev_allowed_hosts.split(",") if item.strip()
+        )
+
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
         if self.video_payload_profile == "www222fff" and not (self.video_payload_size or "").strip():
@@ -92,10 +105,32 @@ settings = Settings()
 
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(authorization\s*[:=]\s*['\"]?(?:bearer|basic)\s+)[^\s,'\"}]+"), r"\1[REDACTED]"),
-    (re.compile(r"(?i)((?:x-admin-key|api[-_]?key|access[-_]?token|secret)\s*[:=]\s*['\"]?)[^\s,'\"}&]+"), r"\1[REDACTED]"),
+    (
+        re.compile(
+            r"(?i)(\b(?:x-admin-key|x-api-key|x-studio-admin-token|api[-_]?key|access[-_]?token"
+            r"|refresh[-_]?token|client[-_]?secret|private[-_]?key|password|passwd|secret)"
+            r"\s*[:=]\s*['\"]?)[^\s,'\"}&]+"
+        ),
+        r"\1[REDACTED]",
+    ),
     (re.compile(r"(?i)((?:set-)?cookie\s*[:=]\s*['\"]?)[^\r\n\"']+"), r"\1[REDACTED_COOKIE]"),
-    (re.compile(r"((?:http|https|socks5|socks5h)://)([^:/\s]+:[^@/\s]+)@"), r"\1[REDACTED_PROXY_CRED]@"),
 ]
+
+# Proxy/provider URLs with userinfo. The userinfo part is matched greedily up to the
+# LAST "@" of the whitespace-delimited token so passwords containing "/" or "@" are
+# still fully hidden. Scheme matching is case-insensitive and covers SOCKS4/5.
+_URL_USERINFO_PATTERN = re.compile(
+    r"(?i)\b((?:https?|socks4a?|socks5h?)://)([^\s'\"<>]+)@"
+)
+
+
+def _redact_url_userinfo(match: re.Match[str]) -> str:
+    userinfo = match.group(2)
+    # "user:pass@" is always a credential; a bare "token@host" (no path before the "@")
+    # is treated as one too. An "@" that only appears inside a path/query is left alone.
+    if ":" in userinfo or "/" not in userinfo:
+        return f"{match.group(1)}[REDACTED_PROXY_CRED]@"
+    return match.group(0)
 
 
 class SecretRedactor:
@@ -108,6 +143,7 @@ class SecretRedactor:
             for secret in explicit_secrets:
                 if secret and len(secret) >= 4:
                     sanitized = sanitized.replace(secret, "[REDACTED]")
+        sanitized = _URL_USERINFO_PATTERN.sub(_redact_url_userinfo, sanitized)
         for pattern, replacement in _SENSITIVE_PATTERNS:
             sanitized = pattern.sub(replacement, sanitized)
         return sanitized
@@ -132,6 +168,24 @@ class SecretRedactor:
             "proxy_url",
             "authorization",
             "secret",
+            "token",
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "apikey",
+            "api-key",
+            "x-api-key",
+            "x_api_key",
+            "x-admin-key",
+            "x-studio-admin-token",
+            "studio_admin_token",
+            "client_secret",
+            "private_key",
+            "encrypted_api_key",
+            "secret_encryption_key",
+            "proxy_password",
+            "passwd",
+            "set-cookie",
         }
     )
 
