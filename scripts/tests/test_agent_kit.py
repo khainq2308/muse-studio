@@ -389,6 +389,32 @@ class StopGateTests(unittest.TestCase):
         )
         self.assertTrue(any("exit 5" in item for item in problems), problems)
 
+    def test_tests_use_project_venv_python_when_present(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            venv_python = root / "apps" / "orchestrator" / ".venv" / "bin" / "python"
+            venv_python.parent.mkdir(parents=True)
+            venv_python.write_text("")
+            commands = []
+
+            def runner(command, cwd, timeout):
+                commands.append(command)
+                return 0, "1 passed"
+
+            problems = self.module.validate_changed(
+                root,
+                ["apps/orchestrator/example.py"],
+                ["apps/media-engine/example.py"],
+                runner=runner,
+            )
+            self.assertEqual(problems, [])
+            pytest_interpreters = {c[0] for c in commands if "check_layering.py" not in " ".join(c)}
+            self.assertEqual(pytest_interpreters, {str(venv_python)})
+
+    def test_tests_fall_back_to_system_python_without_venv(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(self.module.resolve_python(Path(temp), "orchestrator"), "python3")
+
     def test_missing_media_pytest_is_not_pass(self):
         responses = iter([(0, ""), (1, "No module named pytest")])
         problems = self.module.validate_changed(

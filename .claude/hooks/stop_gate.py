@@ -76,6 +76,16 @@ def collect_changed_paths(root: Path, runner: Runner | None = None) -> set[str]:
     return changed
 
 
+def resolve_python(root: Path, *apps: str) -> str:
+    """Prefer the project's locked virtualenv over a system python3 without test deps."""
+    for app in apps:
+        for relative in (".venv/bin/python", ".venv/Scripts/python.exe"):
+            candidate = root / "apps" / app / relative
+            if candidate.is_file():
+                return str(candidate)
+    return "python3"
+
+
 def validate_changed(
     root: Path,
     backend: list[str],
@@ -91,14 +101,15 @@ def validate_changed(
 
     if backend:
         cwd = root / "apps" / "orchestrator"
-        code, out = runner(["python3", "-c", "import pytest, fastapi"], cwd, 20)
+        python = resolve_python(root, "orchestrator")
+        code, out = runner([python, "-c", "import pytest, fastapi"], cwd, 20)
         if code != 0:
             problems.append(
                 f"Orchestrator tests NOT RUN: prerequisites failed (exit {code}):\n{out.strip()[-1200:]}"
             )
         else:
             code, out = runner(
-                ["python3", "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"],
+                [python, "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"],
                 cwd,
                 200,
             )
@@ -109,14 +120,17 @@ def validate_changed(
 
     if media:
         cwd = root / "apps" / "media-engine"
-        code, out = runner(["python3", "-c", "import pytest"], cwd, 20)
+        # Match scripts/test.sh: the locked orchestrator venv carries pytest and an editable
+        # muse_media install, while a bare media-engine .venv may have no test dependencies.
+        python = resolve_python(root, "orchestrator")
+        code, out = runner([python, "-c", "import pytest"], cwd, 20)
         if code != 0:
             problems.append(
                 f"Media-engine tests NOT RUN: pytest unavailable (exit {code}):\n{out.strip()[-1200:]}"
             )
         else:
             code, out = runner(
-                ["python3", "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"],
+                [python, "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider"],
                 cwd,
                 60,
             )
