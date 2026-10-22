@@ -260,6 +260,20 @@ class StudioRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_latest_successful_generation_task_for_shot(
+        self, shot_id: str
+    ) -> GenerationTaskRecord | None:
+        result = await self.session.execute(
+            select(GenerationTaskRecord)
+            .where(
+                GenerationTaskRecord.shot_id == shot_id,
+                GenerationTaskRecord.state == QueueTaskState.SUCCEEDED,
+            )
+            .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def create_batch_render_job(self, batch_job: BatchRenderJobRecord) -> BatchRenderJobRecord:
         self.session.add(batch_job)
         await self.session.commit()
