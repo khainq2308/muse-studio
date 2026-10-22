@@ -289,7 +289,7 @@ async def _create_queue_test_tasks(client: AsyncClient, *, project_name: str, sh
         f"/api/v1/projects/{project_id}/scripts/import",
         json={"raw_content": script, "auto_apply_proposal": True},
     )
-    assert import_response.status_code == 200, import_response.text
+    assert import_response.is_success, import_response.text
     shots = (await client.get(f"/api/v1/projects/{project_id}/shots")).json()
     assert len(shots) == shot_count
 

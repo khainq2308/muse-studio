@@ -393,21 +393,24 @@ export async function apiGetText(
   return response.text();
 }
 
-export function apiPost<Path extends ApiPostPath>(
+export function apiPostFromOpenApi<Path extends ApiPostPath>(
   path: Path,
   ...args: ApiPostArguments<Path>
-): Promise<ApiJsonResponse<Path, "post">>;
+): Promise<ApiJsonResponse<Path, "post">> {
+  const [body, options = {}] = args as unknown as [unknown?, ApiRequestOptions?];
+  return apiRequest<ApiJsonResponse<Path, "post">>(path, {
+    ...options,
+    method: "POST",
+    body,
+  });
+}
+
 export function apiPost<T>(
   path: string,
   body?: unknown,
-  options?: Omit<ApiRequestOptions, "method" | "body">,
-): Promise<T>;
-export function apiPost(
-  path: string,
-  body?: unknown,
   options: Omit<ApiRequestOptions, "method" | "body"> = {},
-): Promise<unknown> {
-  return apiRequest<unknown>(path, { ...options, method: "POST", body });
+) {
+  return apiRequest<T>(path, { ...options, method: "POST", body });
 }
 
 export function apiPut<T>(

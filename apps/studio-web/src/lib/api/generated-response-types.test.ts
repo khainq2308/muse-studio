@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
-import { apiGet, apiPost, type ApiGetPath } from "@/lib/api/client";
+import { apiGet, apiPostFromOpenApi, type ApiGetPath } from "@/lib/api/client";
 import type { components, paths } from "@/lib/api/schema";
 
 type GetResponse<Path extends ApiGetPath> = ReturnType<typeof apiGet<Path>>;
@@ -31,13 +31,14 @@ describe("OpenAPI-inferred API client responses", () => {
       Promise<components["schemas"]["QueueTaskPageOut"]>
     >();
     function pauseTaskResponse() {
-      return apiPost("/api/v1/queue/tasks/{task_id}/pause", undefined, {
+      return apiPostFromOpenApi("/api/v1/queue/tasks/{task_id}/pause", undefined, {
         pathParams: { task_id: "task-1" },
       });
     }
     expectTypeOf<ReturnType<typeof pauseTaskResponse>>().toEqualTypeOf<
       Promise<components["schemas"]["QueueTaskOut"]>
     >();
+    void pauseTaskResponse;
   });
 });
 

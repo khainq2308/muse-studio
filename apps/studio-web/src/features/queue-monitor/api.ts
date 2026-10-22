@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef } from "react";
-import { apiGet, apiPost } from "@/lib/api/client";
+import { apiGet, apiPostFromOpenApi } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
 import {
   QUEUE_TASKS_PAGE_SIZE,
@@ -67,7 +67,7 @@ export function useQueueTaskAction(projectId: string, onActionSettled?: () => vo
 
   return useMutation({
     mutationFn: ({ taskId, action }: QueueTaskActionVariables) =>
-      apiPost(ACTION_PATHS[action], undefined, {
+      apiPostFromOpenApi(ACTION_PATHS[action], undefined, {
         pathParams: { task_id: taskId },
       }),
     onSettled: () => {

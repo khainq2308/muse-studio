@@ -29,7 +29,7 @@ def test_queue_task_and_take_routes_publish_explicit_response_models() -> None:
 
     expected = {
         ("post", "/api/v1/queue/tasks", "201"): "EnqueuedQueueTaskOut",
-        ("get", "/api/v1/queue/tasks", "200"): "QueueTaskOut",
+        ("get", "/api/v1/queue/tasks", "200"): "QueueTaskPageOut",
         ("post", "/api/v1/queue/tasks/{task_id}/step", "200"): "QueueTaskOut",
         ("post", "/api/v1/queue/tasks/{task_id}/pause", "200"): "QueueTaskOut",
         ("post", "/api/v1/queue/tasks/{task_id}/resume", "200"): "QueueTaskOut",
