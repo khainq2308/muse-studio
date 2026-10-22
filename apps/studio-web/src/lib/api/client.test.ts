@@ -226,9 +226,7 @@ describe("API client", () => {
       pathParams: { project_id: "project 42" },
     });
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      "/api/v1/projects/project%2042/shots",
-    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/v1/projects/project%2042/shots");
   });
 
   it("rejects missing or unexpected path parameters before fetching", async () => {
