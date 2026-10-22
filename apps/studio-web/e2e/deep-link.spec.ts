@@ -20,10 +20,22 @@ test("production build deep link renders the Queue Monitor and uses the same-ori
   });
 
   await page.route("**/api/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const body =
+      pathname === "/api/v1/queue/tasks"
+        ? {
+            items: [],
+            total: 0,
+            limit: 50,
+            offset: 0,
+            has_more: false,
+            summary: { total_tasks: 0, active_tasks: 0, failed_tasks: 0 },
+          }
+        : [];
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([]),
+      body: JSON.stringify(body),
     });
   });
 

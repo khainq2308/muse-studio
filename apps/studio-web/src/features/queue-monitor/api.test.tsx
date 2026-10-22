@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   QUEUE_POLL_WINDOW_MS,
+  QUEUE_TASKS_PAGE_SIZE,
   type QueueTaskFilter,
   type QueueTaskState,
 } from "@/features/queue-monitor/state";
@@ -29,16 +30,21 @@ vi.mock("@/lib/api/client", () => ({
 import { useQueueTaskAction, useQueueTasks } from "@/features/queue-monitor/api";
 
 type QueryOptionsShape = {
+  queryKey: unknown[];
+  queryFn: (context: { signal: AbortSignal }) => unknown;
   refetchInterval: (query: {
     state: {
-      data?: Array<{ state: QueueTaskState }>;
+      data?: {
+        items: Array<{ state: QueueTaskState }>;
+        summary: { active_tasks: number };
+      };
       status: "pending" | "error" | "success";
     };
   }) => number | false;
 };
 
 type MutationOptionsShape = {
-  onSuccess?: (...args: never[]) => unknown;
+  onSettled?: (...args: never[]) => unknown;
 };
 
 describe("Queue Monitor query hooks", () => {
@@ -47,7 +53,7 @@ describe("Queue Monitor query hooks", () => {
     vi.clearAllMocks();
   });
 
-  it("stops polling on errors and resets the polling window after elapsed time or key changes", () => {
+  it("stops polling on errors, resets the window, and requests bounded pages", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-22T00:00:00.000Z"));
 
@@ -56,18 +62,30 @@ describe("Queue Monitor query hooks", () => {
       options = value as QueryOptionsShape;
       return {} as never;
     });
+    mocks.apiGet.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: QUEUE_TASKS_PAGE_SIZE,
+      offset: 100,
+      has_more: false,
+      summary: { total_tasks: 0, active_tasks: 0, failed_tasks: 0 },
+    });
 
-    const initialProps: { projectId: string; stateFilter: QueueTaskFilter } = {
+    const initialProps: { projectId: string; stateFilter: QueueTaskFilter; offset: number } = {
       projectId: "project-1",
       stateFilter: "all",
+      offset: 100,
     };
     const { result, rerender } = renderHook(
-      ({ projectId, stateFilter }) => useQueueTasks(projectId, stateFilter),
+      ({ projectId, stateFilter, offset }) => useQueueTasks(projectId, stateFilter, offset),
       { initialProps },
     );
 
     const runningQuery = {
-      state: { data: [{ state: "running" as const }], status: "success" as const },
+      state: {
+        data: { items: [{ state: "running" as const }], summary: { active_tasks: 2 } },
+        status: "success" as const,
+      },
     };
     const failedQuery = {
       state: { data: undefined, status: "error" as const },
@@ -75,6 +93,21 @@ describe("Queue Monitor query hooks", () => {
 
     expect(options?.refetchInterval(runningQuery)).toBe(2_000);
     expect(options?.refetchInterval(failedQuery)).toBe(false);
+    expect(options?.queryKey).toContain(100);
+
+    await act(async () => {
+      await options?.queryFn({ signal: new AbortController().signal });
+    });
+    expect(mocks.apiGet).toHaveBeenCalledWith(
+      "/api/v1/queue/tasks",
+      expect.objectContaining({
+        query: {
+          project_id: "project-1",
+          limit: QUEUE_TASKS_PAGE_SIZE,
+          offset: 100,
+        },
+      }),
+    );
 
     vi.setSystemTime(new Date(Date.now() + QUEUE_POLL_WINDOW_MS + 1));
     expect(options?.refetchInterval(runningQuery)).toBe(false);
@@ -83,15 +116,15 @@ describe("Queue Monitor query hooks", () => {
     expect(options?.refetchInterval(runningQuery)).toBe(2_000);
 
     vi.setSystemTime(new Date(Date.now() + QUEUE_POLL_WINDOW_MS + 1));
-    rerender({ projectId: "project-2", stateFilter: "all" });
+    rerender({ projectId: "project-2", stateFilter: "all", offset: 0 });
     expect(options?.refetchInterval(runningQuery)).toBe(2_000);
 
     vi.setSystemTime(new Date(Date.now() + QUEUE_POLL_WINDOW_MS + 1));
-    rerender({ projectId: "project-2", stateFilter: "failed" });
+    rerender({ projectId: "project-2", stateFilter: "failed", offset: 0 });
     expect(options?.refetchInterval(runningQuery)).toBe(2_000);
   });
 
-  it("restarts polling after a successful queue action mutation", async () => {
+  it("invalidates and restarts polling after every queue action result", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-22T00:00:00.000Z"));
 
@@ -105,9 +138,9 @@ describe("Queue Monitor query hooks", () => {
     const resetWindow = vi.fn();
     renderHook(() => useQueueTaskAction("project-1", resetWindow));
 
-    expect(mutationOptions?.onSuccess).toBeTypeOf("function");
+    expect(mutationOptions?.onSettled).toBeTypeOf("function");
     await act(async () => {
-      await mutationOptions?.onSuccess?.();
+      await mutationOptions?.onSettled?.();
     });
     expect(resetWindow).toHaveBeenCalledTimes(1);
     expect(mocks.invalidateQueries).toHaveBeenCalledTimes(1);

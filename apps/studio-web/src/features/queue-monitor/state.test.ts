@@ -37,4 +37,9 @@ describe("queue monitor polling policy", () => {
     expect(getQueueRefetchInterval(undefined, 15_000, "error")).toBe(false);
     expect(getQueueRefetchInterval(["running"], 15_000, "error")).toBe(false);
   });
+
+  it("continues polling active tasks even when they are on another page", () => {
+    expect(getQueueRefetchInterval(["succeeded"], 15_000, "success", 4)).toBe(2_000);
+    expect(getQueueRefetchInterval(["running"], 15_000, "success", 0)).toBe(false);
+  });
 });

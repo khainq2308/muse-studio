@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useQueueTaskAction, useQueueTasks } from "@/features/queue-monitor/api";
 import { QueueTaskList } from "@/features/queue-monitor/components/queue-task-list";
 import {
-  isQueueTaskActive,
+  QUEUE_TASKS_PAGE_SIZE,
   QUEUE_TASK_STATES,
   QUEUE_TASK_STATE_LABELS,
   type QueueTaskAction,
@@ -21,11 +21,21 @@ interface QueueMonitorPageProps {
 
 export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
   const [stateFilter, setStateFilter] = useState<QueueTaskFilter>("all");
+  const [pageState, setPageState] = useState({ scope: projectId + ":all", offset: 0 });
+  const scope = projectId + ":" + stateFilter;
+  const offset = pageState.scope === scope ? pageState.offset : 0;
   const activeAdminToken = useSessionStore((state) => state.adminToken);
-  const tasksQuery = useQueueTasks(projectId, stateFilter);
+  const tasksQuery = useQueueTasks(projectId, stateFilter, offset);
   const actionMutation = useQueueTaskAction(projectId, tasksQuery.resetPollingWindow);
-  const tasks = tasksQuery.data ?? [];
+  const tasks = tasksQuery.data?.items ?? [];
+  const total = tasksQuery.data?.total ?? 0;
+  const summary = tasksQuery.data?.summary;
   const busyTaskId = actionMutation.isPending ? (actionMutation.variables?.taskId ?? null) : null;
+
+  const setPageOffset = (nextOffset: number) => {
+    actionMutation.reset();
+    setPageState({ scope, offset: Math.max(0, nextOffset) });
+  };
 
   const handleAction = (taskId: string, action: QueueTaskAction) => {
     actionMutation.mutate({ taskId, action });
@@ -43,11 +53,6 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
       : actionMutation.error
         ? "Could not update the queue task."
         : null;
-
-  const activeCount = tasks.filter((task) => isQueueTaskActive(task.state)).length;
-  const failedCount = tasks.filter(
-    (task) => task.state === "failed" || task.state === "poll_timeout",
-  ).length;
 
   return (
     <section
@@ -74,7 +79,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           disabled={tasksQuery.isFetching}
         >
           <RefreshCw
-            className={`mr-2 size-4 ${tasksQuery.isFetching ? "animate-spin" : ""}`}
+            className={cn("mr-2 size-4", tasksQuery.isFetching && "animate-spin")}
             aria-hidden="true"
           />
           Refresh
@@ -83,16 +88,16 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
 
       <div className="grid gap-3 sm:grid-cols-3" role="group" aria-label="Queue summary">
         <article className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Tasks in current filter</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums">{tasks.length}</p>
+          <p className="text-sm text-muted-foreground">Tasks in project</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">{summary?.total_tasks ?? 0}</p>
         </article>
         <article className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Queued / running in filter</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums">{activeCount}</p>
+          <p className="text-sm text-muted-foreground">Queued / running</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">{summary?.active_tasks ?? 0}</p>
         </article>
         <article className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Failed / timed out in filter</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums">{failedCount}</p>
+          <p className="text-sm text-muted-foreground">Failed / timed out</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">{summary?.failed_tasks ?? 0}</p>
         </article>
       </div>
 
@@ -104,8 +109,10 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           id="queue-state-filter"
           value={stateFilter}
           onChange={(event) => {
+            const nextFilter = event.target.value as QueueTaskFilter;
             actionMutation.reset();
-            setStateFilter(event.target.value as QueueTaskFilter);
+            setStateFilter(nextFilter);
+            setPageState({ scope: projectId + ":" + nextFilter, offset: 0 });
           }}
           className={cn(
             "rounded-md border border-input bg-background px-3 py-2 text-sm",
@@ -138,7 +145,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           <h3 className="font-semibold">Generation tasks</h3>
           <span className="text-xs text-muted-foreground">
             Auto-refresh backs off from 2s to 10s and stops after 30 minutes or when no task is
-            active.
+            active in this project.
           </span>
         </div>
         <QueryState
@@ -157,6 +164,38 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
         >
           <QueueTaskList tasks={tasks} busyTaskId={busyTaskId} onAction={handleAction} />
         </QueryState>
+
+        {tasksQuery.data && (total > QUEUE_TASKS_PAGE_SIZE || offset > 0) && (
+          <nav
+            aria-label="Queue pagination"
+            className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <p role="status" className="text-sm text-muted-foreground">
+              Showing {total === 0 ? 0 : offset + 1}–{offset + tasks.length} of {total} matching
+              tasks
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={offset === 0 || tasksQuery.isFetching}
+                onClick={() => setPageOffset(offset - QUEUE_TASKS_PAGE_SIZE)}
+              >
+                Previous page
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!tasksQuery.data.has_more || tasksQuery.isFetching}
+                onClick={() => setPageOffset(offset + QUEUE_TASKS_PAGE_SIZE)}
+              >
+                Next page
+              </Button>
+            </div>
+          </nav>
+        )}
       </section>
     </section>
   );
