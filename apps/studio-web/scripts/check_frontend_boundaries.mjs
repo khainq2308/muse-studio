@@ -20,9 +20,6 @@ function resolveLocalImport(sourceFile, specifier) {
   if (specifier === "src" || specifier.startsWith("src/")) {
     return path.resolve(appRoot, specifier);
   }
-  if (specifier.startsWith("@muse-studio/contracts")) {
-    return path.resolve(appRoot, "../../packages/contracts");
-  }
   if (specifier.startsWith(".")) return path.resolve(path.dirname(sourceFile), specifier);
   return null;
 }
@@ -258,6 +255,16 @@ for (const file of collectFiles(srcRoot)) {
   const isUiPrimitive = relative.startsWith("components/ui/");
 
   for (const specifier of collectImportSpecifiers(sourceFile)) {
+    if (
+      specifier === "@muse-studio/contracts" ||
+      specifier.startsWith("@muse-studio/contracts/")
+    ) {
+      failures.push(
+        `${relative}: import "${specifier}" targets the retired contracts package; use generated OpenAPI types from lib/api/schema.d.ts.`,
+      );
+      continue;
+    }
+
     const targetPath = resolveLocalImport(file, specifier);
     if (!targetPath) continue;
 
