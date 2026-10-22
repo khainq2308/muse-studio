@@ -197,7 +197,7 @@ Cơ chế thực thi (thiết lập ở Phase 0, không dựa vào tự giác): 
 
 - Dùng `@xyflow/react` với custom node components typed theo generated schema; trạng thái node ánh xạ từ `NodeExecutionState` sang theme tokens.
 - Backend hiện chấp nhận `run_mode` gồm `full | dry_run | from_here | downstream` (xem `WorkflowRunRequestIn` trong `apps/orchestrator/muse_orchestrator/api/workflows.py`). UI phải gửi tường minh `run_mode: "dry_run"` cho thao tác mặc định; chỉ gửi `run_mode: "full"` sau xác nhận ở mục 5.4, không dựa vào default phía server để ngầm chạy thật.
-- Với thao tác chạy một phần, `from_here` và `downstream` phải đi kèm `start_node_id` là ID của node tồn tại. **Backend hiện chưa từ chối khi thiếu `start_node_id`**: trong trường hợp đó nó lập kế hoạch cho toàn graph; vì vậy UI không được gửi hai mode này nếu chưa chọn node. Phase 0c phải bổ sung validation phía backend để trả lỗi rõ ràng khi thiếu `start_node_id`, thay vì âm thầm fallback sang full graph.
+- Với thao tác chạy một phần, `from_here` và `downstream` phải đi kèm `start_node_id` là ID của node tồn tại. Backend (`WorkflowRunRequestIn`) đã từ chối bằng lỗi 422 khi thiếu `start_node_id`, và UI cũng không được gửi hai mode này nếu chưa chọn node.
 - `run_mode` phải thành enum gồm đủ bốn giá trị trong request/response schema để generated types phản ánh hợp đồng thật; không rút gọn thành chỉ `full | dry_run`.
 - Thao tác approve manual gate là hành động first-class trên chính node đang `waiting_approval`, không phải form nhập ID rời rạc.
 

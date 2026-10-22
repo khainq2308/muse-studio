@@ -10,7 +10,7 @@ def test_backoff_has_real_jitter_and_stays_bounded():
 
 
 def test_secret_mask_reveals_little():
-    assert SecretVault.mask("sk-abcdefghijklmnop") == "sk...op"
+    assert SecretVault.mask("sk-abcdefghijklmnop") == "********"
     assert SecretVault.mask("short") == "********"
     assert SecretVault.mask(None) == "[NOT_SET]"
 

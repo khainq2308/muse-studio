@@ -391,6 +391,23 @@ async def get_story_bible(project_id: str, repository: StudioRepository = Depend
     ]
 
 
+async def _validate_project_asset_references(
+    project_id: str,
+    asset_ids: list[str] | None,
+    repository: StudioRepository,
+) -> None:
+    """Reject references to assets outside the owning project before persisting them."""
+    requested_ids = set(asset_ids or [])
+    if not requested_ids:
+        return
+    project_asset_ids = set(await repository.list_project_asset_ids(project_id))
+    if not requested_ids.issubset(project_asset_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Mọi reference_asset_ids phải thuộc project đang thao tác.",
+        )
+
+
 @router.post("/story-bible", response_model=StoryBibleUpsertOut, status_code=status.HTTP_201_CREATED)
 async def upsert_story_bible_entry(
     project_id: str,
@@ -398,6 +415,9 @@ async def upsert_story_bible_entry(
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> StoryBibleUpsertOut:
+    if not await repository.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project không tồn tại.")
+    await _validate_project_asset_references(project_id, payload.reference_asset_ids, repository)
     existing = await repository.get_story_bible_entry(project_id, payload.code_name)
 
     if existing:
@@ -481,7 +501,37 @@ async def update_and_review_shot(
     if not shot or shot.project_id != project_id:
         raise HTTPException(status_code=404, detail="Không tìm thấy Shot trong dự án.")
 
-    for field_name, val in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    nullable_fields = {"previous_shot_id", "first_frame_asset_id"}
+    invalid_null_fields = [
+        field_name
+        for field_name, value in updates.items()
+        if value is None and field_name not in nullable_fields
+    ]
+    if invalid_null_fields:
+        field_name = invalid_null_fields[0]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Trường '{field_name}' không được phép là null.",
+        )
+
+    if "continuity_mode" in updates and updates["continuity_mode"] is not None:
+        if updates["continuity_mode"] not in ("standard", "frame_chain"):
+            raise HTTPException(status_code=422, detail="continuity_mode phải là 'standard' hoặc 'frame_chain'.")
+    if "previous_shot_id" in updates and updates["previous_shot_id"] is not None:
+        if updates["previous_shot_id"] == shot_id:
+            raise HTTPException(status_code=422, detail="Shot không thể trỏ previous_shot_id vào chính nó.")
+        prev_shot = await repository.get_shot(updates["previous_shot_id"])
+        if not prev_shot or prev_shot.project_id != project_id:
+            raise HTTPException(status_code=422, detail="previous_shot_id không thuộc dự án này.")
+    if "reference_asset_ids" in updates and updates["reference_asset_ids"] is not None:
+        await _validate_project_asset_references(project_id, updates["reference_asset_ids"], repository)
+    if "first_frame_asset_id" in updates and updates["first_frame_asset_id"] is not None:
+        ff_asset = await repository.get_asset(updates["first_frame_asset_id"])
+        if not ff_asset or ff_asset.project_id != project_id:
+            raise HTTPException(status_code=422, detail="first_frame_asset_id không thuộc dự án này.")
+
+    for field_name, val in updates.items():
         setattr(shot, field_name, val)
 
     await repository.commit_pipeline_changes()

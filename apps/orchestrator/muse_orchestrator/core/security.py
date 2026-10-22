@@ -33,9 +33,7 @@ class SecretVault:
     def mask(secret: str | None) -> str:
         if not secret:
             return "[NOT_SET]"
-        if len(secret) <= 12:
-            return "********"
-        return f"{secret[:2]}...{secret[-2:]}"
+        return "********"
 
 
 vault = SecretVault(settings.secret_encryption_key)

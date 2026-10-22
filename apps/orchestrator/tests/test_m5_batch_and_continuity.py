@@ -253,3 +253,140 @@ SHOT 2: Hero lands on opposite roof
 
     final_shots = {s["id"]: s for s in (await client.get(f"/api/v1/projects/{proj_id}/shots")).json()}
     assert final_shots[shot2["id"]]["first_frame_asset_id"] == takes_s1_after[1]["last_frame_asset_id"]
+
+
+@pytest.mark.asyncio
+async def test_frame_chain_resolves_only_successful_upstream_config_and_allows_new_connection():
+    from types import SimpleNamespace
+    from muse_orchestrator.api.batch import _resolve_frame_chain_generation_config
+    from muse_orchestrator.models.domain import QueueTaskState
+
+    upstream = SimpleNamespace(
+        id="task-success",
+        project_id="project-a",
+        shot_id="shot-upstream",
+        state=QueueTaskState.SUCCEEDED,
+        connection_id="conn-upstream",
+        model_id="model-from-selected-take",
+    )
+    unrelated_success = SimpleNamespace(
+        id="task-other",
+        project_id="project-a",
+        shot_id="another-shot",
+        state=QueueTaskState.SUCCEEDED,
+        connection_id="conn-unrelated",
+        model_id="unrelated-success-model",
+    )
+    failed_newer = SimpleNamespace(
+        id="task-failed",
+        project_id="project-a",
+        shot_id="shot-upstream",
+        state=QueueTaskState.FAILED,
+        connection_id="conn-failed",
+        model_id="failed-model-must-not-be-used",
+    )
+    upstream_shot = SimpleNamespace(
+        id="shot-upstream",
+        project_id="project-a",
+        selected_take_id=None,
+    )
+
+    class FakeRepository:
+        async def get_shot(self, shot_id: str):
+            assert shot_id == "shot-upstream"
+            return upstream_shot
+
+        async def get_latest_successful_generation_task_for_shot(self, shot_id: str):
+            assert shot_id == "shot-upstream"
+            return upstream
+
+        async def list_project_generation_tasks(self, project_id: str):
+            assert project_id == "project-a"
+            # Includes the failed regenerate to ensure it cannot be a config source.
+            return [upstream, unrelated_success, failed_newer]
+
+        async def get_shot_take(self, take_id: str):
+            assert take_id == "take-selected"
+            return SimpleNamespace(
+                project_id="project-a",
+                shot_id="shot-upstream",
+                task_id="task-selected",
+            )
+
+        async def get_generation_task(self, task_id: str):
+            assert task_id == "task-selected"
+            return SimpleNamespace(
+                id="task-selected",
+                project_id="project-a",
+                shot_id="shot-upstream",
+                state=QueueTaskState.SUCCEEDED,
+                connection_id="conn-selected",
+                model_id="selected-take-model",
+            )
+
+    repo = FakeRepository()
+    shot = SimpleNamespace(previous_shot_id="shot-upstream")
+
+    assert await _resolve_frame_chain_generation_config(repo, "project-a", shot) == (
+        "conn-upstream",
+        "model-from-selected-take",
+    )
+    # The selected take owns the propagated frame, so it overrides a newer successful task.
+    upstream_shot.selected_take_id = "take-selected"
+    assert await _resolve_frame_chain_generation_config(repo, "project-a", shot) == (
+        "conn-selected",
+        "selected-take-model",
+    )
+    upstream_shot.selected_take_id = None
+    assert await _resolve_frame_chain_generation_config(
+        repo, "project-a", shot, requested_connection_id="conn-unrelated"
+    ) == ("conn-unrelated", "unrelated-success-model")
+    assert await _resolve_frame_chain_generation_config(
+        repo, "project-a", shot, requested_connection_id="conn-new"
+    ) == ("conn-new", "model-from-selected-take")
+    assert await _resolve_frame_chain_generation_config(
+        repo, "project-a", shot, requested_connection_id="conn-failed"
+    ) == ("conn-failed", "model-from-selected-take")
+
+
+@pytest.mark.asyncio
+async def test_batch_launch_rejects_unknown_or_foreign_scene_before_creating_job(client: AsyncClient):
+    project_a = (
+        await client.post("/api/v1/projects", json={"name": "Batch scene owner"})
+    ).json()["id"]
+    project_b = (
+        await client.post("/api/v1/projects", json={"name": "Foreign scene project"})
+    ).json()["id"]
+
+    for project_id in (project_a, project_b):
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/scripts/import",
+            json={"raw_content": BATCH_SCRIPT_4_SHOTS, "auto_apply_proposal": True},
+        )
+        assert response.status_code == 201
+
+    scene_b_id = (await client.get(f"/api/v1/projects/{project_b}/shots")).json()[0]["scene_id"]
+    connection = await client.post(
+        "/api/v1/connections",
+        json={
+            "name": "batch-scene-validation-connection",
+            "provider_type": "mock",
+            "base_url": "http://localhost:8080",
+        },
+    )
+    assert connection.status_code == 201
+    connection_id = connection.json()["id"]
+
+    foreign_scene = await client.post(
+        f"/api/v1/projects/{project_a}/batch/launch",
+        json={"connection_id": connection_id, "scene_id": scene_b_id},
+    )
+    assert foreign_scene.status_code == 422
+    assert "Scene không thuộc project" in foreign_scene.json()["detail"]
+
+    unknown_scene = await client.post(
+        f"/api/v1/projects/{project_a}/batch/launch",
+        json={"connection_id": connection_id, "scene_id": "scene-that-does-not-exist"},
+    )
+    assert unknown_scene.status_code == 404
+    assert "Scene không tồn tại" in unknown_scene.json()["detail"]

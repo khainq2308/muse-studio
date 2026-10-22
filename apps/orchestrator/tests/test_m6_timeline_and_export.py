@@ -460,14 +460,22 @@ async def test_application_errors_preserve_http_status_and_detail(
         json={"name": "   "},
     )
     assert blank_name.status_code == 422
-    assert blank_name.json() == {"detail": "Project name cannot be blank."}
+    assert blank_name.json() == {
+        "detail": "Project name cannot be blank.",
+        "category": "validation",
+        "retryable": False,
+    }
 
     missing_project = await client.post(
         "/api/v1/projects/project-that-does-not-exist/duplicate",
         headers=headers,
     )
     assert missing_project.status_code == 404
-    assert missing_project.json() == {"detail": "Original project not found."}
+    assert missing_project.json() == {
+        "detail": "Original project not found.",
+        "category": "not_found",
+        "retryable": False,
+    }
 
 
 @pytest.mark.asyncio

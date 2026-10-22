@@ -130,6 +130,8 @@ async def _read_limited_error_body(resp: httpx.Response, limit: int = 4096) -> s
     """
     if limit <= 0:
         return ""
+    if getattr(resp, "is_stream_consumed", False):
+        return bytes(resp.content[:limit]).decode("utf-8", "replace")
     body = bytearray()
     async for chunk in resp.aiter_bytes(chunk_size=1024):
         remaining = limit - len(body)
@@ -217,7 +219,8 @@ class Muse2ApiAdapter(VideoProvider):
                 raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
 
             if resp.status_code >= 400:
-                safe_body = SecretRedactor.redact_text(resp.text, [self.api_key or ""])
+                err_body = await _read_limited_error_body(resp, limit=4096)
+                safe_body = SecretRedactor.redact_text(err_body, [self.api_key or ""])
                 raise classify_http_error(resp.status_code, safe_body)
 
             payload = _json_or_fail(resp)
@@ -252,7 +255,8 @@ class Muse2ApiAdapter(VideoProvider):
                 safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
                 raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
             if resp.status_code >= 400:
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(resp.text, [self.api_key or ""]))
+                err_body = await _read_limited_error_body(resp, limit=4096)
+                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(err_body, [self.api_key or ""]))
             return _task_from_response(_json_or_fail(resp))
 
     def _build_video_payload(self, request: VideoGenerationRequest) -> dict[str, object]:
@@ -304,7 +308,8 @@ class Muse2ApiAdapter(VideoProvider):
                 safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
                 raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
             if resp.status_code >= 400:
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(resp.text, [self.api_key or ""]))
+                err_body = await _read_limited_error_body(resp, limit=4096)
+                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(err_body, [self.api_key or ""]))
             return _task_from_response(_json_or_fail(resp))
 
     async def get_task(self, task_id: str) -> ProviderTaskStatus:
@@ -317,7 +322,8 @@ class Muse2ApiAdapter(VideoProvider):
                 safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
                 raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
             if resp.status_code >= 400:
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(resp.text, [self.api_key or ""]))
+                err_body = await _read_limited_error_body(resp, limit=4096)
+                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(err_body, [self.api_key or ""]))
             data = _json_or_fail(resp)
             raw_status = str(data.get("status", "running")).lower()
             status_map = {

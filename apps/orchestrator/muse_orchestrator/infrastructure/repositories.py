@@ -122,14 +122,14 @@ class StudioRepository:
 
     async def get_workflow_version(
         self, workflow_id: str, version_number: int
-    ) -> WorkflowVersion:
+    ) -> WorkflowVersion | None:
         result = await self.session.execute(
             select(WorkflowVersion).where(
                 WorkflowVersion.workflow_id == workflow_id,
                 WorkflowVersion.version_number == version_number,
             )
         )
-        return result.scalar_one()
+        return result.scalar_one_or_none()
 
     async def get_workflow_run(self, run_id: str) -> WorkflowRun | None:
         return await self.session.get(WorkflowRun, run_id)
@@ -234,7 +234,9 @@ class StudioRepository:
 
     async def list_project_generation_tasks(self, project_id: str) -> list[GenerationTaskRecord]:
         result = await self.session.execute(
-            select(GenerationTaskRecord).where(GenerationTaskRecord.project_id == project_id)
+            select(GenerationTaskRecord)
+            .where(GenerationTaskRecord.project_id == project_id)
+            .order_by(GenerationTaskRecord.created_at.asc(), GenerationTaskRecord.id.asc())
         )
         return list(result.scalars().all())
 
@@ -253,7 +255,21 @@ class StudioRepository:
         result = await self.session.execute(
             select(GenerationTaskRecord)
             .where(GenerationTaskRecord.shot_id == shot_id)
-            .order_by(GenerationTaskRecord.created_at.desc())
+            .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_successful_generation_task_for_shot(
+        self, shot_id: str
+    ) -> GenerationTaskRecord | None:
+        result = await self.session.execute(
+            select(GenerationTaskRecord)
+            .where(
+                GenerationTaskRecord.shot_id == shot_id,
+                GenerationTaskRecord.state == QueueTaskState.SUCCEEDED,
+            )
+            .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()

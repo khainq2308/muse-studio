@@ -119,6 +119,12 @@ async def process_export_job(ctx: dict[str, Any], export_id: str) -> dict[str, A
             job.finished_at = datetime.now(timezone.utc)
             await repository.update_export_job(job)
             return {"export_id": export_id, "state": ExportJobState.FAILED.value}
+        except Exception as exc:
+            job.state = ExportJobState.FAILED
+            job.error_message_redacted = f"Unexpected export worker error ({type(exc).__name__})."
+            job.finished_at = datetime.now(timezone.utc)
+            await repository.update_export_job(job)
+            return {"export_id": export_id, "state": ExportJobState.FAILED.value}
 
         probe_meta["unsupported_features"] = manifest.get("unsupported_features", [])
         asset_id = f"ast_exp_{uuid.uuid4().hex[:8]}"

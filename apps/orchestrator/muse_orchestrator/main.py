@@ -4,9 +4,15 @@ from collections.abc import AsyncGenerator
 import logging
 from arq import create_pool
 from arq.connections import RedisSettings
+from typing import Any
 from fastapi import Depends, FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.core.config import SecretRedactor, settings
@@ -31,6 +37,14 @@ from muse_orchestrator.api.backups import router as backups_router
 from muse_orchestrator.api.system import router as system_router
 
 logger = logging.getLogger("muse_orchestrator")
+
+
+class ErrorEnvelope(BaseModel):
+    """Stable response contract shared by validation and HTTP/application errors."""
+
+    detail: Any
+    category: str
+    retryable: bool
 
 
 @asynccontextmanager
@@ -71,24 +85,94 @@ app.add_middleware(
 )
 
 
+_ERROR_STATUS_DEFAULTS: dict[int, tuple[str, bool]] = {
+    400: ("invalid_request", False),
+    401: ("auth_failed", False),
+    403: ("forbidden", False),
+    404: ("not_found", False),
+    409: ("conflict", False),
+    413: ("payload_too_large", False),
+    422: ("validation", False),
+    429: ("rate_limited", True),
+    500: ("internal_error", False),
+    502: ("upstream_5xx", True),
+    503: ("service_unavailable", True),
+    504: ("upstream_timeout", True),
+}
+
+
+def _error_envelope_response(
+    status_code: int,
+    detail: Any,
+    *,
+    category: str | None = None,
+    retryable: bool | None = None,
+) -> JSONResponse:
+    default_cat, default_retry = _ERROR_STATUS_DEFAULTS.get(
+        status_code,
+        ("upstream_5xx" if status_code >= 500 else "invalid_request", status_code in {502, 503, 504}),
+    )
+    if isinstance(detail, str):
+        safe_detail: Any = SecretRedactor.redact_text(detail)
+    elif isinstance(detail, dict):
+        safe_detail = SecretRedactor.redact_dict(detail)
+    else:
+        safe_detail = SecretRedactor.redact_value(jsonable_encoder(detail))
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": safe_detail,
+            "category": category or default_cat,
+            "retryable": default_retry if retryable is None else retryable,
+        },
+    )
+
+
 @app.exception_handler(ApplicationError)
 async def application_error_handler(_request: Request, exc: ApplicationError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return _error_envelope_response(exc.status_code, exc.detail)
 
 
 @app.exception_handler(AssetStorageError)
-async def asset_storage_exception_handler(request: Request, exc: AssetStorageError) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        content={"detail": SecretRedactor.redact_text(str(exc))},
+async def asset_storage_exception_handler(_request: Request, exc: AssetStorageError) -> JSONResponse:
+    return _error_envelope_response(
+        status.HTTP_400_BAD_REQUEST,
+        str(exc),
+        category="invalid_request",
+        retryable=False,
     )
 
 
 @app.exception_handler(WorkflowValidationError)
-async def workflow_validation_exception_handler(request: Request, exc: WorkflowValidationError) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": SecretRedactor.redact_text(str(exc))},
+async def workflow_validation_exception_handler(_request: Request, exc: WorkflowValidationError) -> JSONResponse:
+    return _error_envelope_response(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        str(exc),
+        category="validation",
+        retryable=False,
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    return _error_envelope_response(exc.status_code, exc.detail)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    # Pydantic validation errors include the raw submitted value under "input".
+    # Never echo it: a malformed field can contain an API key, password, or proxy URL.
+    safe_errors = [
+        {key: value for key, value in error.items() if key not in {"input", "ctx"}}
+        for error in exc.errors()
+    ]
+    return _error_envelope_response(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        safe_errors,
+        category="validation",
+        retryable=False,
     )
 
 
@@ -105,21 +189,61 @@ async def provider_failure_exception_handler(request: Request, exc: ProviderFail
 
 
 _protected_dependencies = [Depends(verify_single_admin)]
-app.include_router(projects_router, dependencies=_protected_dependencies)
-app.include_router(connections_router, dependencies=_protected_dependencies)
-app.include_router(assets_router, dependencies=_protected_dependencies)
-app.include_router(pipeline_router, dependencies=_protected_dependencies)
-app.include_router(workflows_router, dependencies=_protected_dependencies)
-app.include_router(queue_router, dependencies=_protected_dependencies)
-app.include_router(batch_router, dependencies=_protected_dependencies)
-app.include_router(timeline_router, dependencies=_protected_dependencies)
-app.include_router(connection_accounts_router, dependencies=_protected_dependencies)
-app.include_router(metrics_router, dependencies=_protected_dependencies)
-app.include_router(maintenance_router, dependencies=_protected_dependencies)
-app.include_router(backups_router, dependencies=_protected_dependencies)
-app.include_router(system_router, dependencies=_protected_dependencies)
+_ERROR_RESPONSE_DESCRIPTIONS = {
+    400: "Invalid request",
+    401: "Authentication failed",
+    403: "Forbidden",
+    404: "Resource not found",
+    409: "Conflict",
+    413: "Payload too large",
+    422: "Validation Error",
+    429: "Rate limited",
+    500: "Internal server error",
+    502: "Upstream provider error",
+    503: "Service unavailable",
+    504: "Upstream timeout",
+}
+_COMMON_ERROR_RESPONSES = {
+    code: {
+        "description": description,
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+            }
+        },
+    }
+    for code, description in _ERROR_RESPONSE_DESCRIPTIONS.items()
+}
+app.include_router(projects_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(connections_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(assets_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(pipeline_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(workflows_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(queue_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(batch_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(timeline_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(connection_accounts_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(metrics_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(maintenance_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(backups_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(system_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
 
 
-@app.get("/healthz")
+def _custom_openapi() -> dict[str, Any]:
+    """Publish the same ErrorEnvelope component used by the shared error responses."""
+    if app.openapi_schema is not None:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    schema.setdefault("components", {}).setdefault("schemas", {})["ErrorEnvelope"] = (
+        ErrorEnvelope.model_json_schema()
+    )
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
+
+
+@app.get("/healthz", responses=_COMMON_ERROR_RESPONSES)
 async def healthz() -> dict[str, str]:
     return {"status": "ok", "service": "muse-orchestrator", "milestone": "M7"}

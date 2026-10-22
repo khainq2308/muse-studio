@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Any
@@ -96,7 +97,7 @@ async def collect_summary(db: AsyncSession) -> dict[str, Any]:
         },
         "storage": {
             "media_root": settings.media_root,
-            **_media_root_usage(),
+            **(await asyncio.to_thread(_media_root_usage)),
         },
     }
 

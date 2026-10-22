@@ -150,7 +150,9 @@ class WorkflowEngine:
     ) -> tuple[list[WorkflowNodeDef], list[WorkflowEdgeDef]]:
         nodes: list[WorkflowNodeDef] = []
         for raw_n in nodes_json:
-            ntype = raw_n["node_type"]
+            if not isinstance(raw_n, dict) or not raw_n.get("node_id") or not raw_n.get("node_type"):
+                raise WorkflowValidationError("Mỗi node phải có đầy đủ 'node_id' và 'node_type'.")
+            ntype = str(raw_n["node_type"])
             if ntype not in NODE_CATALOG and not raw_n.get("inputs") and not raw_n.get("outputs"):
                 raise WorkflowValidationError(f"Node type '{ntype}' không nằm trong danh mục hỗ trợ.")
             raw_in = raw_n.get("inputs") or NODE_CATALOG.get(ntype, {}).get("inputs", {})
@@ -172,16 +174,21 @@ class WorkflowEngine:
                     outputs=outputs,
                 )
             )
-        edges = [
-            WorkflowEdgeDef(
-                edge_id=raw_e["edge_id"],
-                source_node_id=raw_e["source_node_id"],
-                source_port=raw_e["source_port"],
-                target_node_id=raw_e["target_node_id"],
-                target_port=raw_e["target_port"],
+        edges: list[WorkflowEdgeDef] = []
+        for raw_e in edges_json:
+            if not isinstance(raw_e, dict) or not all(
+                raw_e.get(k) for k in ("edge_id", "source_node_id", "source_port", "target_node_id", "target_port")
+            ):
+                raise WorkflowValidationError("Mỗi edge phải có đủ edge_id, source_node_id, source_port, target_node_id, target_port.")
+            edges.append(
+                WorkflowEdgeDef(
+                    edge_id=str(raw_e["edge_id"]),
+                    source_node_id=str(raw_e["source_node_id"]),
+                    source_port=str(raw_e["source_port"]),
+                    target_node_id=str(raw_e["target_node_id"]),
+                    target_port=str(raw_e["target_port"]),
+                )
             )
-            for raw_e in edges_json
-        ]
         return nodes, edges
 
     @staticmethod
@@ -190,6 +197,8 @@ class WorkflowEngine:
         edges: list[WorkflowEdgeDef],
     ) -> tuple[list[str], dict[str, str]]:
         node_map = {n.node_id: n for n in nodes}
+        if len(node_map) != len(nodes):
+            raise WorkflowValidationError("Phát hiện node_id bị trùng lặp trong Workflow Graph.")
         adj: dict[str, list[str]] = {n.node_id: [] for n in nodes}
         in_degree: dict[str, int] = {n.node_id: 0 for n in nodes}
         incoming_edges: dict[str, list[WorkflowEdgeDef]] = {n.node_id: [] for n in nodes}
