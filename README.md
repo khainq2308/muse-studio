@@ -7,7 +7,7 @@ Nền tảng điều phối sản xuất phim AI từ kịch bản (Script) -> S
 - apps/studio-web: Giao diện React + TypeScript + Vite.
 - apps/orchestrator: FastAPI, application services/repositories, SQLAlchemy async, provider adapters và typed workflow DAG.
 - apps/media-engine: FFprobe validation và FFmpeg boundary-frame utilities.
-- packages/contracts: Legacy TypeScript contracts retained during migration only; no new imports, remove after OpenAPI-generated types replace every consumer.
+- apps/studio-web/src/lib/api/schema.d.ts: generated TypeScript contracts from the orchestrator OpenAPI snapshot; do not create a second handwritten API contract.
 - docs: Architecture, decisions, implementation plan, capability matrix và test strategy.
 - ops: Công cụ vận hành và script probe muse2api.
 
