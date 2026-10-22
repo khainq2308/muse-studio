@@ -12,6 +12,7 @@ from muse_orchestrator.models.domain import (
     QueueTaskState,
     ShotTakeRecord,
     BatchRenderJobRecord,
+    SceneRecord,
 )
 from muse_orchestrator.api.pipeline import _recompile_project_shots
 from muse_orchestrator.api.arq_dispatch import schedule_generation_task
@@ -119,6 +120,14 @@ async def launch_batch_render(
     if not proj:
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
 
+    # Validate the scene before recompiling prompts or creating a batch job.
+    if payload.scene_id is not None:
+        scene = await repository.session.get(SceneRecord, payload.scene_id)
+        if scene is None:
+            raise HTTPException(status_code=404, detail="Scene không tồn tại.")
+        if scene.project_id != project_id:
+            raise HTTPException(status_code=422, detail="Scene không thuộc project đang thao tác.")
+
     conn = await repository.get_connection(payload.connection_id)
     if not conn or not conn.enabled:
         raise HTTPException(status_code=400, detail="Connection không tồn tại hoặc đang bị tắt.")
@@ -216,33 +225,89 @@ async def _resolve_frame_chain_generation_config(
     shot: Any,
     requested_connection_id: str | None = None,
 ) -> tuple[str, str] | None:
-    """Resolve a deterministic provider configuration for an unlocked frame-chain shot.
+    """Resolve frame-chain config from the take that owns the upstream frame.
 
-    By default, preserve the configuration of the task that generated this shot's
-    upstream frame. An explicit connection override is honored only if that
-    connection has a known model configuration in this project. Never guess with
-    an unrelated task or silently fall back to the mock model.
+    Failed/canceled regenerations must not replace the config for a successful
+    upstream take. An explicit connection override can reuse the upstream model
+    when the target connection has no history yet.
     """
     upstream_task = None
-    if getattr(shot, "previous_shot_id", None):
-        upstream_task = await repository.get_latest_generation_task_for_shot(shot.previous_shot_id)
-        if upstream_task is not None and upstream_task.project_id != project_id:
-            upstream_task = None
+    previous_shot_id = getattr(shot, "previous_shot_id", None)
+    if previous_shot_id:
+        upstream_shot = await repository.get_shot(previous_shot_id)
+        if upstream_shot is not None and upstream_shot.project_id == project_id:
+            # The selected take is authoritative because its last frame is what
+            # is propagated to the downstream shot.
+            selected_take_id = getattr(upstream_shot, "selected_take_id", None)
+            if selected_take_id:
+                selected_take = await repository.get_shot_take(selected_take_id)
+                if (
+                    selected_take is not None
+                    and selected_take.project_id == project_id
+                    and selected_take.shot_id == previous_shot_id
+                ):
+                    candidate = await repository.get_generation_task(selected_take.task_id)
+                    if (
+                        candidate is not None
+                        and candidate.project_id == project_id
+                        and candidate.shot_id == previous_shot_id
+                        and candidate.state == QueueTaskState.SUCCEEDED
+                    ):
+                        upstream_task = candidate
 
-    if requested_connection_id is None:
-        if upstream_task is None:
-            return None
+            if upstream_task is None:
+                upstream_task = await repository.get_latest_successful_generation_task_for_shot(
+                    previous_shot_id
+                )
+                if (
+                    upstream_task is not None
+                    and (
+                        upstream_task.project_id != project_id
+                        or upstream_task.shot_id != previous_shot_id
+                        or upstream_task.state != QueueTaskState.SUCCEEDED
+                    )
+                ):
+                    upstream_task = None
+
+    if requested_connection_id is None and upstream_task is not None:
         return upstream_task.connection_id, upstream_task.model_id
-
-    if upstream_task is not None and upstream_task.connection_id == requested_connection_id:
+    if (
+        requested_connection_id is not None
+        and upstream_task is not None
+        and upstream_task.connection_id == requested_connection_id
+    ):
         return requested_connection_id, upstream_task.model_id
 
+    # Repository results are ordered oldest-to-newest. Failed/canceled tasks
+    # are never valid config sources. This fallback also supports a first shot
+    # with a manual first frame when the project has a successful prior config.
     project_tasks = await repository.list_project_generation_tasks(project_id)
-    matching_tasks = [task for task in project_tasks if task.connection_id == requested_connection_id]
-    if not matching_tasks:
+    successful_tasks = [
+        task
+        for task in project_tasks
+        if task.project_id == project_id and task.state == QueueTaskState.SUCCEEDED
+    ]
+    if requested_connection_id is None:
+        if successful_tasks:
+            latest = successful_tasks[-1]
+            return latest.connection_id, latest.model_id
         return None
-    # list_project_generation_tasks is ordered oldest-to-newest with a stable ID tie-breaker.
-    return requested_connection_id, matching_tasks[-1].model_id
+
+    matching_tasks = [
+        task for task in successful_tasks
+        if task.connection_id == requested_connection_id
+    ]
+    if matching_tasks:
+        return requested_connection_id, matching_tasks[-1].model_id
+
+    # The operator explicitly selected a new connection. Reuse the successful
+    # upstream take's model instead of leaving the shot stuck due to no history
+    # on this connection or choosing a failed/unrelated task's model.
+    if upstream_task is not None:
+        return requested_connection_id, upstream_task.model_id
+    if successful_tasks:
+        return requested_connection_id, successful_tasks[-1].model_id
+    return None
 
 
 @router.post("/batch/tick", response_model=BatchTickOut)
@@ -294,7 +359,7 @@ async def tick_project_batch_queue(
             continue
         resolved_connection_id, resolved_model_id = config
         conn = await repository.get_connection(resolved_connection_id)
-        if conn is None:
+        if conn is None or not conn.enabled:
             continue
         new_t, created = await GenerationQueueService.enqueue_shot_generation(
             db=repository.session,
