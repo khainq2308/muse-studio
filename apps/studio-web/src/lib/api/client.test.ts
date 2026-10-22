@@ -231,6 +231,22 @@ describe("API client", () => {
     );
   });
 
+  it("rejects missing or unexpected path parameters before fetching", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiRequest("/api/v1/projects/{project_id}/shots")).rejects.toThrow(
+      "API path parameters are required",
+    );
+    await expect(
+      apiRequest("/api/v1/projects/{project_id}/shots", {
+        pathParams: { project_id: "project-1", unexpected: "value" },
+      }),
+    ).rejects.toThrow("Unexpected API path parameter(s): unexpected.");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("encodes API path parameters as one safe segment", () => {
     expect(encodePathSegment("project-42 with space")).toBe("project-42%20with%20space");
     expect(() => encodePathSegment("..")).toThrow("path separators or dot segments");
