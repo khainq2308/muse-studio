@@ -42,8 +42,8 @@ function compileTimeRejectionExamples() {
   // @ts-expect-error Path parameter names come from the generated OpenAPI operation.
   apiGet("/api/v1/projects/{project_id}/shots", { pathParams: { projectId: "project-123" } });
 
-  // @ts-expect-error A free-form string can bypass the generated route contract.
   const dynamicPath: string = "/api/v1/projects";
+  // @ts-expect-error A free-form string can bypass the generated route contract.
   apiGet(dynamicPath);
 
   // @ts-expect-error Query strings belong in the query option, not the path.
