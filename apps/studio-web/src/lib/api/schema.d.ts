@@ -4363,7 +4363,7 @@ export interface operations {
             };
         };
     };
-        enqueue_generation_task_api_v1_queue_tasks_post: {
+    enqueue_generation_task_api_v1_queue_tasks_post: {
         parameters: {
             query?: never;
             header?: {

@@ -10,11 +10,7 @@ import {
 } from "@/features/queue-monitor/state";
 import { useSessionStore } from "@/lib/stores/session-store";
 
-export function useQueueTasks(
-  projectId: string,
-  stateFilter: QueueTaskFilter,
-  offset: number,
-) {
+export function useQueueTasks(projectId: string, stateFilter: QueueTaskFilter, offset: number) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const pollingKey = [sessionVersion, projectId, stateFilter, offset].join(":");
   const pollingWindow = useRef({ key: pollingKey, startedAt: Date.now() });

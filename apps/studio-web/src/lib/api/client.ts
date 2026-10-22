@@ -80,17 +80,18 @@ type ApiPostOptions<Path extends ApiPostPath> = Omit<
   pathParams?: ApiPostPathParams<Path>;
 };
 
-type ApiPostArguments<Path extends ApiPostPath> =
-  [JsonRequestBody<ApiOperation<Path, "post">>] extends [never]
-    ? keyof ApiPostPathParams<Path> extends never
-      ? [body?: undefined, options?: ApiPostOptions<Path>]
-      : [body: undefined, options: ApiPostOptions<Path> & { pathParams: ApiPostPathParams<Path> }]
-    : keyof ApiPostPathParams<Path> extends never
-      ? [body: JsonRequestBody<ApiOperation<Path, "post">>, options?: ApiPostOptions<Path>]
-      : [
-          body: JsonRequestBody<ApiOperation<Path, "post">>,
-          options: ApiPostOptions<Path> & { pathParams: ApiPostPathParams<Path> },
-        ];
+type ApiPostArguments<Path extends ApiPostPath> = [
+  JsonRequestBody<ApiOperation<Path, "post">>,
+] extends [never]
+  ? keyof ApiPostPathParams<Path> extends never
+    ? [body?: undefined, options?: ApiPostOptions<Path>]
+    : [body: undefined, options: ApiPostOptions<Path> & { pathParams: ApiPostPathParams<Path> }]
+  : keyof ApiPostPathParams<Path> extends never
+    ? [body: JsonRequestBody<ApiOperation<Path, "post">>, options?: ApiPostOptions<Path>]
+    : [
+        body: JsonRequestBody<ApiOperation<Path, "post">>,
+        options: ApiPostOptions<Path> & { pathParams: ApiPostPathParams<Path> },
+      ];
 
 type JsonSuccessBody<Operation> = Operation extends { responses: infer Responses }
   ? {
