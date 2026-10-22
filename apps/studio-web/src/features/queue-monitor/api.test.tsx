@@ -122,6 +122,17 @@ describe("Queue Monitor query hooks", () => {
     vi.setSystemTime(new Date(Date.now() + QUEUE_POLL_WINDOW_MS + 1));
     rerender({ projectId: "project-2", stateFilter: "failed", offset: 0 });
     expect(options?.refetchInterval(runningQuery)).toBe(2_000);
+
+    vi.setSystemTime(new Date(Date.now() + QUEUE_POLL_WINDOW_MS + 1));
+    rerender({ projectId: "project-2", stateFilter: "running", offset: 0 });
+    expect(
+      options?.refetchInterval({
+        state: {
+          data: { items: [{ state: "succeeded" }], summary: { active_tasks: 3 } },
+          status: "success",
+        },
+      }),
+    ).toBe(2_000);
   });
 
   it("invalidates and restarts polling after every queue action result", async () => {

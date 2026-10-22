@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { RefreshCw } from "lucide-react";
 import { QueryState } from "@/components/shared/query-state";
@@ -30,7 +30,15 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
   const tasks = tasksQuery.data?.items ?? [];
   const total = tasksQuery.data?.total ?? 0;
   const summary = tasksQuery.data?.summary;
+  const isPageOutOfRange = Boolean(tasksQuery.data && offset >= total && offset > 0);
   const busyTaskId = actionMutation.isPending ? (actionMutation.variables?.taskId ?? null) : null;
+
+  useEffect(() => {
+    if (!tasksQuery.data || !isPageOutOfRange) return;
+    const lastValidOffset =
+      total === 0 ? 0 : Math.floor((total - 1) / QUEUE_TASKS_PAGE_SIZE) * QUEUE_TASKS_PAGE_SIZE;
+    setPageState({ scope, offset: lastValidOffset });
+  }, [isPageOutOfRange, scope, tasksQuery.data, total]);
 
   const setPageOffset = (nextOffset: number) => {
     actionMutation.reset();
@@ -149,9 +157,9 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           </span>
         </div>
         <QueryState
-          isLoading={tasksQuery.isPending}
+          isLoading={tasksQuery.isPending || isPageOutOfRange}
           isError={tasksQuery.isError}
-          isEmpty={tasks.length === 0}
+          isEmpty={tasks.length === 0 && !isPageOutOfRange}
           loadingMessage="Loading queue tasks..."
           errorMessage={authErrorMessage(tasksQuery.error, activeAdminToken, "queue tasks")}
           emptyTitle={stateFilter === "all" ? "No queue tasks yet" : "No matching queue tasks"}
@@ -165,7 +173,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           <QueueTaskList tasks={tasks} busyTaskId={busyTaskId} onAction={handleAction} />
         </QueryState>
 
-        {tasksQuery.data && (total > QUEUE_TASKS_PAGE_SIZE || offset > 0) && (
+        {tasksQuery.data && !isPageOutOfRange && (total > QUEUE_TASKS_PAGE_SIZE || offset > 0) && (
           <nav
             aria-label="Queue pagination"
             className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between"

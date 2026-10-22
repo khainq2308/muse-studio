@@ -38,7 +38,9 @@ export function useQueueTasks(projectId: string, stateFilter: QueueTaskFilter, o
         query.state.data?.items.map((task) => task.state),
         Date.now() - pollingWindow.current.startedAt,
         query.state.status,
-        stateFilter === "all" ? query.state.data?.summary.active_tasks : undefined,
+        stateFilter === "all" || stateFilter === "queued" || stateFilter === "running"
+          ? query.state.data?.summary.active_tasks
+          : undefined,
       ),
     refetchIntervalInBackground: false,
   });

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueueTask, QueueTaskPage } from "@/features/queue-monitor/state";
 
@@ -127,6 +127,46 @@ describe("QueueMonitorPage", () => {
 
     expect(mutation.reset).toHaveBeenCalledTimes(1);
     expect(mocks.useQueueTasks).toHaveBeenLastCalledWith("project-1", "all", 50);
+  });
+
+  it("returns to a valid page when the filtered result set shrinks", async () => {
+    const query = {
+      data: makePage({ total: 65, has_more: true }),
+      isPending: false,
+      isError: false,
+      isFetching: false,
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+      resetPollingWindow: vi.fn(),
+    };
+    const mutation = {
+      isPending: false,
+      variables: undefined,
+      error: null,
+      mutate: vi.fn(),
+      reset: vi.fn(),
+    };
+    let resultSetShrank = false;
+    mocks.useQueueTasks.mockImplementation((_projectId: string, _filter: QueueTaskFilter, offset: number) => {
+      if (offset >= 50) resultSetShrank = true;
+      if (!resultSetShrank) return query;
+      return {
+        ...query,
+        data:
+          offset === 0
+            ? makePage({ total: 20, has_more: false })
+            : makePage({ items: [], total: 20, offset, has_more: false }),
+      };
+    });
+    mocks.useQueueTaskAction.mockReturnValue(mutation);
+    render(<QueueMonitorPage projectId="project-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    await waitFor(() => {
+      expect(mocks.useQueueTasks).toHaveBeenLastCalledWith("project-1", "all", 0);
+    });
+    expect(screen.queryByText(/Showing 51–50 of 20 matching tasks/)).toBeNull();
   });
 
   it("clears a prior action error when the state filter changes", () => {
