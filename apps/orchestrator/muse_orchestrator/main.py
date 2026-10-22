@@ -10,6 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from muse_orchestrator.application.services import ApplicationError
@@ -35,6 +36,14 @@ from muse_orchestrator.api.backups import router as backups_router
 from muse_orchestrator.api.system import router as system_router
 
 logger = logging.getLogger("muse_orchestrator")
+
+
+class ErrorEnvelope(BaseModel):
+    """Stable response contract shared by validation and HTTP/application errors."""
+
+    detail: Any
+    category: str
+    retryable: bool
 
 
 @asynccontextmanager
@@ -179,21 +188,39 @@ async def provider_failure_exception_handler(request: Request, exc: ProviderFail
 
 
 _protected_dependencies = [Depends(verify_single_admin)]
-app.include_router(projects_router, dependencies=_protected_dependencies)
-app.include_router(connections_router, dependencies=_protected_dependencies)
-app.include_router(assets_router, dependencies=_protected_dependencies)
-app.include_router(pipeline_router, dependencies=_protected_dependencies)
-app.include_router(workflows_router, dependencies=_protected_dependencies)
-app.include_router(queue_router, dependencies=_protected_dependencies)
-app.include_router(batch_router, dependencies=_protected_dependencies)
-app.include_router(timeline_router, dependencies=_protected_dependencies)
-app.include_router(connection_accounts_router, dependencies=_protected_dependencies)
-app.include_router(metrics_router, dependencies=_protected_dependencies)
-app.include_router(maintenance_router, dependencies=_protected_dependencies)
-app.include_router(backups_router, dependencies=_protected_dependencies)
-app.include_router(system_router, dependencies=_protected_dependencies)
+_ERROR_RESPONSE_DESCRIPTIONS = {
+    400: "Invalid request",
+    401: "Authentication failed",
+    403: "Forbidden",
+    404: "Resource not found",
+    409: "Conflict",
+    413: "Payload too large",
+    422: "Validation Error",
+    429: "Rate limited",
+    500: "Internal server error",
+    502: "Upstream provider error",
+    503: "Service unavailable",
+    504: "Upstream timeout",
+}
+_COMMON_ERROR_RESPONSES = {
+    code: {"model": ErrorEnvelope, "description": description}
+    for code, description in _ERROR_RESPONSE_DESCRIPTIONS.items()
+}
+app.include_router(projects_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(connections_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(assets_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(pipeline_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(workflows_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(queue_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(batch_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(timeline_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(connection_accounts_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(metrics_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(maintenance_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(backups_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
+app.include_router(system_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
 
 
-@app.get("/healthz")
+@app.get("/healthz", responses=_COMMON_ERROR_RESPONSES)
 async def healthz() -> dict[str, str]:
     return {"status": "ok", "service": "muse-orchestrator", "milestone": "M7"}

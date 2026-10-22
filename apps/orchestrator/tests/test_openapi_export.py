@@ -38,6 +38,11 @@ def test_openapi_export_is_reproducible_and_does_not_need_service_lifespan(tmp_p
     assert schema["info"]["title"] == "MuseStudio Orchestrator API"
     assert "/healthz" in schema["paths"]
     assert "/api/v1/projects" in schema["paths"]
+    error_schema = schema["components"]["schemas"]["ErrorEnvelope"]
+    assert set(error_schema["required"]) == {"detail", "category", "retryable"}
+    project_create = schema["paths"]["/api/v1/projects"]["post"]["responses"]
+    assert project_create["422"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ErrorEnvelope"
+    assert project_create["404"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ErrorEnvelope"
 
     check = run_export(snapshot, "--check")
     assert check.returncode == 0, check.stderr
