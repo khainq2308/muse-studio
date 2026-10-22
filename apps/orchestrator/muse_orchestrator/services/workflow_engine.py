@@ -36,6 +36,31 @@ NODE_CATALOG: dict[str, dict[str, dict[str, str]]] = {
     "Note/Group": {"inputs": {}, "outputs": {}},
 }
 
+# Node types whose output is not a pure function of (type, config, parent outputs): they
+# talk to providers/operators or read external inputs. Their cache keys include node_id
+# so two identical-looking nodes never share (or collide on) one cache entry.
+NODE_IDENTITY_KEYED_TYPES = frozenset(
+    {
+        "ScriptInput",
+        "ReferenceImageInput",
+        "PromptRefine",
+        "ImageGenerate",
+        "VideoGenerate",
+        "WaitForTask",
+        "RetryPolicy",
+        "QualityGate",
+        "VideoExport",
+        "Webhook/Notify",
+        "ManualApproval",
+    }
+)
+# Node types that read project data (script / story bible) outside the graph. The caller
+# supplies a content hash of that data so edits invalidate their cache entries.
+EXTERNAL_INPUT_NODE_TYPES = frozenset({"ScriptInput", "StoryBibleBuild"})
+
+MAX_WORKFLOW_NODES = 200
+MAX_WORKFLOW_EDGES = 1_000
+
 
 @dataclass
 class PortDef:
@@ -227,12 +252,20 @@ class WorkflowEngine:
         nodes: list[WorkflowNodeDef],
         edges: list[WorkflowEdgeDef],
         cache_scope: str | None = None,
+        external_input_hashes: dict[str, str] | None = None,
     ) -> tuple[list[str], dict[str, str]]:
         """Validate the DAG and compute Merkle cache keys.
 
         ``cache_scope`` (e.g. the project id) is folded into every key so that cache
-        entries can never be shared between projects.
+        entries can never be shared between projects. ``external_input_hashes`` maps a
+        node type in EXTERNAL_INPUT_NODE_TYPES to a content hash of the project data it
+        reads (script, story bible); node types in NODE_IDENTITY_KEYED_TYPES also fold in
+        their node_id.
         """
+        if len(nodes) > MAX_WORKFLOW_NODES:
+            raise WorkflowValidationError(f"Workflow vượt quá {MAX_WORKFLOW_NODES} node.")
+        if len(edges) > MAX_WORKFLOW_EDGES:
+            raise WorkflowValidationError(f"Workflow vượt quá {MAX_WORKFLOW_EDGES} edge.")
         node_map = {n.node_id: n for n in nodes}
         if len(node_map) != len(nodes):
             raise WorkflowValidationError("Phát hiện node_id bị trùng lặp trong Workflow Graph.")
@@ -295,6 +328,10 @@ class WorkflowEngine:
             key_material: dict[str, Any] = {"t": node.node_type, "c": node.config, "p": parent_hashes}
             if cache_scope is not None:
                 key_material["s"] = cache_scope
+            if node.node_type in NODE_IDENTITY_KEYED_TYPES:
+                key_material["id"] = node.node_id
+            if node.node_type in EXTERNAL_INPUT_NODE_TYPES:
+                key_material["x"] = (external_input_hashes or {}).get(node.node_type, "")
             payload = json.dumps(
                 key_material,
                 sort_keys=True,
@@ -325,3 +362,19 @@ class WorkflowEngine:
                     q.append(nxt)
 
         return [nid for nid in execution_order if nid in reachable]
+
+    @staticmethod
+    def get_ancestors(node_id: str, edges: list[WorkflowEdgeDef]) -> set[str]:
+        """Return every node that (transitively) feeds ``node_id``."""
+        parents: dict[str, list[str]] = {}
+        for e in edges:
+            parents.setdefault(e.target_node_id, []).append(e.source_node_id)
+        ancestors: set[str] = set()
+        q = deque(parents.get(node_id, []))
+        while q:
+            curr = q.popleft()
+            if curr in ancestors:
+                continue
+            ancestors.add(curr)
+            q.extend(parents.get(curr, []))
+        return ancestors

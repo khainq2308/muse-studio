@@ -8,7 +8,7 @@ from muse_orchestrator.core.config import Settings
 
 def _set_production_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("STUDIO_ADMIN_TOKEN", "production-admin-token")
+    monkeypatch.setenv("STUDIO_ADMIN_TOKEN", "production-admin-token-0123456789abcdef")
     monkeypatch.setenv("SECRET_ENCRYPTION_KEY", "k" * 48)
     monkeypatch.delenv("MUSE2API_VIDEO_SIZE", raising=False)
 

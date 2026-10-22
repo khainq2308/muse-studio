@@ -44,8 +44,8 @@ def _to_asset_out(asset: Asset) -> AssetOut:
 
 @router.post("/upload", response_model=AssetOut, status_code=status.HTTP_201_CREATED)
 async def upload_asset(
-    project_id: str = Form(...),
-    asset_type: str = Form(default="reference"),
+    project_id: str = Form(..., min_length=1, max_length=64),
+    asset_type: str = Form(default="reference", min_length=1, max_length=32),
     is_locked_reference: bool = Form(default=False),
     file: UploadFile = File(...),
     service: AssetService = Depends(get_asset_service),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
@@ -27,7 +27,10 @@ _PROXY_SCHEMES = ("http://", "https://", "socks5://", "socks5h://")
 
 
 def _validate_proxy_url(proxy_url: str | None) -> str | None:
-    """Validate a proxy URL and return its display host (credentials stripped)."""
+    """Validate a proxy URL and return its display host (credentials stripped).
+
+    Errors never echo the URL: it usually embeds proxy credentials.
+    """
     if not proxy_url:
         return None
     cleaned = proxy_url.strip()
@@ -35,7 +38,14 @@ def _validate_proxy_url(proxy_url: str | None) -> str | None:
         raise ApplicationError(
             422, "Proxy URL must start with http://, https://, socks5:// or socks5h://."
         )
-    host = urlparse(cleaned).hostname
+    if any(ch.isspace() for ch in cleaned):
+        raise ApplicationError(422, "Proxy URL must not contain whitespace.")
+    try:
+        parts = urlsplit(cleaned)
+        host = parts.hostname
+        parts.port  # noqa: B018 -- property access validates the port range/syntax
+    except ValueError:
+        raise ApplicationError(422, "Proxy URL is malformed (invalid host or port).") from None
     if not host:
         raise ApplicationError(422, "Proxy URL has no valid host.")
     return host

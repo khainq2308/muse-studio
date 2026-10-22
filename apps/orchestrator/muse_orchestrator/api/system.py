@@ -18,8 +18,8 @@ class LogCreateIn(BaseModel):
     correlation_id: str | None = Field(default=None, max_length=64)
     level: str = Field(default="INFO", pattern=r"^(DEBUG|INFO|WARNING|ERROR)$")
     event: str = Field(..., min_length=1, max_length=128)
-    project_id: str | None = None
-    task_id: str | None = None
+    project_id: str | None = Field(default=None, max_length=64)
+    task_id: str | None = Field(default=None, max_length=64)
     payload: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -98,9 +98,9 @@ async def create_log(
 @router.get("/logs", response_model=list[StructuredLogOut])
 async def list_logs(
     level: str | None = Query(default=None, pattern=r"^(DEBUG|INFO|WARNING|ERROR)$"),
-    event: str | None = None,
-    correlation_id: str | None = None,
-    project_id: str | None = None,
+    event: str | None = Query(default=None, max_length=128),
+    correlation_id: str | None = Query(default=None, max_length=64),
+    project_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=100, ge=1, le=500),
     service: SystemService = Depends(get_system_service),
 ) -> list[StructuredLogOut]:

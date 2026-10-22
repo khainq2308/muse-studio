@@ -19,9 +19,10 @@ class ProjectCreateIn(BaseModel):
     description: str = Field(default="", max_length=2000)
     aspect_ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|21:9)$")
     fps: int = Field(default=24, ge=12, le=60)
-    style_preset: str = Field(default="2d_anime_cinematic")
-    language: str = Field(default="vi")
-    output_profile: str = Field(default="1080p_h264")
+    # Lengths match the projects table columns.
+    style_preset: str = Field(default="2d_anime_cinematic", min_length=1, max_length=128)
+    language: str = Field(default="vi", min_length=1, max_length=16)
+    output_profile: str = Field(default="1080p_h264", min_length=1, max_length=64)
 
 
 class ProjectOut(BaseModel):

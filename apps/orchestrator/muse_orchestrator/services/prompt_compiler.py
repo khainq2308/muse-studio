@@ -78,10 +78,28 @@ class CompiledPromptResult:
         return any(issue.severity == "blocker" for issue in self.lint_issues)
 
 
+# Camera-movement verbs including inflections (pan/pans/panned/panning, orbit*, dolly/
+# dollies, track*, crane*, zoom* in, whip pan*, handheld run*).
 _DYNAMIC_CAMERA_KEYWORDS = re.compile(
-    r"\b(orbit|dolly|pan|truck|crane|whip\s*pan|tracking\s*shot|handheld\s*run|zoom\s*in\s*fast)\b",
+    r"\b(?:orbit(?:s|ed|ing)?|dolly|dollies|dollied|dollying|pan(?:s|ned|ning)?"
+    r"|truck(?:s|ed|ing)?|crane(?:s|d)?|craning|whip[\s_-]*pan(?:s|ned|ning)?"
+    r"|tracking[\s_-]*shot|track(?:s|ed|ing)?|handheld[\s_-]*run(?:s|ning)?"
+    r"|zoom(?:s|ed|ing)?[\s_-]+in)\b",
     re.IGNORECASE,
 )
+_STATIC_CAMERA_TOKENS = ("static", "locked", "fixed")
+
+
+def is_static_camera_motion(camera_motion: str) -> bool:
+    """True for static/locked/fixed variants such as "Static shot" or "locked_off"."""
+    tokens = [t for t in re.split(r"[^a-z]+", camera_motion.casefold()) if t]
+    return any(token.startswith(_STATIC_CAMERA_TOKENS) for token in tokens)
+
+
+def _contains_term(text: str, term: str) -> bool:
+    if not term:
+        return False
+    return re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.IGNORECASE) is not None
 
 
 # Conservative inter-shot checks: warnings only unless a future policy explicitly
@@ -272,7 +290,7 @@ class PromptCompiler:
         loc = locations.get(shot.location_id)
         loc_text = f"{loc.name}, {loc.time_of_day}. Anchors: {loc.spatial_anchors}." if loc else shot.location_id
 
-        if shot.camera_motion.lower() in ("static", "locked", "fixed"):
+        if is_static_camera_motion(shot.camera_motion):
             for text_field, val in [("composition", shot.composition), ("action", shot.action)]:
                 if _DYNAMIC_CAMERA_KEYWORDS.search(val):
                     issues.append(
@@ -283,6 +301,31 @@ class PromptCompiler:
                             text_field,
                         )
                     )
+
+        # Style-bible forbidden terms are a review warning: the operator decides whether
+        # the wording is intentional (they are never silently stripped from the prompt).
+        reported_terms: set[str] = set()
+        for term in style.forbidden_terms:
+            normalized_term = term.strip()
+            if not normalized_term or normalized_term.casefold() in reported_terms:
+                continue
+            for text_field, val in [
+                ("composition", shot.composition),
+                ("action", shot.action),
+                ("camera_motion", shot.camera_motion),
+                ("continuity_notes", shot.continuity_notes),
+            ]:
+                if _contains_term(val, normalized_term):
+                    reported_terms.add(normalized_term.casefold())
+                    issues.append(
+                        LintIssue(
+                            "FORBIDDEN_TERM",
+                            "warning",
+                            f"'{text_field}' chứa thuật ngữ bị Style Bible cấm: '{normalized_term}'.",
+                            text_field,
+                        )
+                    )
+                    break
 
         sections = {
             "GLOBAL_STYLE_LOCK": f"Style: {style.medium}, {style.art_direction}.",
