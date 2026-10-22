@@ -1,11 +1,19 @@
-"""Shared helpers for Claude Code hooks (stdlib only)."""
+"""Claude Code hook adapter helpers (stdlib only).
+
+Policy lives in scripts/agent_guard/; these hooks only translate Claude's event contract.
+"""
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
+
+# Resolve the shared policy from this file, not from CLAUDE_PROJECT_DIR (tests point that
+# at temporary repositories).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from agent_guard.verify import run  # noqa: E402,F401  (re-exported for hook scripts)
 
 
 def read_event() -> dict:
@@ -30,15 +38,3 @@ def add_context(event_name: str, text: str) -> None:
     """Return extra context to Claude without blocking."""
     print(json.dumps({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text}}))
     sys.exit(0)
-
-
-def run(cmd: list[str], cwd: Path | None = None, timeout: int = 60) -> tuple[int, str]:
-    try:
-        proc = subprocess.run(
-            cmd, cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=timeout
-        )
-    except FileNotFoundError:
-        return 127, f"{cmd[0]}: not found"
-    except subprocess.TimeoutExpired:
-        return 124, f"{' '.join(cmd)}: timed out after {timeout}s"
-    return proc.returncode, (proc.stdout + proc.stderr)

@@ -1,0 +1,30 @@
+{
+  "description": "MuseStudio shared safety guards and completion gate (policy in scripts/agent_guard/).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/agent_guard_hook.py\"",
+            "timeout": 10,
+            "statusMessage": "MuseStudio safety guard"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/agent_guard_hook.py\"",
+            "timeout": 480,
+            "statusMessage": "MuseStudio completion gate"
+          }
+        ]
+      }
+    ]
+  }
+}

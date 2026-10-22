@@ -1,7 +1,7 @@
 ---
 description: Pre-PR gate for tests, lint, architecture, docs, agent kit and read-only review
 argument-hint: "[commit message]"
-allowed-tools: Bash(scripts/test.sh:*), Bash(scripts/lint.sh:*), Bash(python3 scripts/check_layering.py:*), Bash(python3 scripts/check_docs_sync.py:*), Bash(python3 scripts/audit_roadmap.py:*), Bash(python3 scripts/check_agent_assets.py:*), Bash(python3 -m unittest:*), Bash(git status:*), Bash(git diff:*), Bash(git branch:*), Bash(git checkout -b:*), Bash(git add:*), Bash(git commit:*), Read, Grep, Task
+allowed-tools: Bash(scripts/test.sh:*), Bash(scripts/lint.sh:*), Bash(python3 scripts/check_layering.py:*), Bash(python3 scripts/check_docs_sync.py:*), Bash(python3 scripts/audit_roadmap.py:*), Bash(python3 scripts/check_agent_assets.py:*), Bash(python3 -m unittest:*), Bash(git status:*), Bash(git diff:*), Bash(git branch:*), Bash(git checkout -b:*), Bash(git add:*), Bash(git commit:*), Read, Grep, Agent, Task
 ---
 Prepare the current work for a pull request.
 

@@ -1,7 +1,7 @@
 ---
 description: Audit implementation-gap signals and compare them with milestone documentation
 argument-hint: "[--fix to update docs]"
-allowed-tools: Bash(python3 scripts/audit_roadmap.py:*), Bash(python3 scripts/check_docs_sync.py:*), Read, Grep, Glob, Task
+allowed-tools: Bash(python3 scripts/audit_roadmap.py:*), Bash(python3 scripts/check_docs_sync.py:*), Read, Grep, Glob, Agent, Task
 ---
 Run python3 scripts/audit_roadmap.py and python3 scripts/check_docs_sync.py.
 

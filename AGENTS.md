@@ -14,7 +14,8 @@ MuseStudio orchestrates AI-video production: script → Story Bible → shot boa
 - `ops/`: operations and provider probes.
 - `scripts/`: the canonical, agent-independent test, lint, environment and architecture commands.
 - `.agents/skills/`: reusable Agent Skills (portable skill format).
-- `.claude/`, `.codex/`, `.gemini/`: platform-specific adapters, never the source of core engineering policy.
+- `scripts/agent_guard/`: the shared hook policy (shell/file guards, post-edit lint, session context, completion gate) that every host adapter calls.
+- `.claude/`, `.codex/`, `.gemini/`, `.agents/hooks.json` + `.agents/hooks/` + `.agents/rules/` (Google Antigravity): platform-specific adapters, never the source of core engineering policy.
 
 Reply to the user in Vietnamese unless requested otherwise. Write code, identifiers, tests and commit messages in English. Match the language of existing documentation when editing it.
 
