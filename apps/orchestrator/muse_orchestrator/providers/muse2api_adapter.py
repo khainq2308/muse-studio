@@ -222,6 +222,29 @@ def _provider_error_message(value: Any) -> str | None:
     return value[:_MAX_ERROR_CHARS]
 
 
+# Image and video tasks are polled on different muse2api routes, but the queue stores
+# only an opaque external id; tag image ids so get_task can pick the right route.
+_IMAGE_TASK_PREFIX = "image:"
+
+
+def _result_media_url(data: dict) -> str | None:
+    """Media URL from a task view: top-level ``video_url``/``url`` (legacy gateways),
+    ``result.url`` (www222fff video tasks) or ``result.data[0].url`` (image tasks)."""
+    candidate = data.get("video_url") or data.get("url")
+    result = data.get("result")
+    if not candidate and isinstance(result, dict):
+        candidate = result.get("url")
+        items = result.get("data")
+        if not candidate and isinstance(items, list) and items and isinstance(items[0], dict):
+            candidate = items[0].get("url")
+    return _optional_bounded_str(candidate, "url", _MAX_URL_CHARS)
+
+
+def _whole_seconds(duration_seconds: float) -> int:
+    """www222fff accepts an integer duration in [1, 60]; 4.5 would be rejected with 422."""
+    return max(1, min(60, round(duration_seconds)))
+
+
 def _task_from_response(data: dict) -> ProviderTask:
     raw_id = data.get("id") or data.get("task_id")
     task_id = _bounded_str(raw_id, "id", _MAX_TASK_ID_CHARS) if raw_id else ""
@@ -359,13 +382,19 @@ class Muse2ApiAdapter(VideoProvider):
         body: dict[str, object] = {
             "model": request.model_id,
             "prompt": request.prompt,
-            "aspect_ratio": request.aspect_ratio,
             "async": True,
         }
+        if settings.video_payload_profile == "www222fff":
+            # www222fff names the ratio `size` and the references `image`.
+            body["size"] = request.aspect_ratio
+            if request.reference_image_urls:
+                body["image"] = request.reference_image_urls
+        else:
+            body["aspect_ratio"] = request.aspect_ratio
+            if request.reference_image_urls:
+                body["reference_images"] = request.reference_image_urls
         if request.negative_prompt:
             body["negative_prompt"] = request.negative_prompt
-        if request.reference_image_urls:
-            body["reference_images"] = request.reference_image_urls
         data = await self._request_json(
             "POST",
             f"{self.base_url}/v1/images/generations",
@@ -374,10 +403,14 @@ class Muse2ApiAdapter(VideoProvider):
             dispatch=True,
         )
         try:
-            return _task_from_response(data)
+            task = _task_from_response(data)
         except ProviderFailure as exc:
             # A 2xx without a usable task id: the job may exist upstream; never re-send.
             raise _dispatch_outcome_unknown("2xx response without a valid task id") from exc
+        task.external_task_id = f"{_IMAGE_TASK_PREFIX}{task.external_task_id}"
+        if len(task.external_task_id) > _MAX_TASK_ID_CHARS:
+            raise _dispatch_outcome_unknown("image task id too long to store")
+        return task
 
     def _build_video_payload(self, request: VideoGenerationRequest) -> dict[str, object]:
         """Build the request body for the selected muse2api schema profile.
@@ -395,6 +428,7 @@ class Muse2ApiAdapter(VideoProvider):
         }
 
         if profile == "www222fff":
+            body["duration"] = _whole_seconds(request.duration_seconds)
             size_value = (settings.video_payload_size or "").strip()
             if not size_value:
                 raise ValueError(
@@ -434,9 +468,12 @@ class Muse2ApiAdapter(VideoProvider):
             raise _dispatch_outcome_unknown("2xx response without a valid task id") from exc
 
     async def get_task(self, task_id: str) -> ProviderTaskStatus:
-        data = await self._request_json(
-            "GET", f"{self.base_url}/v1/videos/{quote(task_id, safe='')}", headers=self._headers()
-        )
+        if task_id.startswith(_IMAGE_TASK_PREFIX):
+            upstream_id = task_id[len(_IMAGE_TASK_PREFIX):]
+            route = f"{self.base_url}/v1/images/generations/{quote(upstream_id, safe='')}"
+        else:
+            route = f"{self.base_url}/v1/videos/{quote(task_id, safe='')}"
+        data = await self._request_json("GET", route, headers=self._headers())
         raw_status = _bounded_str(data.get("status", "running"), "status", _MAX_STATUS_CHARS).lower()
         status_map = {
             "pending": "queued", "queued": "queued",
@@ -450,9 +487,7 @@ class Muse2ApiAdapter(VideoProvider):
         return ProviderTaskStatus(
             external_task_id=task_id,
             status=status_map.get(raw_status, "running"),
-            result_media_url=_optional_bounded_str(
-                data.get("video_url") or data.get("url"), "url", _MAX_URL_CHARS
-            ),
+            result_media_url=_result_media_url(data),
             error_message=_provider_error_message(data.get("error")),
             account_used=_optional_bounded_str(data.get("account_id"), "account_id", _MAX_ACCOUNT_ID_CHARS),
         )
