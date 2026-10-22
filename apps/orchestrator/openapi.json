@@ -1715,6 +1715,7 @@
         "type": "object"
       },
       "ErrorEnvelope": {
+        "description": "Stable response contract shared by validation and HTTP/application errors.",
         "properties": {
           "category": {
             "title": "Category",
