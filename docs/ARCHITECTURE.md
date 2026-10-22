@@ -7,7 +7,7 @@ MuseStudio is a monorepo with separate deployment areas:
 - apps/studio-web: React + TypeScript + Vite dashboard.
 - apps/orchestrator: FastAPI API, application use cases, persistence, provider adapters and workflow planning.
 - apps/media-engine: isolated FFprobe/FFmpeg utilities for validating video and extracting boundary frames.
-- packages/contracts: legacy UI/domain contracts retained during migration only; frozen and slated for removal after generated OpenAPI types replace all consumers.
+- apps/studio-web/src/lib/api/schema.d.ts: generated frontend contracts from the orchestrator OpenAPI snapshot; no parallel handwritten API contract package.
 - ops: operator probes and deployment helpers.
 
 The orchestrator remains a modular monolith. The package boundaries are designed to keep the API and application rules independent from the database and external provider details; separate API, ARQ and media worker processes can be deployed when their execution paths are implemented and tested.
