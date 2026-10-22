@@ -149,6 +149,25 @@ class LayeringCheckerRegressionTests(unittest.TestCase):
         self.assertEqual(self.count(source), 1)
 
 
+    def test_detects_session_reached_through_repository_attribute(self):
+        source = (
+            "async def endpoint(repository=Depends(get_repo)):\n"
+            "    await repository.session.get(Project, project_id)\n"
+            "    await repository.session.execute(statement)\n"
+            "    await self.db.commit()\n"
+        )
+        self.assertEqual(self.count(source), 3)
+
+    def test_passing_session_as_argument_is_not_a_db_call(self):
+        source = (
+            "async def endpoint(repository=Depends(get_repo)):\n"
+            "    service = GenerationQueueService(db=repository.session)\n"
+            "    await service.tick(repository.session)\n"
+            "    await repository.get_project(project_id)\n"
+        )
+        self.assertEqual(self.count(source), 0)
+
+
 class StopGateBaselineRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

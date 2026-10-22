@@ -7,6 +7,5 @@ export function useHealth() {
     queryKey: queryKeys.health,
     queryFn: ({ signal }) => apiGet("/healthz", { signal }),
     refetchInterval: 30_000,
-    retry: 1,
   });
 }

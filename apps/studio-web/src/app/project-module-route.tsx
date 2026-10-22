@@ -14,7 +14,7 @@ export default function ProjectModuleRoute() {
         data-module={module}
         className="rounded-xl border border-border bg-card p-6"
       >
-        <QueueMonitorPage projectId={projectId} />
+        <QueueMonitorPage key={projectId} projectId={projectId} />
       </section>
     );
   }

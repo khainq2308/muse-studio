@@ -118,8 +118,15 @@ def count_violations(path: Path) -> int:
         func = node.func
         if isinstance(func, ast.Attribute):
             root, attributes = attribute_path(func)
-            # Detect direct, typed-renamed and aliased forms.
-            if root in db_objects and attributes and attributes[-1] in DB_METHODS:
+            if not attributes or attributes[-1] not in DB_METHODS:
+                continue
+            # Detect direct, typed-renamed and aliased forms (db.execute, store.commit).
+            # Also detect attribute chains that reach a session through another object,
+            # e.g. repository.session.get(...) or self.db.execute(...). Passing the
+            # session itself as an argument (db=repository.session) is not a call on it
+            # and is intentionally not counted.
+            reaches_session = any(part in DB_OBJECTS for part in attributes[:-1])
+            if root in db_objects or reaches_session:
                 total += 1
         elif isinstance(func, ast.Name) and func.id == "select":
             total += 1

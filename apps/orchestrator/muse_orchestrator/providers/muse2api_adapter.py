@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import json
 import os
 import socket
 import time
@@ -143,17 +144,37 @@ async def _read_limited_error_body(resp: httpx.Response, limit: int = 4096) -> s
     return body.decode("utf-8", "replace")
 
 
-def _json_or_fail(resp: httpx.Response) -> dict:
-    """Parse a provider JSON object; a malformed body becomes a ProviderFailure, not a 500."""
-    try:
-        data = resp.json()
-    except ValueError as exc:
+_MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024
+
+
+async def _read_limited_success_body(resp: httpx.Response, limit: int = _MAX_JSON_RESPONSE_BYTES) -> bytes:
+    """Read a streamed success body, failing (not truncating) once it exceeds ``limit``."""
+    declared = resp.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
         raise ProviderFailure(
-            ErrorCategory.UPSTREAM_5XX, "Provider returned a non-JSON response.", resp.status_code, True
+            ErrorCategory.UPSTREAM_5XX, "Provider response exceeds the size limit.", resp.status_code, False
+        )
+    body = bytearray()
+    async for chunk in resp.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise ProviderFailure(
+                ErrorCategory.UPSTREAM_5XX, "Provider response exceeds the size limit.", resp.status_code, False
+            )
+    return bytes(body)
+
+
+def _json_bytes_or_fail(body: bytes, status_code: int) -> dict:
+    """Parse a provider JSON object from bytes; malformed bodies become ProviderFailure."""
+    try:
+        data = json.loads(body.decode("utf-8")) if body else None
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ProviderFailure(
+            ErrorCategory.UPSTREAM_5XX, "Provider returned a non-JSON response.", status_code, True
         ) from exc
     if not isinstance(data, dict):
         raise ProviderFailure(
-            ErrorCategory.UPSTREAM_5XX, "Provider returned an unexpected JSON shape.", resp.status_code, True
+            ErrorCategory.UPSTREAM_5XX, "Provider returned an unexpected JSON shape.", status_code, True
         )
     return data
 
@@ -194,15 +215,50 @@ class Muse2ApiAdapter(VideoProvider):
             headers["Idempotency-Key"] = idempotency_key
         return headers
 
+    def _client(self, timeout: float) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=timeout, proxy=self.proxy, transport=self._transport)
+
+    async def _probe_status(self, client: httpx.AsyncClient, url: str) -> int:
+        """Return the status code without buffering the (untrusted) response body."""
+        async with client.stream("GET", url) as resp:
+            return resp.status_code
+
+    async def _request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json_body: dict[str, object] | None = None,
+    ) -> dict:
+        """Send one provider API request with streamed, size-bounded body handling.
+
+        Error bodies are read via ``_read_limited_error_body`` (prefix only) and success
+        bodies are capped, so a hostile or broken upstream cannot exhaust memory.
+        """
+        secrets = [self.api_key or ""]
+        async with self._client(self.timeout) as client:
+            try:
+                async with client.stream(method, url, headers=headers, json=json_body) as resp:
+                    status_code = resp.status_code
+                    if status_code >= 400:
+                        err_body = await _read_limited_error_body(resp, limit=4096)
+                        raise classify_http_error(status_code, SecretRedactor.redact_text(err_body, secrets))
+                    body = await _read_limited_success_body(resp)
+            except httpx.RequestError as exc:
+                safe_msg = SecretRedactor.redact_text(str(exc), secrets)
+                raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
+        return _json_bytes_or_fail(body, status_code)
+
     async def health(self) -> ProviderHealth:
         start = time.perf_counter()
-        async with httpx.AsyncClient(timeout=10.0, proxy=self.proxy) as client:
+        async with self._client(10.0) as client:
             try:
-                h_resp = await client.get(f"{self.base_url}/healthz")
-                r_resp = await client.get(f"{self.base_url}/readyz")
+                h_status = await self._probe_status(client, f"{self.base_url}/healthz")
+                r_status = await self._probe_status(client, f"{self.base_url}/readyz")
                 latency = (time.perf_counter() - start) * 1000.0
-                healthy = h_resp.status_code == 200
-                ready = r_resp.status_code == 200
+                healthy = h_status == 200
+                ready = r_status == 200
                 state = "healthy" if (healthy and ready) else ("degraded" if healthy else "unavailable")
                 return ProviderHealth(healthy=healthy, ready=ready, status_state=state, latency_ms=round(latency, 2))
             except httpx.RequestError as exc:
@@ -211,31 +267,20 @@ class Muse2ApiAdapter(VideoProvider):
                 return ProviderHealth(healthy=False, ready=False, status_state="unavailable", latency_ms=round(latency, 2), details={"error": safe_msg})
 
     async def list_models(self) -> list[ModelCapability]:
-        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
-            try:
-                resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
-            except httpx.RequestError as exc:
-                safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
-                raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
-
-            if resp.status_code >= 400:
-                err_body = await _read_limited_error_body(resp, limit=4096)
-                safe_body = SecretRedactor.redact_text(err_body, [self.api_key or ""])
-                raise classify_http_error(resp.status_code, safe_body)
-
-            payload = _json_or_fail(resp)
-            items = payload.get("data", [])
-            if not isinstance(items, list):
-                items = []
-            return [
-                ModelCapability(
-                    model_id=str(item.get("id", "unknown")),
-                    modality="video" if "video" in str(item.get("id", "")).lower() else ("image" if "image" in str(item.get("id", "")).lower() else "chat"),
-                    verification_status="unverified",
-                    raw_metadata=item,
-                )
-                for item in items
-            ]
+        payload = await self._request_json("GET", f"{self.base_url}/v1/models", headers=self._headers())
+        items = payload.get("data", [])
+        if not isinstance(items, list):
+            items = []
+        return [
+            ModelCapability(
+                model_id=str(item.get("id", "unknown")),
+                modality="video" if "video" in str(item.get("id", "")).lower() else ("image" if "image" in str(item.get("id", "")).lower() else "chat"),
+                verification_status="unverified",
+                raw_metadata=item,
+            )
+            for item in items
+            if isinstance(item, dict)
+        ]
 
     async def generate_image(self, request: ImageGenerationRequest) -> ProviderTask:
         body: dict[str, object] = {
@@ -248,16 +293,13 @@ class Muse2ApiAdapter(VideoProvider):
             body["negative_prompt"] = request.negative_prompt
         if request.reference_image_urls:
             body["reference_images"] = request.reference_image_urls
-        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
-            try:
-                resp = await client.post(f"{self.base_url}/v1/images/generations", headers=self._headers(request.idempotency_key), json=body)
-            except httpx.RequestError as exc:
-                safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
-                raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
-            if resp.status_code >= 400:
-                err_body = await _read_limited_error_body(resp, limit=4096)
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(err_body, [self.api_key or ""]))
-            return _task_from_response(_json_or_fail(resp))
+        data = await self._request_json(
+            "POST",
+            f"{self.base_url}/v1/images/generations",
+            headers=self._headers(request.idempotency_key),
+            json_body=body,
+        )
+        return _task_from_response(data)
 
     def _build_video_payload(self, request: VideoGenerationRequest) -> dict[str, object]:
         """Build the request body for the selected muse2api schema profile.
@@ -300,51 +342,38 @@ class Muse2ApiAdapter(VideoProvider):
 
     async def generate_video(self, request: VideoGenerationRequest) -> ProviderTask:
         body = self._build_video_payload(request)
-
-        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
-            try:
-                resp = await client.post(f"{self.base_url}/v1/videos", headers=self._headers(request.idempotency_key), json=body)
-            except httpx.RequestError as exc:
-                safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
-                raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
-            if resp.status_code >= 400:
-                err_body = await _read_limited_error_body(resp, limit=4096)
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(err_body, [self.api_key or ""]))
-            return _task_from_response(_json_or_fail(resp))
+        data = await self._request_json(
+            "POST",
+            f"{self.base_url}/v1/videos",
+            headers=self._headers(request.idempotency_key),
+            json_body=body,
+        )
+        return _task_from_response(data)
 
     async def get_task(self, task_id: str) -> ProviderTaskStatus:
-        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
-            try:
-                resp = await client.get(
-                    f"{self.base_url}/v1/videos/{quote(task_id, safe='')}", headers=self._headers()
-                )
-            except httpx.RequestError as exc:
-                safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
-                raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
-            if resp.status_code >= 400:
-                err_body = await _read_limited_error_body(resp, limit=4096)
-                raise classify_http_error(resp.status_code, SecretRedactor.redact_text(err_body, [self.api_key or ""]))
-            data = _json_or_fail(resp)
-            raw_status = str(data.get("status", "running")).lower()
-            status_map = {
-                "pending": "queued", "queued": "queued",
-                "processing": "running", "running": "running",
-                "completed": "succeeded", "succeeded": "succeeded", "success": "succeeded",
-                "failed": "failed", "error": "failed",
-                # Terminal upstream states must not be polled as "running" until max_polls.
-                "cancelled": "failed", "canceled": "failed", "expired": "failed",
-                "timeout": "failed", "timed_out": "failed", "rejected": "failed",
-            }
-            return ProviderTaskStatus(
-                external_task_id=task_id,
-                status=status_map.get(raw_status, "running"),
-                result_media_url=data.get("video_url") or data.get("url"),
-                error_message=(
-                    data["error"] if isinstance(data.get("error"), str) else
-                    (str(data["error"]) if data.get("error") else None)
-                ),
-                account_used=data.get("account_id"),
-            )
+        data = await self._request_json(
+            "GET", f"{self.base_url}/v1/videos/{quote(task_id, safe='')}", headers=self._headers()
+        )
+        raw_status = str(data.get("status", "running")).lower()
+        status_map = {
+            "pending": "queued", "queued": "queued",
+            "processing": "running", "running": "running",
+            "completed": "succeeded", "succeeded": "succeeded", "success": "succeeded",
+            "failed": "failed", "error": "failed",
+            # Terminal upstream states must not be polled as "running" until max_polls.
+            "cancelled": "failed", "canceled": "failed", "expired": "failed",
+            "timeout": "failed", "timed_out": "failed", "rejected": "failed",
+        }
+        return ProviderTaskStatus(
+            external_task_id=task_id,
+            status=status_map.get(raw_status, "running"),
+            result_media_url=data.get("video_url") or data.get("url"),
+            error_message=(
+                data["error"] if isinstance(data.get("error"), str) else
+                (str(data["error"]) if data.get("error") else None)
+            ),
+            account_used=data.get("account_id"),
+        )
 
     def _is_provider_origin(self, url: str) -> bool:
         origin = _origin(url)
@@ -554,12 +583,18 @@ class Muse2ApiAdapter(VideoProvider):
             async with httpx.AsyncClient(
                 timeout=60.0, follow_redirects=False, transport=self._transport, proxy=self.proxy
             ) as client:
+                # Once the redirect chain leaves the provider origin it is untrusted for the
+                # rest of the download: a foreign host could bounce back to the provider to
+                # make us replay the key against an attacker-chosen path.
+                left_provider_origin = False
                 for _hop in range(_MAX_DOWNLOAD_REDIRECTS + 1):
                     # The API key is only ever sent to the provider's own origin, never to a
                     # host named in an upstream response or in a redirect.
                     request_url, pinned_headers, request_extensions = await self._pin_download_url(url)
                     headers = {"Accept": "*/*", **pinned_headers}
-                    if self._is_provider_origin(url) and self.api_key:
+                    if not self._is_provider_origin(url):
+                        left_provider_origin = True
+                    if not left_provider_origin and self.api_key:
                         headers["Authorization"] = f"Bearer {self.api_key}"
                     try:
                         async with client.stream(

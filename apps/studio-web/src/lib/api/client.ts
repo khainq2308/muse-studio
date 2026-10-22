@@ -130,6 +130,21 @@ export interface ApiErrorBody {
   detail: unknown;
   category?: string;
   retryable?: boolean;
+  /** Parsed Retry-After header in milliseconds, when the server provided one. */
+  retryAfterMs?: number;
+}
+
+/** Parse an HTTP Retry-After value (delta-seconds or HTTP-date) into milliseconds. */
+export function parseRetryAfter(
+  value: string | null,
+  now: number = Date.now(),
+): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const date = Date.parse(trimmed);
+  if (Number.isNaN(date)) return undefined;
+  return Math.max(0, date - now);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -169,6 +184,7 @@ export class ApiError extends Error implements ApiErrorBody {
   readonly detail: unknown;
   readonly category?: string;
   readonly retryable?: boolean;
+  readonly retryAfterMs?: number;
 
   constructor(body: ApiErrorBody) {
     super(errorMessage(body.detail, body.status));
@@ -177,6 +193,7 @@ export class ApiError extends Error implements ApiErrorBody {
     this.detail = body.detail;
     this.category = body.category;
     this.retryable = body.retryable;
+    this.retryAfterMs = body.retryAfterMs;
   }
 }
 
@@ -354,7 +371,8 @@ async function throwApiError(response: Response): Promise<never> {
   const detail = record && "detail" in record ? record.detail : payload;
   const category = typeof record?.category === "string" ? record.category : undefined;
   const retryable = typeof record?.retryable === "boolean" ? record.retryable : undefined;
-  throw new ApiError({ status: response.status, detail, category, retryable });
+  const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+  throw new ApiError({ status: response.status, detail, category, retryable, retryAfterMs });
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {

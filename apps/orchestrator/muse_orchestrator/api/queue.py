@@ -272,7 +272,11 @@ async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_s
     task.finished_at = datetime.now(timezone.utc)
     shot = await repository.get_shot(task.shot_id)
     if shot:
-        shot.generation_state = ShotGenerationState.CANCELED
+        # A stale/extra task must not downgrade a shot that has newer active work or
+        # an already selected take.
+        await GenerationQueueService.settle_shot_after_task_end(
+            repository.session, task, shot, ShotGenerationState.CANCELED
+        )
     task.history_log = list(task.history_log or []) + ["Canceled by operator."]
     await repository.save_queue_task(task, shot=shot)
     return _serialize_task(task)
@@ -284,6 +288,8 @@ async def list_shot_takes(
     repository: StudioRepository = Depends(get_studio_repository),
     actor: str = Depends(verify_single_admin),
 ) -> list[ShotTakeOut]:
+    if not await repository.get_shot(shot_id):
+        raise HTTPException(status_code=404, detail="Shot không tồn tại.")
     rows = await repository.list_shot_takes(shot_id)
     return [
         {

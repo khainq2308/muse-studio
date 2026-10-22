@@ -371,6 +371,11 @@ export interface paths {
         /**
          * Retry Failed Project Tasks
          * @description Chỉ retry các Shot bị lỗi (failed / poll_timeout), giữ nguyên thành quả các Shot đã succeeded.
+         *
+         *     Everything is validated before the first task is created so a bad shot or connection
+         *     never leaves a partially committed retry behind (400 disabled/missing connection,
+         *     422 for shots that cannot be enqueued). Shots whose previous connection is now
+         *     disabled/missing are skipped when no explicit ``connection_id`` is given.
          */
         post: operations["retry_failed_project_tasks_api_v1_projects__project_id__batch_retry_failed_post"];
         delete?: never;
@@ -731,7 +736,7 @@ export interface paths {
         put?: never;
         /**
          * Approve Manual Gate And Resume
-         * @description Duyệt cổng ManualApproval và tự động chạy tiếp các node phía sau đang bị blocked.
+         * @description Duyệt cổng ManualApproval và chạy tiếp tới cổng ManualApproval kế tiếp (nếu có).
          */
         post: operations["approve_manual_gate_and_resume_api_v1_projects__project_id__workflows__workflow_id__runs__run_id__nodes__node_id__approve_post"];
         delete?: never;
@@ -1118,6 +1123,11 @@ export interface components {
         };
         /** BackupRestoreReportOut */
         BackupRestoreReportOut: {
+            /**
+             * Exports Neutralized
+             * @default 0
+             */
+            exports_neutralized: number;
             /** Media Missing */
             media_missing: string[];
             /** Media Restored */
@@ -1126,10 +1136,31 @@ export interface components {
             rows_skipped: {
                 [key: string]: number;
             };
+            /** Skipped Rows */
+            skipped_rows?: components["schemas"]["BackupRestoreSkippedRowOut"][];
             /** Tables Restored */
             tables_restored: {
                 [key: string]: number;
             };
+            /**
+             * Tasks Neutralized
+             * @default 0
+             */
+            tasks_neutralized: number;
+            /**
+             * Tasks With Placeholder Connection
+             * @default 0
+             */
+            tasks_with_placeholder_connection: number;
+        };
+        /** BackupRestoreSkippedRowOut */
+        BackupRestoreSkippedRowOut: {
+            /** Original Id */
+            original_id: string;
+            /** Reason */
+            reason: string;
+            /** Table */
+            table: string;
         };
         /** BatchLaunchIn */
         BatchLaunchIn: {
@@ -2142,7 +2173,7 @@ export interface components {
             /** Composition */
             composition?: string | null;
             /** Continuity Mode */
-            continuity_mode?: string | null;
+            continuity_mode?: ("standard" | "frame_chain") | null;
             /** Duration Seconds */
             duration_seconds?: number | null;
             /** First Frame Asset Id */
@@ -2474,9 +2505,9 @@ export interface components {
             run_id: string;
             /**
              * Status
-             * @constant
+             * @enum {string}
              */
-            status: "succeeded";
+            status: "succeeded" | "waiting_approval";
         };
         /** WorkflowCreateIn */
         WorkflowCreateIn: {

@@ -1,3 +1,5 @@
+import contextlib
+
 import pytest
 from muse_orchestrator.core.security import SecretVault
 from muse_orchestrator.services.generation_queue import compute_backoff_seconds
@@ -123,6 +125,11 @@ async def test_every_provider_api_request_passes_the_account_proxy(monkeypatch, 
 
         async def post(self, url, **kwargs):
             return httpx.Response(200, json={"id": "task_1", "status": "queued"})
+
+        @contextlib.asynccontextmanager
+        async def stream(self, method, url, **kwargs):
+            # SEC-003: provider calls are streamed so bodies can be size-bounded.
+            yield await (self.post(url, **kwargs) if method == "POST" else self.get(url, **kwargs))
 
     monkeypatch.setattr(muse2api_adapter.httpx, "AsyncClient", RecordingClient)
     adapter = muse2api_adapter.Muse2ApiAdapter(

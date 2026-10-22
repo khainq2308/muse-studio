@@ -274,15 +274,20 @@ async def test_orphan_cleanup_unlinks_symlink_without_deleting_target(client: As
         alias.symlink_to(referenced_path)
     except (NotImplementedError, OSError):
         pytest.skip("Symlinks are not supported in this test environment")
+    old_mtime = time.time() - 48 * 3600
+    try:
+        os.utime(alias, (old_mtime, old_mtime), follow_symlinks=False)
+    except (NotImplementedError, OSError):
+        pytest.skip("Setting symlink mtimes is not supported in this test environment")
     response = await client.post(
-        "/api/v1/maintenance/orphans/cleanup", json={"retention_hours": 0, "dry_run": False}
+        "/api/v1/maintenance/orphans/cleanup", json={"retention_hours": 1, "dry_run": False}
     )
     assert response.status_code == 200, response.text
     assert not alias.is_symlink()
     assert referenced_path.is_file(), "cleanup must not unlink the symlink target"
 
 
-async def test_restore_skips_generation_task_when_source_connection_is_missing(client: AsyncClient):
+async def test_restore_keeps_generation_task_terminal_when_source_connection_is_missing(client: AsyncClient):
     project = await _create_project(client, name="Backup With External Connection")
     project_id = project["id"]
     assert _SESSION_MAKER is not None
@@ -320,8 +325,22 @@ async def test_restore_skips_generation_task_when_source_connection_is_missing(c
     )
     assert restored.status_code == 201, restored.text
     report = restored.json()["report"]
-    assert report["rows_skipped"]["generation_tasks"] == 1
-    assert report["tables_restored"]["generation_tasks"] == 0
+    # DATA-002: history survives on a disabled placeholder connection, never re-dispatched.
+    assert report["rows_skipped"]["generation_tasks"] == 0
+    assert report["tables_restored"]["generation_tasks"] == 1
+    assert report["tasks_with_placeholder_connection"] == 1
+    assert report["tasks_neutralized"] == 1
+    async with _SESSION_MAKER() as db:
+        from sqlalchemy import select
+
+        tasks = (await db.execute(
+            select(GenerationTaskRecord).where(GenerationTaskRecord.project_id == restored.json()["project_id"])
+        )).scalars().all()
+        assert len(tasks) == 1
+        assert tasks[0].state == QueueTaskState.FAILED
+        placeholder = await db.get(ProviderConnection, tasks[0].connection_id)
+        assert placeholder is not None and placeholder.enabled is False
+        assert placeholder.encrypted_api_key is None
 
 
 async def test_restore_rejects_archive_with_excessive_uncompressed_size(client: AsyncClient, monkeypatch):

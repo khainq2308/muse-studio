@@ -11,6 +11,7 @@ import {
   downloadFile,
   encodePathSegment,
   normalizeApiBaseUrl,
+  parseRetryAfter,
 } from "@/lib/api/client";
 import { useSessionStore } from "@/lib/stores/session-store";
 
@@ -337,6 +338,24 @@ describe("API client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(apiGet("/api/v1/projects")).rejects.toThrow("Expected JSON API response (200).");
+  });
+
+  it("captures Retry-After on rate-limited responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "slow down" }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "3" },
+        }),
+      ),
+    );
+    const error = await apiGet("/api/v1/projects").catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ status: 429, retryAfterMs: 3_000 });
+    expect(
+      parseRetryAfter("Thu, 22 Oct 2026 00:00:05 GMT", Date.parse("2026-10-22T00:00:00Z")),
+    ).toBe(5_000);
+    expect(parseRetryAfter("garbage")).toBeUndefined();
   });
 
   it("uses a generic error for non-JSON upstream error pages", async () => {

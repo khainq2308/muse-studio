@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+
 from fastapi import APIRouter, Depends, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -42,11 +43,21 @@ class BackupOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class BackupRestoreSkippedRowOut(BaseModel):
+    table: str
+    original_id: str
+    reason: str
+
+
 class BackupRestoreReportOut(BaseModel):
     tables_restored: dict[str, int]
     rows_skipped: dict[str, int]
+    skipped_rows: list[BackupRestoreSkippedRowOut] = Field(default_factory=list)
     media_restored: int
     media_missing: list[str]
+    tasks_neutralized: int = 0
+    exports_neutralized: int = 0
+    tasks_with_placeholder_connection: int = 0
 
 
 class BackupRestoreOut(BaseModel):

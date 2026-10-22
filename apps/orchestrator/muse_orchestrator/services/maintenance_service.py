@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass
@@ -30,6 +31,9 @@ async def _referenced_rel_paths(db: AsyncSession) -> set[str]:
     return referenced
 
 
+MIN_RETENTION_HOURS = 1.0
+
+
 def _iter_media_files(media_root: Path) -> list[tuple[Path, str]]:
     found: list[tuple[Path, str]] = []
     for dirpath, _dirnames, filenames in os.walk(media_root):
@@ -55,16 +59,24 @@ async def scan_orphan_media(
     """
     root = Path(media_root or settings.media_root).resolve()
     retention = retention_hours if retention_hours is not None else settings.orphan_cleanup_retention_hours
-    if not root.is_dir():
+    # Never report files younger than the floor: in-flight restores/exports write
+    # media before their DB rows commit.
+    retention = max(float(retention), MIN_RETENTION_HOURS)
+    if not await asyncio.to_thread(root.is_dir):
         return []
     referenced = await _referenced_rel_paths(db)
+    return await asyncio.to_thread(_scan_orphans_sync, root, referenced, retention)
+
+
+def _scan_orphans_sync(root: Path, referenced: set[str], retention: float) -> list[OrphanFile]:
+    """Blocking os.walk/stat pass; run in a worker thread."""
     now = time.time()
     orphans: list[OrphanFile] = []
     for full, rel in _iter_media_files(root):
         if rel in referenced:
             continue
         try:
-            stat = full.stat()
+            stat = full.lstat()
         except OSError:
             continue
         age_hours = (now - stat.st_mtime) / 3600.0
@@ -72,6 +84,29 @@ async def scan_orphan_media(
             orphans.append(OrphanFile(rel_path=rel, size_bytes=stat.st_size, age_hours=round(age_hours, 2)))
     orphans.sort(key=lambda item: item.rel_path)
     return orphans
+
+
+def _delete_orphans_sync(root: Path, orphans: list[OrphanFile]) -> tuple[int, int, list[str]]:
+    """Blocking unlink pass; run in a worker thread."""
+    deleted = 0
+    freed_bytes = 0
+    errors: list[str] = []
+    for orphan in orphans:
+        # Unlink the lexical path rather than resolving the file itself: if it is
+        # a symlink, resolving first could delete its target instead of the link.
+        candidate = root / orphan.rel_path
+        try:
+            candidate.parent.resolve().relative_to(root)
+        except ValueError:
+            errors.append(f"{orphan.rel_path}: parent escaped media root, skipped")
+            continue
+        try:
+            candidate.unlink(missing_ok=True)
+            deleted += 1
+            freed_bytes += orphan.size_bytes
+        except OSError as exc:
+            errors.append(f"{orphan.rel_path}: {exc.strerror or type(exc).__name__}")
+    return deleted, freed_bytes, errors
 
 
 async def cleanup_orphan_media(
@@ -87,21 +122,7 @@ async def cleanup_orphan_media(
     freed_bytes = 0
     errors: list[str] = []
     if not dry_run:
-        for orphan in orphans:
-            # Unlink the lexical path rather than resolving the file itself: if it is
-            # a symlink, resolving first could delete its target instead of the link.
-            candidate = root / orphan.rel_path
-            try:
-                candidate.parent.resolve().relative_to(root)
-            except ValueError:
-                errors.append(f"{orphan.rel_path}: parent escaped media root, skipped")
-                continue
-            try:
-                candidate.unlink(missing_ok=True)
-                deleted += 1
-                freed_bytes += orphan.size_bytes
-            except OSError as exc:
-                errors.append(f"{orphan.rel_path}: {exc}")
+        deleted, freed_bytes, errors = await asyncio.to_thread(_delete_orphans_sync, root, orphans)
     if not dry_run and deleted:
         # M7: audit trail for destructive cleanup (ported from PR #9).
         from muse_orchestrator.application.system_service import write_audit

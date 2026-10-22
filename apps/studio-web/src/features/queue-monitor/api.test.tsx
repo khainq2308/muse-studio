@@ -1,4 +1,6 @@
-import { act, renderHook } from "@testing-library/react";
+import * as ReactQuery from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   QUEUE_POLL_WINDOW_MS,
@@ -13,10 +15,10 @@ const mocks = vi.hoisted(() => ({
   useQueryClient: vi.fn(),
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  invalidateQueries: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: mocks.useQuery,
   useMutation: mocks.useMutation,
   useQueryClient: mocks.useQueryClient,
@@ -28,6 +30,8 @@ vi.mock("@/lib/api/client", () => ({
 }));
 
 import { useQueueTaskAction, useQueueTasks } from "@/features/queue-monitor/api";
+import { queryKeys } from "@/lib/api/queryKeys";
+import { useSessionStore } from "@/lib/stores/session-store";
 
 type QueryOptionsShape = {
   queryKey: unknown[];
@@ -41,10 +45,6 @@ type QueryOptionsShape = {
       status: "pending" | "error" | "success";
     };
   }) => number | false;
-};
-
-type MutationOptionsShape = {
-  onSettled?: (...args: never[]) => unknown;
 };
 
 describe("Queue Monitor query hooks", () => {
@@ -135,25 +135,51 @@ describe("Queue Monitor query hooks", () => {
     ).toBe(2_000);
   });
 
-  it("invalidates and restarts polling after every queue action result", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-22T00:00:00.000Z"));
+  it("invalidates the project the action started on, even after switching projects", async () => {
+    const actual = await vi.importActual<typeof ReactQuery>("@tanstack/react-query");
+    mocks.useMutation.mockImplementation(actual.useMutation);
+    mocks.useQueryClient.mockImplementation(actual.useQueryClient);
 
-    mocks.useQueryClient.mockReturnValue({ invalidateQueries: mocks.invalidateQueries });
-    let mutationOptions: MutationOptionsShape | undefined;
-    mocks.useMutation.mockImplementation((value: unknown) => {
-      mutationOptions = value as MutationOptionsShape;
-      return {} as never;
+    const queryClient = new actual.QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const sessionVersion = useSessionStore.getState().sessionVersion;
+    const keyA = queryKeys.queueTasks(sessionVersion, "project-a", "all", 0);
+    const keyB = queryKeys.queueTasks(sessionVersion, "project-b", "all", 0);
+    queryClient.setQueryData(keyA, { total: 1 });
+    queryClient.setQueryData(keyB, { total: 1 });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    let resolvePost: (value: unknown) => void = () => undefined;
+    mocks.apiPost.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePost = resolve;
+      }),
+    );
+
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(actual.QueryClientProvider, { client: queryClient }, children);
+    const resetWindow = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useQueueTaskAction(projectId, resetWindow),
+      { wrapper, initialProps: { projectId: "project-a" } },
+    );
+
+    act(() => result.current.mutate({ taskId: "task-1", action: "pause" }));
+    rerender({ projectId: "project-b" });
+    await act(async () => {
+      resolvePost({});
     });
 
-    const resetWindow = vi.fn();
-    renderHook(() => useQueueTaskAction("project-1", resetWindow));
-
-    expect(mutationOptions?.onSettled).toBeTypeOf("function");
-    await act(async () => {
-      await mutationOptions?.onSettled?.();
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.queueTasksPrefix(sessionVersion, "project-a"),
     });
     expect(resetWindow).toHaveBeenCalledTimes(1);
-    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mocks.apiPost).toHaveBeenCalledWith("/api/v1/queue/tasks/{task_id}/pause", undefined, {
+      pathParams: { task_id: "task-1" },
+    });
+    expect(queryClient.getQueryState(keyA)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(keyB)?.isInvalidated).toBe(false);
   });
 });
