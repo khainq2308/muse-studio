@@ -6,6 +6,29 @@ export type QueryParams = Record<string, QueryValue>;
 
 type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
 
+/** Paths with a real GET operation in the generated OpenAPI contract. */
+export type ApiGetPath = {
+  [Path in keyof paths]: paths[Path] extends { get: infer Operation }
+    ? [NonNullable<Operation>] extends [never]
+      ? never
+      : Path
+    : never;
+}[keyof paths] & string;
+
+type ApiOperation<Path extends keyof paths, Method extends HttpMethod> =
+  Method extends keyof paths[Path] ? NonNullable<paths[Path][Method]> : never;
+
+type ApiPathParams<Path extends ApiGetPath> = Path extends keyof paths
+  ? ApiOperation<Path, "get"> extends { parameters: { path: infer Params } }
+    ? Params
+    : {}
+  : {};
+
+type ApiGetOptions = Omit<ApiRequestOptions, "method" | "body" | "pathParams">;
+type ApiGetArguments<Path extends ApiGetPath> = keyof ApiPathParams<Path> extends never
+  ? [options?: ApiGetOptions]
+  : [options: ApiGetOptions & { pathParams: ApiPathParams<Path> }];
+
 type JsonSuccessBody<Operation> = Operation extends { responses: infer Responses }
   ? {
       [Status in keyof Responses]: Status extends string | number
@@ -33,6 +56,8 @@ export type ApiJsonResponse<
 export interface ApiRequestOptions extends Omit<RequestInit, "body" | "headers"> {
   headers?: HeadersInit;
   query?: QueryParams;
+  /** Values substituted into OpenAPI-style {path_parameter} segments. */
+  pathParams?: Record<string, string | number>;
   body?: unknown;
 }
 
@@ -125,7 +150,37 @@ export function encodePathSegment(segment: string): string {
   return encodeURIComponent(segment);
 }
 
-function buildUrl(path: string, query?: QueryParams): string {
+function buildUrl(
+  path: string,
+  query?: QueryParams,
+  pathParams?: Record<string, string | number>,
+): string {
+  const matches = [...path.matchAll(/\\{([^{}]+)\\}/g)];
+  const names = [...new Set(matches.map((match) => match[1]!))];
+
+  if (matches.length > 0) {
+    if (!pathParams) {
+      throw new Error("API path parameters are required for this endpoint.");
+    }
+    const missing = names.filter((name) => pathParams[name] === undefined);
+    if (missing.length > 0) {
+      throw new Error(`Missing API path parameter(s): ${missing.join(", ")}.`);
+    }
+    const unexpected = Object.keys(pathParams).filter((name) => !names.includes(name));
+    if (unexpected.length > 0) {
+      throw new Error(`Unexpected API path parameter(s): ${unexpected.join(", ")}.`);
+    }
+    path = path.replace(/\\{([^{}]+)\\}/g, (_match, name: string) =>
+      encodePathSegment(String(pathParams[name]!)),
+    );
+  } else if (pathParams && Object.keys(pathParams).length > 0) {
+    throw new Error("Path parameters were supplied for an endpoint without path parameters.");
+  }
+
+  if (/[{}]/.test(path)) {
+    throw new Error("API path contains a malformed path parameter template.");
+  }
+
   if (!path.startsWith("/") || path.startsWith("//")) {
     throw new Error("API paths must be absolute paths beginning with one '/'.");
   }
@@ -170,7 +225,7 @@ function isBodyInit(body: unknown): body is BodyInit {
 }
 
 async function send(path: string, options: ApiRequestOptions = {}): Promise<Response> {
-  const { query, headers: inputHeaders, body, ...init } = options;
+  const { query, pathParams, headers: inputHeaders, body, ...init } = options;
   const headers = new Headers(inputHeaders);
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
@@ -188,7 +243,7 @@ async function send(path: string, options: ApiRequestOptions = {}): Promise<Resp
     }
   }
 
-  return fetch(buildUrl(path, query), { ...init, headers, body: requestBody });
+  return fetch(buildUrl(path, query, pathParams), { ...init, headers, body: requestBody });
 }
 
 function isJsonContentType(contentType: string): boolean {
@@ -244,10 +299,11 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   return (await parseResponse(response)) as T;
 }
 
-export function apiGet<Path extends string>(
+export function apiGet<Path extends ApiGetPath>(
   path: Path,
-  options: Omit<ApiRequestOptions, "method" | "body"> = {},
+  ...args: ApiGetArguments<Path>
 ): Promise<ApiJsonResponse<Path, "get">> {
+  const [options = {}] = args as [ApiRequestOptions?];
   return apiRequest<ApiJsonResponse<Path, "get">>(path, { ...options, method: "GET" });
 }
 
