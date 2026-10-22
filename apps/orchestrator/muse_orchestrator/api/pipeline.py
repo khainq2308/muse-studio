@@ -502,6 +502,19 @@ async def update_and_review_shot(
         raise HTTPException(status_code=404, detail="Không tìm thấy Shot trong dự án.")
 
     updates = payload.model_dump(exclude_unset=True)
+    nullable_fields = {"previous_shot_id", "first_frame_asset_id"}
+    invalid_null_fields = [
+        field_name
+        for field_name, value in updates.items()
+        if value is None and field_name not in nullable_fields
+    ]
+    if invalid_null_fields:
+        field_name = invalid_null_fields[0]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Trường '{field_name}' không được phép là null.",
+        )
+
     if "continuity_mode" in updates and updates["continuity_mode"] is not None:
         if updates["continuity_mode"] not in ("standard", "frame_chain"):
             raise HTTPException(status_code=422, detail="continuity_mode phải là 'standard' hoặc 'frame_chain'.")
