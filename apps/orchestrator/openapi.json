@@ -8030,22 +8030,6 @@
             }
           },
           {
-            "in": "header",
-            "name": "x-studio-admin-token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Studio-Admin-Token"
-            }
-          },
-          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -8066,6 +8050,22 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-studio-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Studio-Admin-Token"
             }
           }
         ],

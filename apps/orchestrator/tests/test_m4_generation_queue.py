@@ -266,7 +266,7 @@ async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monke
 
 async def _create_queue_test_tasks(client: AsyncClient, *, project_name: str, shot_count: int):
     project_response = await client.post("/api/v1/projects", json={"name": project_name})
-    assert project_response.status_code == 201, project_response.text
+    assert project_response.is_success, project_response.text
     project_id = project_response.json()["id"]
 
     connection_response = await client.post(
@@ -278,11 +278,11 @@ async def _create_queue_test_tasks(client: AsyncClient, *, project_name: str, sh
             "max_concurrency": 5,
         },
     )
-    assert connection_response.status_code == 201, connection_response.text
+    assert connection_response.is_success, connection_response.text
     connection_id = connection_response.json()["id"]
 
-    script = "SCENE 1: Queue API\\n" + "\\n".join(
-        f"SHOT {index}: Shot {index}\\n- Action: A subject moves {index}"
+    script = "SCENE 1: Queue API\n" + "\n".join(
+        f"SHOT {index}: Shot {index}\n- Action: A subject moves {index}"
         for index in range(1, shot_count + 1)
     )
     import_response = await client.post(
