@@ -159,11 +159,6 @@ jobs:
       - name: Lint frontend
         working-directory: apps/studio-web
         run: npm run lint
-      - name: Debug client formatter diff (temporary)
-        working-directory: apps/studio-web
-        run: |
-          npx prettier src/lib/api/client.ts > /tmp/client.formatted.ts
-          diff -u src/lib/api/client.ts /tmp/client.formatted.ts || true
       - name: Check frontend formatting
         working-directory: apps/studio-web
         run: npm run format:check
