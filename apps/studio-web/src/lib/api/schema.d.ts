@@ -1970,7 +1970,6 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
-            /** Summary */
             summary: components["schemas"]["QueueTaskSummaryOut"];
             /** Total */
             total: number;
