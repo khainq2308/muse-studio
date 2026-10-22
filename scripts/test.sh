@@ -7,17 +7,23 @@ scope=all
 if [ "$#" -gt 0 ]; then scope="$1"; shift; fi
 rc=0
 
+# Prefer the locked orchestrator virtualenv; a system python3 often lacks pytest/fastapi.
+PYTHON="python3"
+for candidate in "$ROOT/apps/orchestrator/.venv/bin/python" "$ROOT/apps/orchestrator/.venv/Scripts/python.exe"; do
+  if [ -x "$candidate" ]; then PYTHON="$candidate"; break; fi
+done
+
 if [ "$scope" = "all" ] && [ "$#" -gt 0 ]; then
   echo "pytest arguments cannot be combined with scope all; run one test scope at a time." >&2
   exit 2
 fi
 run_orchestrator() {
   echo "==> orchestrator tests"
-  ( cd "$ROOT/apps/orchestrator" && PYTHONPATH="$ROOT/apps/media-engine${PYTHONPATH:+:$PYTHONPATH}" REQUIRE_FFMPEG="$(printenv REQUIRE_FFMPEG 2>/dev/null || echo 1)" python3 -m pytest -q -rs "$@" ) || rc=1
+  ( cd "$ROOT/apps/orchestrator" && PYTHONPATH="$ROOT/apps/media-engine${PYTHONPATH:+:$PYTHONPATH}" REQUIRE_FFMPEG="$(printenv REQUIRE_FFMPEG 2>/dev/null || echo 1)" "$PYTHON" -m pytest -q -rs "$@" ) || rc=1
 }
 run_media() {
   echo "==> media-engine tests"
-  ( cd "$ROOT/apps/media-engine" && PYTHONPATH=. python3 -m pytest -q "$@" ) || rc=1
+  ( cd "$ROOT/apps/media-engine" && PYTHONPATH=. "$PYTHON" -m pytest -q "$@" ) || rc=1
 }
 run_openapi() {
   echo "==> OpenAPI snapshot and generated TypeScript schema"
