@@ -12,6 +12,10 @@ class ErrorCategory(str, enum.Enum):
     QUOTA_EXHAUSTED = "quota_exhausted"
     INVALID_REQUEST = "invalid_request"
     UPSTREAM_POLL_TIMEOUT = "upstream_poll_timeout"
+    # A generate request may have reached the provider but no task id was received
+    # (read timeout / connection drop after sending). Never retried automatically:
+    # re-sending could create a second paid generation.
+    DISPATCH_OUTCOME_UNKNOWN = "dispatch_outcome_unknown"
 
 
 @dataclass

@@ -312,15 +312,23 @@ async def test_cancel_or_fail_of_extra_task_keeps_succeeded_shot(client: AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_cancel_stale_task_does_not_override_newer_active_task(client: AsyncClient):
+async def test_new_inputs_return_the_single_active_task_and_cancel_settles_shot(client: AsyncClient):
+    # One-active-task invariant: a changed prompt/key while a task is active returns that
+    # task instead of starting a parallel paid generation.
     pid, cid, s1, _s2 = await _setup(client)
     old = (await client.post("/api/v1/queue/tasks", json={
         "shot_id": s1["id"], "connection_id": cid, "idempotency_key": "old-key"})).json()
     await client.patch(f"/api/v1/projects/{pid}/shots/{s1['id']}", json={"action": "new direction"})
+    again = await client.post("/api/v1/queue/tasks", json={
+        "shot_id": s1["id"], "connection_id": cid, "idempotency_key": "new-key"})
+    assert again.status_code == 201, again.text
+    assert again.json()["id"] == old["id"]
+    assert again.json()["created_new"] is False
+    await client.post(f"/api/v1/queue/tasks/{old['id']}/cancel")
+    assert (await _shots(client, pid))[s1["id"]]["generation_state"] == "canceled"
     new = (await client.post("/api/v1/queue/tasks", json={
         "shot_id": s1["id"], "connection_id": cid, "idempotency_key": "new-key"})).json()
-    assert new["id"] != old["id"]
-    await client.post(f"/api/v1/queue/tasks/{old['id']}/cancel")
+    assert new["id"] != old["id"] and new["created_new"] is True
     assert (await _shots(client, pid))[s1["id"]]["generation_state"] == "queued"
 
 
@@ -474,11 +482,16 @@ async def test_cancelled_dispatch_releases_lease(client: AsyncClient, monkeypatc
 
 async def _export_job(export_id: str, clips: list[dict], state: ExportJobState = ExportJobState.QUEUED,
                       manifest_extra: dict | None = None, created_at: datetime | None = None) -> None:
-    from muse_orchestrator.models.domain import Project
+    from muse_orchestrator.models.domain import Project, TimelineSequenceRecord
 
     async with STATE["maker"]() as db:
         if await db.get(Project, "prj_export") is None:
             db.add(Project(id="prj_export", name="export"))
+            # Models declare FKs without relationship(): flush each parent level first.
+            await db.flush()
+        if await db.get(TimelineSequenceRecord, "seq_x") is None:
+            db.add(TimelineSequenceRecord(id="seq_x", project_id="prj_export"))
+            await db.flush()
         manifest = {"resolved_clips": clips, "unsupported_features": []}
         manifest.update(manifest_extra or {})
         job = ExportJobRecord(

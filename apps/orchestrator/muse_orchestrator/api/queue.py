@@ -21,9 +21,9 @@ class EnqueueTaskIn(BaseModel):
     shot_id: str
     connection_id: str
     task_type: Literal["image", "video"] = "video"
-    model_id: str = Field(default="muse-video-mock-v1")
+    model_id: str = Field(default="muse-video-mock-v1", min_length=1, max_length=128)
     priority: int = Field(default=10, ge=1, le=100)
-    idempotency_key: str | None = None
+    idempotency_key: str | None = Field(default=None, max_length=128)
     force_retry: bool = False
     max_polls: int = Field(default=60, ge=1, le=500)
 
@@ -317,24 +317,10 @@ async def select_shot_take(shot_id: str, take_id: str, repository: StudioReposit
     if not shot:
         raise HTTPException(status_code=404, detail="Shot không tồn tại.")
 
-    takes = await repository.list_shot_takes(shot_id)
-    found = False
-    for t in takes:
-        if t.id == take_id:
-            t.is_selected = True
-            found = True
-        else:
-            t.is_selected = False
-
-    if not found:
-        raise HTTPException(status_code=404, detail="Take không thuộc về Shot này.")
-
-    selected_obj = next(t for t in takes if t.id == take_id)
-    shot.selected_take_id = take_id
-    if selected_obj.last_frame_asset_id:
-        shot.last_frame_asset_id = selected_obj.last_frame_asset_id
-    await repository.save_selected_take(shot, takes)
-    unlocked = await GenerationQueueService.propagate_frame_chain_downstream(repository.session, shot)
+    try:
+        unlocked = await GenerationQueueService.select_shot_take(repository, shot, take_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Take không thuộc về Shot này.") from exc
     return {
         "shot_id": shot_id,
         "selected_take_id": take_id,

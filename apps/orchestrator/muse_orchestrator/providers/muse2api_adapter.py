@@ -168,6 +168,11 @@ def _json_bytes_or_fail(body: bytes, status_code: int) -> dict:
     """Parse a provider JSON object from bytes; malformed bodies become ProviderFailure."""
     try:
         data = json.loads(body.decode("utf-8")) if body else None
+    except RecursionError as exc:
+        # Deeply nested hostile JSON must not crash the worker.
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "Provider returned excessively nested JSON.", status_code, False
+        ) from exc
     except (ValueError, UnicodeDecodeError) as exc:
         raise ProviderFailure(
             ErrorCategory.UPSTREAM_5XX, "Provider returned a non-JSON response.", status_code, True
@@ -179,13 +184,66 @@ def _json_bytes_or_fail(body: bytes, status_code: int) -> dict:
     return data
 
 
+_MAX_TASK_ID_CHARS = 128  # generation_tasks.external_task_id is String(128)
+_MAX_STATUS_CHARS = 64
+_MAX_URL_CHARS = 4096
+_MAX_ACCOUNT_ID_CHARS = 128
+_MAX_ERROR_CHARS = 4096
+
+
+def _bounded_str(value: Any, field: str, limit: int) -> str:
+    """Accept only a string (or integer id) within ``limit`` characters."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, f"Provider response field '{field}' has an invalid type.", None, False
+        )
+    text = str(value).strip()
+    if len(text) > limit:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, f"Provider response field '{field}' is too long.", None, False
+        )
+    return text
+
+
+def _optional_bounded_str(value: Any, field: str, limit: int) -> str | None:
+    if value is None or value == "":
+        return None
+    return _bounded_str(value, field, limit) or None
+
+
+def _provider_error_message(value: Any) -> str | None:
+    """Bounded upstream error text (capped BEFORE the queue redacts it)."""
+    if value is None or value == "" or value is False:
+        return None
+    if isinstance(value, dict) and isinstance(value.get("message"), str):
+        value = value["message"]
+    if not isinstance(value, str):
+        return "Upstream reported an error with a non-text payload."
+    return value[:_MAX_ERROR_CHARS]
+
+
 def _task_from_response(data: dict) -> ProviderTask:
-    task_id = str(data.get("id") or data.get("task_id") or "").strip()
+    raw_id = data.get("id") or data.get("task_id")
+    task_id = _bounded_str(raw_id, "id", _MAX_TASK_ID_CHARS) if raw_id else ""
     if not task_id:
         raise ProviderFailure(
             ErrorCategory.INVALID_REQUEST, "Provider response did not include a task id.", None, False
         )
-    return ProviderTask(external_task_id=task_id, status=str(data.get("status", "queued")), raw_response=data)
+    status = _bounded_str(data.get("status", "queued"), "status", _MAX_STATUS_CHARS)
+    return ProviderTask(external_task_id=task_id, status=status, raw_response=data)
+
+
+# Raised before any request byte left this process: re-sending cannot duplicate work.
+_SAFE_BEFORE_SEND_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
+def _dispatch_outcome_unknown(detail: str) -> ProviderFailure:
+    return ProviderFailure(
+        ErrorCategory.DISPATCH_OUTCOME_UNKNOWN,
+        f"Generate request outcome unknown ({detail}); not retried to avoid a duplicate paid generation.",
+        None,
+        False,
+    )
 
 
 class Muse2ApiAdapter(VideoProvider):
@@ -230,11 +288,17 @@ class Muse2ApiAdapter(VideoProvider):
         *,
         headers: dict[str, str],
         json_body: dict[str, object] | None = None,
+        dispatch: bool = False,
     ) -> dict:
         """Send one provider API request with streamed, size-bounded body handling.
 
         Error bodies are read via ``_read_limited_error_body`` (prefix only) and success
         bodies are capped, so a hostile or broken upstream cannot exhaust memory.
+
+        ``dispatch=True`` (paid generate requests): only failures raised before the request
+        was sent (connect/pool errors) stay retryable. A timeout or connection drop after
+        sending, a 504 gateway timeout, or an unreadable 2xx body means the provider may have
+        accepted the job, so it becomes non-retryable ``dispatch_outcome_unknown``.
         """
         secrets = [self.api_key or ""]
         async with self._client(self.timeout) as client:
@@ -242,12 +306,21 @@ class Muse2ApiAdapter(VideoProvider):
                 async with client.stream(method, url, headers=headers, json=json_body) as resp:
                     status_code = resp.status_code
                     if status_code >= 400:
+                        if dispatch and status_code == 504:
+                            raise _dispatch_outcome_unknown("HTTP 504 gateway timeout")
                         err_body = await _read_limited_error_body(resp, limit=4096)
                         raise classify_http_error(status_code, SecretRedactor.redact_text(err_body, secrets))
                     body = await _read_limited_success_body(resp)
             except httpx.RequestError as exc:
+                if dispatch and not isinstance(exc, _SAFE_BEFORE_SEND_ERRORS):
+                    raise _dispatch_outcome_unknown(type(exc).__name__) from exc
                 safe_msg = SecretRedactor.redact_text(str(exc), secrets)
                 raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
+        if dispatch:
+            try:
+                return _json_bytes_or_fail(body, status_code)
+            except ProviderFailure as exc:
+                raise _dispatch_outcome_unknown(f"unreadable HTTP {status_code} response") from exc
         return _json_bytes_or_fail(body, status_code)
 
     async def health(self) -> ProviderHealth:
@@ -298,8 +371,13 @@ class Muse2ApiAdapter(VideoProvider):
             f"{self.base_url}/v1/images/generations",
             headers=self._headers(request.idempotency_key),
             json_body=body,
+            dispatch=True,
         )
-        return _task_from_response(data)
+        try:
+            return _task_from_response(data)
+        except ProviderFailure as exc:
+            # A 2xx without a usable task id: the job may exist upstream; never re-send.
+            raise _dispatch_outcome_unknown("2xx response without a valid task id") from exc
 
     def _build_video_payload(self, request: VideoGenerationRequest) -> dict[str, object]:
         """Build the request body for the selected muse2api schema profile.
@@ -347,14 +425,19 @@ class Muse2ApiAdapter(VideoProvider):
             f"{self.base_url}/v1/videos",
             headers=self._headers(request.idempotency_key),
             json_body=body,
+            dispatch=True,
         )
-        return _task_from_response(data)
+        try:
+            return _task_from_response(data)
+        except ProviderFailure as exc:
+            # A 2xx without a usable task id: the job may exist upstream; never re-send.
+            raise _dispatch_outcome_unknown("2xx response without a valid task id") from exc
 
     async def get_task(self, task_id: str) -> ProviderTaskStatus:
         data = await self._request_json(
             "GET", f"{self.base_url}/v1/videos/{quote(task_id, safe='')}", headers=self._headers()
         )
-        raw_status = str(data.get("status", "running")).lower()
+        raw_status = _bounded_str(data.get("status", "running"), "status", _MAX_STATUS_CHARS).lower()
         status_map = {
             "pending": "queued", "queued": "queued",
             "processing": "running", "running": "running",
@@ -367,12 +450,11 @@ class Muse2ApiAdapter(VideoProvider):
         return ProviderTaskStatus(
             external_task_id=task_id,
             status=status_map.get(raw_status, "running"),
-            result_media_url=data.get("video_url") or data.get("url"),
-            error_message=(
-                data["error"] if isinstance(data.get("error"), str) else
-                (str(data["error"]) if data.get("error") else None)
+            result_media_url=_optional_bounded_str(
+                data.get("video_url") or data.get("url"), "url", _MAX_URL_CHARS
             ),
-            account_used=data.get("account_id"),
+            error_message=_provider_error_message(data.get("error")),
+            account_used=_optional_bounded_str(data.get("account_id"), "account_id", _MAX_ACCOUNT_ID_CHARS),
         )
 
     def _is_provider_origin(self, url: str) -> bool:
@@ -656,8 +738,9 @@ class Muse2ApiAdapter(VideoProvider):
                         raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
                 else:
                     raise ProviderFailure(ErrorCategory.INVALID_REQUEST, "Result download redirected too many times.")
-        except ProviderFailure:
-            # Remove the partial temp file; the queue decides retry vs terminal.
+        except BaseException:
+            # Remove the partial temp file on every failure (including cancellation and
+            # unexpected errors); the queue decides retry vs terminal.
             try:
                 os.unlink(tmp_path)
             except OSError:
