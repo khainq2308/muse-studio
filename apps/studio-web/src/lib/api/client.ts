@@ -170,10 +170,9 @@ function buildUrl(
     if (unexpected.length > 0) {
       throw new Error(`Unexpected API path parameter(s): ${unexpected.join(", ")}.`);
     }
-    path = path.replace(
-      /\{([^{}]+)\}/g,
-      (_match, name: string) => encodePathSegment(String(pathParams[name]!)),
-    );
+    const encodePathParam = (_match: string, name: string) =>
+      encodePathSegment(String(pathParams[name]!));
+    path = path.replace(/\{([^{}]+)\}/g, encodePathParam);
   } else if (pathParams && Object.keys(pathParams).length > 0) {
     throw new Error("Path parameters were supplied for an endpoint without path parameters.");
   }
