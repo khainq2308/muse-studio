@@ -155,13 +155,14 @@ jobs:
     name: muse2api gateway contract (mock driver)
     runs-on: ubuntu-latest
     env:
-      # Pinned gateway revision the adapter contract is verified against.
-      MUSE2API_REF: 949f326443bcc687dbf25118391cf32b4712d734
+      # Pinned gateway revision the adapter contract is verified against: upstream 949f326
+      # plus the first-frame driver patch, kept on the khainq2308 fork until upstream merges it.
+      MUSE2API_REF: bf26146c5e7c1f3225fc8bd7d179e1ee8bd72e97
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          repository: www222fff/muse2api
+          repository: khainq2308/muse2api
           ref: ${{ env.MUSE2API_REF }}
           path: .muse2api
           persist-credentials: false

@@ -1,8 +1,8 @@
 # muse2api image-to-video (first-frame conditioning) - 2026-10-23
 
 - **Probe date:** 2026-10-23 03:55-03:58 (local time UTC+7).
-- **Provider instance:** www222fff/muse2api 949f326 **plus a local, uncommitted driver patch**
-  (see below), version 0.2.0, local instance at 127.0.0.1:18610, browser driver, one real
+- **Provider instance:** www222fff/muse2api 949f326 **plus a driver patch** (see below), since
+  committed as khainq2308/muse2api bf26146 on branch feat/image-to-video-first-frame, version 0.2.0, local instance at 127.0.0.1:18610, browser driver, one real
   muse.ai account, MUSE2API_VIDEO_TIMEOUT=1200. Keys and cookies are not recorded.
 - **Client:** MuseStudio Muse2ApiAdapter from branch feat/muse2api-contract
   (profile www222fff, MUSE2API_VIDEO_SIZE=16:9).
