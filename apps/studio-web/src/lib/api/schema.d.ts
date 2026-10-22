@@ -1574,7 +1574,7 @@ export interface components {
              */
             task_type: "image" | "video";
         };
-        /** ErrorEnvelope */
+        /** Stable response contract shared by validation and HTTP/application errors. */
         ErrorEnvelope: {
             /** Category */
             category: string;
