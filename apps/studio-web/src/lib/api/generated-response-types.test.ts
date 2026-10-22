@@ -82,9 +82,11 @@ function compileTimeRejectionExamples() {
   // @ts-expect-error Mutation paths must exist in the generated OpenAPI contract.
   apiPost("/api/v1/not-in-openapi", undefined);
 
-  // @ts-expect-error Mutation path parameter names must match the generated operation.
   apiPost("/api/v1/queue/tasks/{task_id}/pause", undefined, {
-    pathParams: { wrong_task_id: "task-1" },
+    pathParams: {
+      // @ts-expect-error Mutation path parameter names must match the generated operation.
+      wrong_task_id: "task-1",
+    },
   });
 }
 void compileTimeRejectionExamples;
