@@ -9,7 +9,7 @@ type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
 /** Paths with a real GET operation in the generated OpenAPI contract. */
 export type ApiGetPath = {
   [Path in keyof paths]: paths[Path] extends { get: infer Operation }
-    ? [NonNullable<Operation>] extends [never]
+    ? [JsonSuccessBody<NonNullable<Operation>>] extends [never]
       ? never
       : Path
     : never;
