@@ -261,3 +261,34 @@ async def test_story_bible_and_shot_references_must_belong_to_the_project(client
     )
     assert shot_response.status_code == 422
     assert "reference_asset_ids" in shot_response.json()["detail"]
+
+@pytest.mark.asyncio
+async def test_patch_shot_rejects_null_for_non_nullable_fields_without_mutating(client: AsyncClient):
+    project_id = (
+        await client.post("/api/v1/projects", json={"name": "Reject null shot patch"})
+    ).json()["id"]
+    imported = await client.post(
+        f"/api/v1/projects/{project_id}/scripts/import",
+        json={
+            "raw_content": SAMPLE_MUSEFLOW_SCRIPT,
+            "auto_apply_proposal": True,
+        },
+    )
+    assert imported.status_code == 201
+    shot = (await client.get(f"/api/v1/projects/{project_id}/shots")).json()[0]
+    before = {
+        "reference_asset_ids": shot["reference_asset_ids"],
+        "continuity_mode": shot["continuity_mode"],
+        "duration_seconds": shot["duration_seconds"],
+    }
+
+    for field_name in ("reference_asset_ids", "continuity_mode", "duration_seconds"):
+        response = await client.patch(
+            f"/api/v1/projects/{project_id}/shots/{shot['id']}",
+            json={field_name: None},
+        )
+        assert response.status_code == 422, (field_name, response.text)
+        assert "không được phép là null" in response.json()["detail"]
+
+    after = (await client.get(f"/api/v1/projects/{project_id}/shots")).json()[0]
+    assert {key: after[key] for key in before} == before
