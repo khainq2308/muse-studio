@@ -42,10 +42,12 @@ function makeTask(): QueueTask {
   };
 }
 
-function setup(overrides: {
-  query?: Record<string, unknown>;
-  mutation?: Record<string, unknown>;
-} = {}) {
+function setup(
+  overrides: {
+    query?: Record<string, unknown>;
+    mutation?: Record<string, unknown>;
+  } = {},
+) {
   const query = {
     data: [makeTask()],
     isPending: false,
