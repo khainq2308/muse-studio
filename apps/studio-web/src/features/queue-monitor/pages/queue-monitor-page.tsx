@@ -33,7 +33,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
   const isPageOutOfRange = Boolean(tasksQuery.data && offset >= total && offset > 0);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const { reset: resetAction } = actionMutation;
-  const busyTaskId = actionMutation.isPending ? (actionMutation.variables?.taskId ?? null) : null;
+  const { pendingTaskIds } = actionMutation;
 
   // A new session must not show an action error (or pending state) from the previous one.
   const actionSessionVersion = useRef(sessionVersion);
@@ -62,7 +62,8 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
   const refreshQueue = () => {
     actionMutation.reset();
     tasksQuery.resetPollingWindow();
-    void tasksQuery.refetch();
+    // Cancel a slow or hung in-flight request instead of waiting behind it.
+    void tasksQuery.refetch({ cancelRefetch: true });
   };
 
   const actionError =
@@ -94,7 +95,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           type="button"
           variant="outline"
           onClick={refreshQueue}
-          disabled={tasksQuery.isFetching}
+          aria-busy={tasksQuery.isFetching}
         >
           <RefreshCw
             className={cn("mr-2 size-4", tasksQuery.isFetching && "animate-spin")}
@@ -169,6 +170,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
         <QueryState
           isLoading={tasksQuery.isPending || isPageOutOfRange}
           isError={tasksQuery.isError}
+          hasData={Boolean(tasksQuery.data)}
           isEmpty={tasks.length === 0 && !isPageOutOfRange}
           loadingMessage="Loading queue tasks..."
           errorMessage={authErrorMessage(tasksQuery.error, activeAdminToken, "queue tasks")}
@@ -180,7 +182,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           }
           onRetry={refreshQueue}
         >
-          <QueueTaskList tasks={tasks} busyTaskId={busyTaskId} onAction={handleAction} />
+          <QueueTaskList tasks={tasks} busyTaskIds={pendingTaskIds} onAction={handleAction} />
         </QueryState>
 
         {tasksQuery.data && !isPageOutOfRange && (total > QUEUE_TASKS_PAGE_SIZE || offset > 0) && (
@@ -197,7 +199,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={offset === 0 || tasksQuery.isFetching}
+                disabled={offset === 0}
                 onClick={() => setPageOffset(offset - QUEUE_TASKS_PAGE_SIZE)}
               >
                 Previous page
@@ -206,7 +208,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={!tasksQuery.data.has_more || tasksQuery.isFetching}
+                disabled={!tasksQuery.data.has_more}
                 onClick={() => setPageOffset(offset + QUEUE_TASKS_PAGE_SIZE)}
               >
                 Next page

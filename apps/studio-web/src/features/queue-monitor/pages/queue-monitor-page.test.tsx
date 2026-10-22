@@ -77,6 +77,7 @@ function setup(
     error: null,
     mutate: vi.fn(),
     reset: vi.fn(),
+    pendingTaskIds: new Set<string>(),
     ...overrides.mutation,
   };
 
@@ -146,6 +147,7 @@ describe("QueueMonitorPage", () => {
       error: null,
       mutate: vi.fn(),
       reset: vi.fn(),
+      pendingTaskIds: new Set<string>(),
     };
     let resultSetShrank = false;
     mocks.useQueueTasks.mockImplementation(
@@ -215,7 +217,40 @@ describe("QueueMonitorPage", () => {
 
     expect(mutation.reset).toHaveBeenCalledTimes(1);
     expect(query.resetPollingWindow).toHaveBeenCalledTimes(1);
-    expect(query.refetch).toHaveBeenCalledTimes(1);
+    expect(query.refetch).toHaveBeenCalledWith({ cancelRefetch: true });
+  });
+
+  it("keeps Refresh and pagination usable while a request is in flight", () => {
+    const { query } = setup({
+      query: { isFetching: true, data: makePage({ total: 65, has_more: true }) },
+    });
+    render(<QueueMonitorPage projectId="project-1" />);
+
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    expect(refresh).toBeEnabled();
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
+
+    fireEvent.click(refresh);
+    expect(query.refetch).toHaveBeenCalledWith({ cancelRefetch: true });
+  });
+
+  it("keeps showing loaded tasks with an inline alert when a background refresh fails", () => {
+    setup({ query: { isError: true, error: new Error("offline") } });
+    render(<QueueMonitorPage projectId="project-1" />);
+
+    expect(screen.getByTestId("queue-task-task-running-1")).toBeTruthy();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Refresh failed; showing the last loaded results/,
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
+
+  it("disables only tasks whose actions are pending", () => {
+    setup({ mutation: { pendingTaskIds: new Set(["task-running-1"]) } });
+    render(<QueueMonitorPage projectId="project-1" />);
+
+    expect(screen.getByRole("button", { name: "Pause task task-running-1" })).toBeDisabled();
   });
 
   it("retries a failed queue query and restarts its polling window", () => {

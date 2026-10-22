@@ -916,8 +916,31 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Healthz */
+        /**
+         * Healthz
+         * @description Liveness: the process is serving requests (no dependency checks).
+         */
         get: operations["healthz_healthz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/readyz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readyz
+         * @description Readiness: database and Redis are reachable. Public like /healthz; no secrets.
+         */
+        get: operations["readyz_readyz_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2026,6 +2049,15 @@ export interface components {
             /** Total Tasks */
             total_tasks: number;
         };
+        /** ReadinessOut */
+        ReadinessOut: {
+            /** Checks */
+            checks: {
+                [key: string]: string;
+            };
+            /** Status */
+            status: string;
+        };
         /** RetryFailedTasksOut */
         RetryFailedTasksOut: {
             /** New Task Ids */
@@ -2063,6 +2095,11 @@ export interface components {
             /** Raw Content */
             raw_content: string;
             /**
+             * Replace Existing
+             * @default false
+             */
+            replace_existing: boolean;
+            /**
              * Source Format
              * @default museflow
              */
@@ -2086,6 +2123,8 @@ export interface components {
             script_revision_id: string;
             /** Version Number */
             version_number: number;
+            /** Warnings */
+            warnings?: string[];
         };
         /** ServiceMetricsOut */
         ServiceMetricsOut: {
@@ -10120,6 +10159,134 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication failed */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Upstream provider error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Upstream timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    readyz_readyz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadinessOut"];
                 };
             };
             /** @description Invalid request */

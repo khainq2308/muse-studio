@@ -151,7 +151,10 @@ async def test_audit_trail_records_account_backup_and_cleanup(client: AsyncClien
     assert backup["id"]
 
     # one stale orphan file -> real cleanup (dry_run=false) must write an audit entry
-    orphan = os.path.join(_TEMP_MEDIA_DIR, "stale_orphan.bin")
+    # (cleanup only deletes inside managed subtrees such as the project's storage dir)
+    orphan_dir = os.path.join(_TEMP_MEDIA_DIR, project["id"])
+    os.makedirs(orphan_dir, exist_ok=True)
+    orphan = os.path.join(orphan_dir, "stale_orphan.bin")
     with open(orphan, "wb") as handle:
         handle.write(b"x" * 64)
     old_mtime = time.time() - 25 * 3600

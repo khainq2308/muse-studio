@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryState } from "@/components/shared/query-state";
 
 const defaults = {
@@ -13,6 +13,8 @@ const defaults = {
   onRetry: vi.fn(),
   children: <p>Project data</p>,
 };
+
+afterEach(() => cleanup());
 
 describe("QueryState", () => {
   it("renders loading state", () => {
@@ -41,5 +43,17 @@ describe("QueryState", () => {
     render(<QueryState {...defaults} />);
 
     expect(screen.getByText("Project data")).toBeInTheDocument();
+  });
+
+  it("keeps rendering previously loaded data with an inline error when a refresh fails", () => {
+    const onRetry = vi.fn();
+    render(<QueryState {...defaults} isError hasData onRetry={onRetry} />);
+
+    expect(screen.getByText("Project data")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Refresh failed; showing the last loaded results. Could not load projects.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

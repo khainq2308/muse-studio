@@ -3,13 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from muse_orchestrator.core.database import _run_alembic_upgrade
+from muse_orchestrator.models.domain import (
+    Asset,
+    Base,
+    GenerationTaskRecord,
+    Project,
+    ProviderConnection,
+    QueueTaskState,
+    SceneRecord,
+    ShotRecord,
+    ShotTakeRecord,
+)
+from muse_orchestrator.services.generation_queue import _insert_take_with_number_retry
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from muse_orchestrator.core.database import _ensure_schema_compatibility
-from muse_orchestrator.models.domain import ShotTakeRecord
-from muse_orchestrator.services.generation_queue import _insert_take_with_number_retry
 
 
 def _make_take(take_id: str, take_number: int, *, selected: bool = False) -> ShotTakeRecord:
@@ -26,12 +35,42 @@ def _make_take(take_id: str, take_number: int, *, selected: bool = False) -> Sho
     )
 
 
+async def _seed_take_parents(session: AsyncSession, take_ids: list[str]) -> None:
+    """Parent rows for _make_take; FKs are enforced, so each level is flushed first."""
+    session.add(Project(id="project_test", name="Take numbers"))
+    session.add(ProviderConnection(
+        id="conn_test", name="take-number-mock", provider_type="mock", base_url="http://localhost:9",
+    ))
+    await session.flush()
+    session.add(SceneRecord(id="scene_test", project_id="project_test", scene_index=0, title="Scene"))
+    await session.flush()
+    session.add(ShotRecord(
+        id="shot_test", project_id="project_test", scene_id="scene_test",
+        sequence_index=0, title="Shot", location_code="loc",
+    ))
+    await session.flush()
+    for take_id in take_ids:
+        session.add(GenerationTaskRecord(
+            id=f"task_{take_id}", project_id="project_test", scene_id="scene_test", shot_id="shot_test",
+            connection_id="conn_test", model_id="test-model", idempotency_key=f"idem_{take_id}",
+            state=QueueTaskState.SUCCEEDED,
+        ))
+        session.add(Asset(
+            id=f"asset_{take_id}", project_id="project_test", asset_type="video", filename=f"{take_id}.mp4",
+            storage_rel_path=f"project_test/{take_id}.mp4", mime_type="video/mp4", size_bytes=1, sha256="x",
+        ))
+    await session.commit()
+
+
 @pytest.mark.asyncio
 async def test_take_insert_retries_after_take_number_unique_conflict(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'take-number.db'}", future=True)
     async with engine.begin() as connection:
-        await connection.run_sync(lambda sync_conn: ShotTakeRecord.__table__.create(sync_conn))
+        await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with sessions() as session:
+        await _seed_take_parents(session, ["first", "second"])
 
     async with sessions() as session:
         session.add(_make_take("first", 1, selected=True))
@@ -57,14 +96,25 @@ async def test_take_insert_retries_after_take_number_unique_conflict(tmp_path: P
     await engine.dispose()
 
 
-def test_legacy_duplicate_take_numbers_are_repaired_before_unique_index_creation() -> None:
-    engine = create_engine("sqlite:///:memory:", future=True)
+def test_legacy_duplicate_take_numbers_are_repaired_by_the_real_migration_path(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """TEST-005: a pre-Alembic DB is repaired by `alembic upgrade head` (what init_db runs)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    database_path = tmp_path / "legacy-pre-alembic.sqlite3"
+    engine = create_engine(f"sqlite:///{database_path}", future=True)
     try:
         with engine.begin() as connection:
+            # Legacy shape: no unique (shot_id, take_number) and no account_id_used column.
             connection.execute(text(
                 "CREATE TABLE shot_takes ("
                 "id TEXT PRIMARY KEY, shot_id TEXT NOT NULL, "
                 "take_number INTEGER NOT NULL, created_at TEXT NOT NULL)"
+            ))
+            connection.execute(text(
+                "CREATE TABLE generation_tasks ("
+                "id TEXT PRIMARY KEY, shot_id TEXT NOT NULL, task_type TEXT NOT NULL, "
+                "state TEXT NOT NULL, created_at TEXT)"
             ))
             connection.execute(
                 text(
@@ -79,7 +129,14 @@ def test_legacy_duplicate_take_numbers_are_repaired_before_unique_index_creation
                 ],
             )
 
-            _ensure_schema_compatibility(connection)
+        _run_alembic_upgrade(f"sqlite+aiosqlite:///{database_path}")
+
+        with engine.begin() as connection:
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+                "0002_uniqueness"
+            )
+            task_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(generation_tasks)"))}
+            assert "account_id_used" in task_columns
 
             rows = connection.execute(
                 text("SELECT id, shot_id, take_number FROM shot_takes ORDER BY id")

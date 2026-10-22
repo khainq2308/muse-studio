@@ -123,7 +123,19 @@ export interface ApiRequestOptions extends Omit<RequestInit, "body" | "headers">
   /** Values substituted into OpenAPI-style {path_parameter} segments. */
   pathParams?: Record<string, string | number>;
   body?: unknown;
+  /**
+   * Abort the request (including reading the response body) after this many milliseconds.
+   * Defaults to {@link DEFAULT_REQUEST_TIMEOUT_MS}, or {@link LONG_REQUEST_TIMEOUT_MS} for
+   * binary/multipart uploads and file downloads. A timeout rejects with a retryable
+   * `ApiError` whose category is `timeout`; a caller-provided signal still cancels normally.
+   */
+  timeoutMs?: number;
 }
+
+/** Default bound for JSON/text API calls so a hung upstream cannot block the UI indefinitely. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+/** Uploads, backup restores and file downloads can legitimately take minutes. */
+export const LONG_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
 export interface ApiErrorBody {
   status: number;
@@ -305,8 +317,36 @@ function isBodyInit(body: unknown): body is BodyInit {
   );
 }
 
-async function send(path: string, options: ApiRequestOptions = {}): Promise<Response> {
-  const { query, pathParams, headers: inputHeaders, body, ...init } = options;
+function requestTimeoutError(timeoutMs: number): ApiError {
+  return new ApiError({
+    status: 0,
+    detail: `The API request timed out after ${Math.ceil(timeoutMs / 1000)} seconds.`,
+    category: "timeout",
+    retryable: true,
+  });
+}
+
+/**
+ * Run one request — fetch plus response handling — under a combined caller/timeout signal.
+ * The work is also raced against the signal so a transport that ignores AbortSignal (or a
+ * stalled response body) still settles when the deadline passes.
+ */
+async function execute<T>(
+  path: string,
+  options: ApiRequestOptions,
+  defaultTimeoutMs: number,
+  handle: (response: Response) => Promise<T>,
+): Promise<T> {
+  const {
+    query,
+    pathParams,
+    headers: inputHeaders,
+    body,
+    signal: callerSignal,
+    timeoutMs: requestedTimeoutMs,
+    ...init
+  } = options;
+  const url = buildUrl(path, query, pathParams);
   const headers = new Headers(inputHeaders);
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
@@ -324,7 +364,51 @@ async function send(path: string, options: ApiRequestOptions = {}): Promise<Resp
     }
   }
 
-  return fetch(buildUrl(path, query, pathParams), { ...init, headers, body: requestBody });
+  const timeoutMs =
+    requestedTimeoutMs ??
+    (requestBody instanceof FormData || requestBody instanceof Blob
+      ? LONG_REQUEST_TIMEOUT_MS
+      : defaultTimeoutMs);
+  const controller = new AbortController();
+  let timedOut = false;
+  let rejectOnAbort: (reason: unknown) => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = reject;
+  });
+  const abort = (reason: unknown) => {
+    if (controller.signal.aborted) return;
+    controller.abort(reason);
+    rejectOnAbort(reason);
+  };
+  const onCallerAbort = () =>
+    abort(callerSignal?.reason ?? new DOMException("The request was aborted.", "AbortError"));
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort(requestTimeoutError(timeoutMs));
+  }, timeoutMs);
+  if (callerSignal?.aborted) onCallerAbort();
+  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+
+  try {
+    const work = (async () => {
+      const response = await fetch(url, {
+        ...init,
+        headers,
+        body: requestBody,
+        signal: controller.signal,
+      });
+      return handle(response);
+    })();
+    // Avoid an unhandled rejection when the abort race wins before `work` settles.
+    work.catch(() => undefined);
+    return await Promise.race([work, aborted]);
+  } catch (error) {
+    if (timedOut) throw requestTimeoutError(timeoutMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  }
 }
 
 function isJsonContentType(contentType: string): boolean {
@@ -375,10 +459,11 @@ async function throwApiError(response: Response): Promise<never> {
   throw new ApiError({ status: response.status, detail, category, retryable, retryAfterMs });
 }
 
-export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const response = await send(path, options);
-  if (!response.ok) return throwApiError(response);
-  return (await parseResponse(response)) as T;
+export function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  return execute(path, options, DEFAULT_REQUEST_TIMEOUT_MS, async (response) => {
+    if (!response.ok) return throwApiError(response);
+    return (await parseResponse(response)) as T;
+  });
 }
 
 export function apiGet<Path extends ApiGetPath>(
@@ -390,26 +475,32 @@ export function apiGet<Path extends ApiGetPath>(
 }
 
 /** Read an explicitly textual API endpoint such as a Markdown export or Prometheus metrics. */
-export async function apiGetText(
+export function apiGetText(
   path: string,
   options: Omit<ApiRequestOptions, "method" | "body"> = {},
 ): Promise<string> {
   const headers = new Headers(options.headers);
   if (!headers.has("Accept")) headers.set("Accept", "text/plain, text/markdown");
-  const response = await send(path, { ...options, method: "GET", headers });
-  if (!response.ok) return throwApiError(response);
-  if (response.status === 204) return "";
+  return execute(
+    path,
+    { ...options, method: "GET", headers },
+    DEFAULT_REQUEST_TIMEOUT_MS,
+    async (response) => {
+      if (!response.ok) return throwApiError(response);
+      if (response.status === 204) return "";
 
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().startsWith("text/")) {
-    throw new ApiError({
-      status: response.status,
-      detail: `Expected a text API response (${response.status}).`,
-      category: "invalid_response",
-      retryable: false,
-    });
-  }
-  return response.text();
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.toLowerCase().startsWith("text/")) {
+        throw new ApiError({
+          status: response.status,
+          detail: `Expected a text API response (${response.status}).`,
+          category: "invalid_response",
+          retryable: false,
+        });
+      }
+      return response.text();
+    },
+  );
 }
 
 export function apiPost<Path extends ApiPostPath>(
@@ -455,10 +546,17 @@ export async function downloadFile(
 ): Promise<void> {
   const headers = new Headers(options.headers);
   headers.set("Accept", "*/*");
-  const response = await send(path, { ...options, method: "GET", headers });
-  if (!response.ok) return throwApiError(response);
+  const blob = await execute(
+    path,
+    { ...options, method: "GET", headers },
+    LONG_REQUEST_TIMEOUT_MS,
+    async (response) => {
+      if (!response.ok) return throwApiError(response);
+      return response.blob();
+    },
+  );
 
-  const objectUrl = URL.createObjectURL(await response.blob());
+  const objectUrl = URL.createObjectURL(blob);
   let anchor: HTMLAnchorElement | null = null;
   try {
     anchor = document.createElement("a");

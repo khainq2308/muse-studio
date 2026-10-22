@@ -153,7 +153,7 @@ async def test_m5_batch_fan_out_fault_isolation_and_selective_rerun(client: Asyn
     # -> Shot 1 và Shot 3 KHÔNG đổi phải nằm trong skipped_shot_ids (không bị render lại)!
     await client.patch(
         f"/api/v1/projects/{proj_id}/shots/{s2['id']}",
-        json={"action": "Zooms in on the timestamp of the photo"},
+        json={"action": "Focus settles on the timestamp of the photo"},
     )
     b2 = (
         await client.post(

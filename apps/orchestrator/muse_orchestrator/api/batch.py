@@ -27,7 +27,7 @@ class BatchLaunchIn(BaseModel):
     connection_id: str
     scene_id: str | None = None
     shot_ids: list[str] | None = None
-    model_id: str = Field(default="muse-video-mock-v1")
+    model_id: str = Field(default="muse-video-mock-v1", min_length=1, max_length=128)
     only_changed: bool = Field(default=True)
     priority_shot_ids: list[str] = Field(default_factory=list)
 
@@ -37,7 +37,7 @@ class ContinuityFlagIn(BaseModel):
     director_notes: str = Field(default="Continuity mismatch detected during review.")
     regenerate_now: bool = False
     connection_id: str | None = None
-    model_id: str = Field(default="muse-video-mock-v1")
+    model_id: str = Field(default="muse-video-mock-v1", min_length=1, max_length=128)
 
 
 class BatchLaunchOut(BaseModel):
@@ -149,54 +149,32 @@ async def launch_batch_render(
     blocked_shot_ids: list[str] = []
 
     for s in target_shots:
-        # Resolve the frame the shot would be conditioned on. Only a missing/invalid upstream
-        # last frame blocks: an upstream that is merely re-rendering still has a valid
-        # selected last frame.
-        is_frame_chain = s.continuity_mode == "frame_chain"
-        upstream_frame_id: str | None = None
-        upstream_missing = False
-        if is_frame_chain and s.previous_shot_id:
-            prev_shot = await repository.get_shot(s.previous_shot_id)
-            if await GenerationQueueService.upstream_has_valid_last_frame(repository.session, prev_shot):
-                upstream_frame_id = prev_shot.last_frame_asset_id
-            else:
-                upstream_missing = True
-        current_first_frame = upstream_frame_id or s.first_frame_asset_id
-
-        # 1. Smart cache: skip only when the selected take matches the current prompt_hash
-        #    and, for frame-chained shots, was conditioned on the current first frame.
+        # 1. Smart cache: skip only when the selected take matches the current prompt_hash,
+        #    the requested model and the conditioning frame the shared resolver yields now.
         if payload.only_changed and s.generation_state == ShotGenerationState.SUCCEEDED and s.selected_take_id:
             sel_take = await repository.get_shot_take(s.selected_take_id)
-            if sel_take and sel_take.prompt_hash == s.prompt_hash:
-                conditioning_matches = True
-                if is_frame_chain:
-                    sel_task = await repository.get_generation_task(sel_take.task_id)
-                    conditioning_matches = (
-                        sel_task is not None
-                        and conditioning_first_frame_of(sel_task) == current_first_frame
-                    )
-                if conditioning_matches:
+            if (
+                sel_take is not None
+                and sel_take.prompt_hash == s.prompt_hash
+                and sel_take.model_id == payload.model_id
+            ):
+                conditioning = await GenerationQueueService.resolve_conditioning_frame(
+                    repository.session, s
+                )
+                sel_task = await repository.get_generation_task(sel_take.task_id)
+                if (
+                    not conditioning.missing
+                    and sel_task is not None
+                    and conditioning_first_frame_of(sel_task) == conditioning.asset_id
+                ):
                     skipped_shot_ids.append(s.id)
                     continue
 
-        # 2. Kiểm tra Blocker từ Prompt Linter (VD: BLOCKED_REFERENCE, CAMERA_MOTION_CONFLICT)
-        has_blocker = any(i.get("severity") == "blocker" for i in (s.lint_report_json or []))
-        if has_blocker or s.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
-            s.generation_state = ShotGenerationState.BLOCKED_REFERENCE
-            blocked_shot_ids.append(s.id)
-            continue
-
-        # 3. Kiểm tra phụ thuộc Frame Chaining
-        if upstream_missing:
-            s.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
-            blocked_shot_ids.append(s.id)
-            continue
-        if upstream_frame_id:
-            s.first_frame_asset_id = upstream_frame_id
-
+        # 2. Shared guard (lint blockers, BLOCKED_REFERENCE, upstream frame) + one active
+        #    task per shot are enforced inside enqueue_shot_generation.
         prio = 50 if s.id in payload.priority_shot_ids else max(1, 30 - s.sequence_index)
         try:
-            task, created = await GenerationQueueService.enqueue_shot_generation(
+            task, _created = await GenerationQueueService.enqueue_shot_generation(
                 db=repository.session,
                 shot=s,
                 conn=conn,
@@ -208,8 +186,9 @@ async def launch_batch_render(
         except ValueError:
             blocked_shot_ids.append(s.id)
             continue
-        if not created and task.state == QueueTaskState.SUCCEEDED:
-            # Same inputs already produced a result: nothing was enqueued.
+        if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
+            # An existing SUCCEEDED/FAILED/CANCELED/POLL_TIMEOUT/PAUSED task for the same
+            # inputs: nothing was enqueued (use retry-failed / only_changed=false / resume).
             skipped_shot_ids.append(s.id)
             continue
         enqueued_task_ids.append(task.id)
@@ -235,8 +214,27 @@ async def launch_batch_render(
 
     # Publish only after the database records are committed. The periodic worker
     # recovery job can re-enqueue persisted tasks if Redis is temporarily unavailable.
+    # Try every task so one Redis failure does not hide the rest, and tell the client
+    # which batch was persisted so it does not relaunch it.
+    unscheduled_task_ids: list[str] = []
     for task in tasks_to_schedule:
-        await schedule_generation_task(request, task)
+        try:
+            await schedule_generation_task(request, task)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
+                raise
+            unscheduled_task_ids.append(task.id)
+    if unscheduled_task_ids:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "queue_dispatch_unavailable",
+                "batch_id": batch_id,
+                "task_ids": unscheduled_task_ids,
+                "message": "Batch and tasks are saved, but some tasks could not be scheduled. "
+                "Background recovery will retry after Redis is reachable; do not relaunch the batch.",
+            },
+        )
 
     return {
         "batch_id": batch_id,
@@ -369,7 +367,7 @@ async def retry_failed_project_tasks(
             conn = await repository.get_connection(last_task.connection_id)
             if conn is None or not conn.enabled:
                 continue
-        error = await GenerationQueueService.check_enqueue_preconditions(repository.session, s)
+        error = await GenerationQueueService.check_enqueue_preconditions(repository.session, s, conn)
         if error is not None:
             precondition_errors.append({"shot_id": s.id, "message": error})
             continue
@@ -429,7 +427,7 @@ async def flag_take_continuity_and_regenerate(
             raise HTTPException(status_code=404, detail="Connection không tồn tại.")
         if not conn.enabled:
             raise HTTPException(status_code=400, detail="Connection đang bị tắt.")
-        error = await GenerationQueueService.check_enqueue_preconditions(repository.session, shot)
+        error = await GenerationQueueService.check_enqueue_preconditions(repository.session, shot, conn)
         if error is not None:
             raise HTTPException(status_code=422, detail=error)
 

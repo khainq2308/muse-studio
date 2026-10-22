@@ -87,8 +87,13 @@ class StudioRepository:
         tracks: list[TimelineTrackRecord],
         clips: list[TimelineClipRecord],
     ) -> TimelineSequenceRecord:
+        # The models declare ForeignKeys but no relationship(), so the unit of work does
+        # not order these INSERTs; flush parents first or PostgreSQL rejects the clips.
         self.session.add(sequence)
-        self.session.add_all([*tracks, *clips])
+        await self.session.flush()
+        self.session.add_all(tracks)
+        await self.session.flush()
+        self.session.add_all(clips)
         await self.session.commit()
         await self.session.refresh(sequence)
         return sequence
@@ -152,11 +157,17 @@ class StudioRepository:
     async def get_workflow_cache_entry(self, cache_key: str) -> WorkflowCacheEntry | None:
         return await self.session.get(WorkflowCacheEntry, cache_key)
 
+    async def flush_changes(self) -> None:
+        """Flush staged rows without committing.
+
+        The models declare ForeignKeys but no relationship(), so the unit of work orders
+        INSERTs/DELETEs by mapper name, not by FK dependency. Callers that stage parents
+        and children in one transaction flush each dependency level explicitly.
+        """
+        await self.session.flush()
+
     def stage_workflow_entity(self, entity: object) -> None:
         self.session.add(entity)
-
-    def stage_workflow_entities(self, entities: list[object]) -> None:
-        self.session.add_all(entities)
 
     async def commit_workflow_changes(self) -> None:
         await self.session.commit()
@@ -167,7 +178,10 @@ class StudioRepository:
         revision: ProjectRevision,
         audit_event: AuditEvent | None = None,
     ) -> Project:
-        self.session.add_all([project, revision])
+        # No relationship(): flush the parent row before its FK child (see flush_changes).
+        self.session.add(project)
+        await self.session.flush()
+        self.session.add(revision)
         if audit_event is not None:
             self.session.add(audit_event)
         await self.session.commit()
@@ -237,7 +251,26 @@ class StudioRepository:
                 ShotRecord.continuity_mode == "frame_chain",
                 ShotRecord.first_frame_asset_id.is_not(None),
                 ShotRecord.generation_state == ShotGenerationState.NOT_STARTED,
+                # A stale shot that already has a selected take is re-rendered only by an
+                # explicit batch launch, never automatically (paid generation).
+                ShotRecord.selected_take_id.is_(None),
             )
+        )
+        return list(result.scalars().all())
+
+    async def list_active_generation_tasks_for_recovery(
+        self, limit: int
+    ) -> list[GenerationTaskRecord]:
+        """Bounded recovery scan: least-recently-updated QUEUED/RUNNING tasks first.
+
+        Tasks with a live step chain are touched on every step, so orphaned tasks
+        (no scheduled job) bubble to the front and are never starved by the limit.
+        """
+        result = await self.session.execute(
+            select(GenerationTaskRecord)
+            .where(GenerationTaskRecord.state.in_((QueueTaskState.QUEUED, QueueTaskState.RUNNING)))
+            .order_by(GenerationTaskRecord.updated_at.asc(), GenerationTaskRecord.id.asc())
+            .limit(limit)
         )
         return list(result.scalars().all())
 

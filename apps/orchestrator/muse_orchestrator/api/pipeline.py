@@ -1,23 +1,18 @@
 from __future__ import annotations
 import csv
 import io
-import uuid
+import json
 from typing import Any, Literal
 from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from muse_orchestrator.api.dependencies import get_studio_repository
+from muse_orchestrator.application.pipeline_service import PipelineService
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.core.security import verify_single_admin
-from muse_orchestrator.models.domain import (
-    ScriptRevision, StoryBibleEntry,
-    SceneRecord, ShotRecord, ShotApprovalState, ShotGenerationState
-)
-from muse_orchestrator.services.script_parser import ScriptAnalyzerService
-from muse_orchestrator.services.prompt_compiler import (
-    PromptCompiler, ShotSpec, StyleBibleLock, CharacterLock, LocationLock
-)
+from muse_orchestrator.models.domain import ShotRecord, ShotApprovalState, ShotGenerationState
+from muse_orchestrator.services.script_parser import MAX_SCRIPT_CHARS, MAX_SHOT_DURATION_SECONDS
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}", tags=["M2 Script-to-Shot Pipeline"])
 
@@ -27,41 +22,88 @@ JsonValue = TypeAliasType(
     str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"],
 )
 
+MAX_REFERENCE_ASSETS = 32
+MAX_MUTABLE_ATTRIBUTES_CHARS = 32_768
+
+
+def get_pipeline_service(
+    repository: StudioRepository = Depends(get_studio_repository),
+) -> PipelineService:
+    return PipelineService(repository)
+
+
+def _check_asset_ids(value: list[str] | None) -> list[str] | None:
+    if value is not None and any(not item or len(item) > 64 for item in value):
+        raise ValueError("asset ids must be 1-64 characters")
+    return value
+
 
 class ScriptImportIn(BaseModel):
-    raw_content: str = Field(..., min_length=5)
-    source_format: str = Field(default="museflow")
+    raw_content: str = Field(..., min_length=5, max_length=MAX_SCRIPT_CHARS)
+    source_format: str = Field(default="museflow", min_length=1, max_length=32)
     auto_apply_proposal: bool = Field(default=False)
+    # Required to re-apply a script over shots that already have generated takes.
+    replace_existing: bool = Field(default=False)
+
+
+class StyleMutableAttributesIn(BaseModel):
+    """Typed contract for the style entry attributes consumed by the prompt compiler."""
+
+    model_config = ConfigDict(extra="allow")
+
+    color_palette: str | None = Field(default=None, max_length=255)
+    negative_constraints: list[str] | None = Field(default=None, max_length=64)
+    forbidden_terms: list[str] | None = Field(default=None, max_length=64)
+
+    @field_validator("negative_constraints", "forbidden_terms")
+    @classmethod
+    def _bounded_terms(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and any(len(item) > 255 for item in value):
+            raise ValueError("each term must be at most 255 characters")
+        return value
 
 
 class BibleEntryCreateIn(BaseModel):
     entry_type: str = Field(..., pattern=r"^(character|location|style|prop)$")
     code_name: str = Field(..., min_length=2, max_length=128)
     display_name: str = Field(..., min_length=1, max_length=255)
-    immutable_traits: str = Field(default="")
+    immutable_traits: str = Field(default="", max_length=8_000)
     mutable_attributes: dict[str, JsonValue] = Field(default_factory=dict)
-    reference_asset_ids: list[str] = Field(default_factory=list)
+    reference_asset_ids: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_ASSETS)
     requires_reference_lock: bool = Field(default=False)
 
+    @field_validator("reference_asset_ids")
+    @classmethod
+    def _bounded_ids(cls, value: list[str]) -> list[str]:
+        return _check_asset_ids(value) or []
 
-MAX_SHOT_DURATION_SECONDS = 600.0
+    @model_validator(mode="after")
+    def _validate_mutable_attributes(self) -> "BibleEntryCreateIn":
+        if len(json.dumps(self.mutable_attributes, ensure_ascii=False)) > MAX_MUTABLE_ATTRIBUTES_CHARS:
+            raise ValueError(f"mutable_attributes exceeds {MAX_MUTABLE_ATTRIBUTES_CHARS} characters")
+        if self.entry_type == "style":
+            # A wrongly typed style entry would otherwise be committed and break every
+            # later recompile; reject it with 422 instead.
+            StyleMutableAttributesIn.model_validate(self.mutable_attributes)
+        return self
 
 
 class ShotUpdateIn(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
-    shot_size: str | None = Field(default=None, min_length=1, max_length=128)
-    camera_motion: str | None = Field(default=None, min_length=1, max_length=128)
+    # String lengths match the shots table columns (String(64) / Text).
+    shot_size: str | None = Field(default=None, min_length=1, max_length=64)
+    camera_motion: str | None = Field(default=None, min_length=1, max_length=64)
     composition: str | None = Field(default=None, min_length=1, max_length=2000)
     action: str | None = Field(default=None, min_length=1, max_length=4000)
     duration_seconds: float | None = Field(
         default=None, gt=0, le=MAX_SHOT_DURATION_SECONDS, allow_inf_nan=False
     )
     continuity_mode: Literal["standard", "frame_chain"] | None = None
-    previous_shot_id: str | None = None
-    first_frame_asset_id: str | None = None
+    previous_shot_id: str | None = Field(default=None, min_length=1, max_length=64)
+    first_frame_asset_id: str | None = Field(default=None, min_length=1, max_length=64)
     requires_reference_lock: bool | None = None
-    reference_asset_ids: list[str] | None = None
+    reference_asset_ids: list[str] | None = Field(default=None, max_length=MAX_REFERENCE_ASSETS)
     approval_state: ShotApprovalState | None = None
 
     @field_validator("shot_size", "camera_motion", "composition", "action")
@@ -70,6 +112,11 @@ class ShotUpdateIn(BaseModel):
         if value is not None and not value.strip():
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("reference_asset_ids")
+    @classmethod
+    def _bounded_ids(cls, value: list[str] | None) -> list[str] | None:
+        return _check_asset_ids(value)
 
 
 class PipelineLintIssueOut(BaseModel):
@@ -88,6 +135,7 @@ class ScriptImportOut(BaseModel):
     detected_locations: int
     detected_scenes: int
     generated_shots: int
+    warnings: list[str] = Field(default_factory=list)
 
 
 class StoryBibleEntryOut(BaseModel):
@@ -151,295 +199,39 @@ class ProjectShotsExportOut(BaseModel):
 
 
 async def _recompile_project_shots(project_id: str, repository: StudioRepository) -> list[ShotRecord]:
-    """Recompile and persist prompts/lint state after an explicit project mutation."""
-    result = await _compile_project_shots(project_id, repository)
-    assert isinstance(result, tuple)
-    return result[0]
-
-
-async def _dry_run_shot_lint(
-    project_id: str,
-    repository: StudioRepository,
-    shot_id: str,
-    overrides: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Compile the would-be state of one shot without mutating or committing anything."""
-    result = await _compile_project_shots(
-        project_id, repository, dry_run_shot_id=shot_id, dry_run_overrides=overrides
-    )
-    assert isinstance(result, list)
-    return result
-
-
-async def _compile_project_shots(
-    project_id: str,
-    repository: StudioRepository,
-    *,
-    dry_run_shot_id: str | None = None,
-    dry_run_overrides: dict[str, Any] | None = None,
-) -> tuple[list[ShotRecord]] | list[dict[str, Any]]:
-    """Recompile and persist prompts/lint state after an explicit project mutation.
+    """Recompile and commit prompts/lint state (kept for callers such as batch launch).
 
     Read-only list/export handlers must use ``StudioRepository.list_project_shots``
     directly; calling this helper writes to the database.
     """
-    proj = await repository.get_project(project_id)
-    if not proj:
-        raise HTTPException(status_code=404, detail="Project không tồn tại.")
-
-    bible_rows = await repository.list_story_bible_entries(project_id)
-    asset_rows = await repository.list_project_asset_ids(project_id)
-    available_assets = set(asset_rows)
-
-    characters: dict[str, CharacterLock] = {}
-    locations: dict[str, LocationLock] = {}
-    style_lock = StyleBibleLock(
-        medium=proj.style_preset,
-        art_direction="Cinematic Anime",
-        color_palette="Balanced contrast",
-        negative_constraints=["3d cgi", "deformed hands"],
-    )
-
-    for b in bible_rows:
-        if b.entry_type == "character":
-            req_asset = b.reference_asset_ids[0] if (b.requires_reference_lock and b.reference_asset_ids) else (
-                "MISSING_REQUIRED_CHAR_REF" if b.requires_reference_lock else None
-            )
-            characters[b.code_name] = CharacterLock(
-                character_id=b.code_name,
-                name=b.display_name,
-                immutable_traits=b.immutable_traits,
-                current_outfit=str(b.mutable_attributes.get("current_outfit", "default outfit")),
-                required_ref_asset_id=req_asset,
-            )
-        elif b.entry_type == "location":
-            locations[b.code_name] = LocationLock(
-                location_id=b.code_name,
-                name=b.display_name,
-                spatial_anchors=b.immutable_traits,
-                lighting_rule=str(b.mutable_attributes.get("lighting_rule", "natural lighting")),
-                time_of_day=str(b.mutable_attributes.get("time_of_day", "day")),
-            )
-        elif b.entry_type == "style":
-            style_lock = StyleBibleLock(
-                medium=b.display_name,
-                art_direction=b.immutable_traits,
-                color_palette=str(b.mutable_attributes.get("color_palette", "cinematic")),
-                negative_constraints=list(b.mutable_attributes.get("negative_constraints", ["3d cgi"])),
-                forbidden_terms=list(b.mutable_attributes.get("forbidden_terms", [])),
-            )
-
-    shots = await repository.list_project_shots(project_id)
-    if shots is None:
-        raise HTTPException(status_code=404, detail="Project không tồn tại.")
-
-    previous_spec: ShotSpec | None = None
-    dry_run_lint: list[dict[str, Any]] = []
-    for s in shots:
-        values: dict[str, Any] = {
-            "subject_codes": s.subject_codes,
-            "location_code": s.location_code,
-            "shot_size": s.shot_size,
-            "camera_angle": s.camera_angle,
-            "camera_motion": s.camera_motion,
-            "composition": s.composition,
-            "action": s.action,
-            "action_start": s.action_start,
-            "action_end": s.action_end,
-            "continuity_notes": s.continuity_notes,
-            "duration_seconds": s.duration_seconds,
-            "aspect_ratio": s.aspect_ratio,
-            "requires_reference_lock": s.requires_reference_lock,
-            "reference_asset_ids": s.reference_asset_ids,
-        }
-        if dry_run_overrides is not None and s.id == dry_run_shot_id:
-            values.update({k: v for k, v in dry_run_overrides.items() if k in values})
-        spec = ShotSpec(
-            shot_id=s.id,
-            scene_id=s.scene_id,
-            sequence_index=s.sequence_index,
-            subject_ids=list(values["subject_codes"] or []),
-            location_id=values["location_code"],
-            shot_size=values["shot_size"],
-            camera_angle=values["camera_angle"],
-            camera_motion=values["camera_motion"],
-            composition=values["composition"],
-            action=values["action"],
-            action_start=values["action_start"],
-            action_end=values["action_end"],
-            continuity_notes=values["continuity_notes"],
-            duration_seconds=values["duration_seconds"],
-            aspect_ratio=values["aspect_ratio"],
-            requires_reference_lock=values["requires_reference_lock"],
-            reference_asset_ids=list(values["reference_asset_ids"] or []),
-        )
-        compiled = PromptCompiler.compile_and_lint(
-            shot=spec,
-            style=style_lock,
-            characters=characters,
-            locations=locations,
-            available_assets=available_assets,
-            previous_shot=previous_spec,
-        )
-        previous_spec = spec
-        lint = [
-            {"code": i.code, "severity": i.severity, "message": i.message, "field": i.field}
-            for i in compiled.lint_issues
-        ]
-        if dry_run_overrides is not None:
-            # Dry run: never mutate ORM state; only report the target shot's lint.
-            if s.id == dry_run_shot_id:
-                dry_run_lint = lint
-            continue
-        s.prompt_final = compiled.prompt_final
-        s.negative_prompt = compiled.negative_prompt
-        s.prompt_hash = compiled.prompt_hash
-        s.lint_report_json = lint
-        if any(i.code == "BLOCKED_REFERENCE" for i in compiled.lint_issues):
-            s.generation_state = ShotGenerationState.BLOCKED_REFERENCE
-        elif s.generation_state == ShotGenerationState.BLOCKED_REFERENCE and not compiled.has_blockers:
-            # Only unblock once no linter blocker remains (batch launch uses this state for all).
-            s.generation_state = ShotGenerationState.NOT_STARTED
-
-    if dry_run_overrides is not None:
-        return dry_run_lint
-    await repository.commit_pipeline_changes()
-    return (list(shots),)
+    return await PipelineService(repository).recompile_project_shots(project_id)
 
 
 @router.post("/scripts/import", response_model=ScriptImportOut, status_code=status.HTTP_201_CREATED)
 async def import_and_analyze_script(
     project_id: str,
     payload: ScriptImportIn,
-    repository: StudioRepository = Depends(get_studio_repository),
+    service: PipelineService = Depends(get_pipeline_service),
     actor: str = Depends(verify_single_admin),
 ) -> ScriptImportOut:
-    proj = await repository.get_project(project_id)
-    if not proj:
-        raise HTTPException(status_code=404, detail="Project không tồn tại.")
-
-    existing_revs = await repository.list_script_revisions(project_id)
-    next_ver = len(existing_revs) + 1
-
-    proposal = ScriptAnalyzerService.analyze_script(payload.raw_content, default_style=proj.style_preset)
-    proposal_dict = {
-        "characters": proposal.characters,
-        "locations": proposal.locations,
-        "style": proposal.style,
-        "scenes": proposal.scenes,
-        "shots": proposal.shots,
-    }
-
-    script_rev = ScriptRevision(
-        id=f"scr_{uuid.uuid4().hex[:10]}",
-        project_id=project_id,
-        version_number=next_ver,
+    result = await service.import_script(
+        project_id,
+        raw_content=payload.raw_content,
         source_format=payload.source_format,
-        raw_content=payload.raw_content,  # Giữ nguyên vẹn 100% kịch bản gốc
-        structured_proposal_json=proposal_dict,
-        diff_summary=proposal.diff_summary,
-        is_approved=payload.auto_apply_proposal,
+        auto_apply_proposal=payload.auto_apply_proposal,
+        replace_existing=payload.replace_existing,
     )
-    repository.stage_pipeline_entity(script_rev)
-
-    if payload.auto_apply_proposal:
-        await repository.delete_project_pipeline_records(project_id)
-
-        # 1. Lưu Style, Characters, Locations vào Story Bible
-        style_data = proposal.style
-        repository.stage_pipeline_entity(StoryBibleEntry(
-            id=f"bib_{uuid.uuid4().hex[:8]}",
-            project_id=project_id,
-            entry_type="style",
-            code_name=style_data["code_name"],
-            display_name=style_data["display_name"],
-            immutable_traits=style_data["immutable_traits"],
-            mutable_attributes=style_data["mutable_attributes"],
-        ))
-        for ch in proposal.characters:
-            repository.stage_pipeline_entity(StoryBibleEntry(
-                id=f"bib_{uuid.uuid4().hex[:8]}",
-                project_id=project_id,
-                entry_type="character",
-                code_name=ch["code_name"],
-                display_name=ch["display_name"],
-                immutable_traits=ch["immutable_traits"],
-                mutable_attributes=ch["mutable_attributes"],
-            ))
-        for loc in proposal.locations:
-            repository.stage_pipeline_entity(StoryBibleEntry(
-                id=f"bib_{uuid.uuid4().hex[:8]}",
-                project_id=project_id,
-                entry_type="location",
-                code_name=loc["code_name"],
-                display_name=loc["display_name"],
-                immutable_traits=loc["immutable_traits"],
-                mutable_attributes=loc["mutable_attributes"],
-            ))
-
-        # 2. Lưu Scenes & Shots
-        scene_id_by_idx: dict[int, str] = {}
-        for sc in proposal.scenes:
-            sc_id = f"scn_{uuid.uuid4().hex[:8]}"
-            scene_id_by_idx[sc["scene_index"]] = sc_id
-            repository.stage_pipeline_entity(SceneRecord(
-                id=sc_id,
-                project_id=project_id,
-                scene_index=sc["scene_index"],
-                title=sc["title"],
-                location_code=sc["location_code"],
-                time_of_day=sc["time_of_day"],
-                lighting_mood=sc["lighting_mood"],
-                summary=sc["summary"],
-            ))
-
-        created_shot_records: list[ShotRecord] = []
-        for sh in proposal.shots:
-            sc_id = scene_id_by_idx.get(sh["scene_index"]) or next(iter(scene_id_by_idx.values()))
-            prev_id = created_shot_records[-1].id if (created_shot_records and created_shot_records[-1].scene_id == sc_id) else None
-            new_shot = ShotRecord(
-                id=f"sht_{uuid.uuid4().hex[:8]}",
-                project_id=project_id,
-                scene_id=sc_id,
-                previous_shot_id=prev_id,
-                sequence_index=sh["sequence_index"],
-                title=sh["title"],
-                story_beat=sh["story_beat"],
-                subject_codes=sh["subject_codes"],
-                location_code=sh["location_code"],
-                shot_size=sh["shot_size"],
-                camera_angle=sh["camera_angle"],
-                camera_motion=sh["camera_motion"],
-                composition=sh["composition"],
-                action=sh["action"],
-                action_start=sh["action_start"],
-                action_end=sh["action_end"],
-                dialogue=sh["dialogue"],
-                continuity_notes=sh["continuity_notes"],
-                duration_seconds=sh["duration_seconds"],
-                aspect_ratio=proj.aspect_ratio,
-            )
-            if created_shot_records and created_shot_records[-1].scene_id == sc_id:
-                created_shot_records[-1].next_shot_id = new_shot.id
-            created_shot_records.append(new_shot)
-            repository.stage_pipeline_entity(new_shot)
-
-        await repository.commit_pipeline_changes()
-        shots = await _recompile_project_shots(project_id, repository)
-    else:
-        await repository.commit_pipeline_changes()
-        shots = []
-
-    return {
-        "script_revision_id": script_rev.id,
-        "version_number": script_rev.version_number,
-        "raw_content_preserved": True,
-        "diff_summary": script_rev.diff_summary,
-        "detected_characters": len(proposal.characters),
-        "detected_locations": len(proposal.locations),
-        "detected_scenes": len(proposal.scenes),
-        "generated_shots": len(shots),
-    }
+    return ScriptImportOut(
+        script_revision_id=result.revision.id,
+        version_number=result.revision.version_number,
+        raw_content_preserved=True,
+        diff_summary=result.revision.diff_summary,
+        detected_characters=len(result.proposal.characters),
+        detected_locations=len(result.proposal.locations),
+        detected_scenes=len(result.proposal.scenes),
+        generated_shots=result.generated_shots,
+        warnings=result.proposal.warnings,
+    )
 
 
 @router.get("/story-bible", response_model=list[StoryBibleEntryOut])
@@ -462,58 +254,14 @@ async def get_story_bible(project_id: str, repository: StudioRepository = Depend
     ]
 
 
-async def _validate_project_asset_references(
-    project_id: str,
-    asset_ids: list[str] | None,
-    repository: StudioRepository,
-) -> None:
-    """Reject references to assets outside the owning project before persisting them."""
-    requested_ids = set(asset_ids or [])
-    if not requested_ids:
-        return
-    project_asset_ids = set(await repository.list_project_asset_ids(project_id))
-    if not requested_ids.issubset(project_asset_ids):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Mọi reference_asset_ids phải thuộc project đang thao tác.",
-        )
-
-
 @router.post("/story-bible", response_model=StoryBibleUpsertOut, status_code=status.HTTP_201_CREATED)
 async def upsert_story_bible_entry(
     project_id: str,
     payload: BibleEntryCreateIn,
-    repository: StudioRepository = Depends(get_studio_repository),
+    service: PipelineService = Depends(get_pipeline_service),
     actor: str = Depends(verify_single_admin),
 ) -> StoryBibleUpsertOut:
-    if not await repository.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project không tồn tại.")
-    await _validate_project_asset_references(project_id, payload.reference_asset_ids, repository)
-    existing = await repository.get_story_bible_entry(project_id, payload.code_name)
-
-    if existing:
-        existing.display_name = payload.display_name
-        existing.immutable_traits = payload.immutable_traits
-        existing.mutable_attributes = payload.mutable_attributes
-        existing.reference_asset_ids = payload.reference_asset_ids
-        existing.requires_reference_lock = payload.requires_reference_lock
-        entry = existing
-    else:
-        entry = StoryBibleEntry(
-            id=f"bib_{uuid.uuid4().hex[:8]}",
-            project_id=project_id,
-            entry_type=payload.entry_type,
-            code_name=payload.code_name,
-            display_name=payload.display_name,
-            immutable_traits=payload.immutable_traits,
-            mutable_attributes=payload.mutable_attributes,
-            reference_asset_ids=payload.reference_asset_ids,
-            requires_reference_lock=payload.requires_reference_lock,
-        )
-        repository.stage_pipeline_entity(entry)
-
-    await repository.commit_pipeline_changes()
-    await _recompile_project_shots(project_id, repository)
+    entry = await service.upsert_bible_entry(project_id, payload.model_dump())
     return {"id": entry.id, "code_name": entry.code_name, "status": "recompiled_downstream_shots"}
 
 
@@ -565,74 +313,10 @@ async def update_and_review_shot(
     project_id: str,
     shot_id: str,
     payload: ShotUpdateIn,
-    repository: StudioRepository = Depends(get_studio_repository),
+    service: PipelineService = Depends(get_pipeline_service),
     actor: str = Depends(verify_single_admin),
 ) -> ShotReviewOut:
-    shot = await repository.get_shot(shot_id)
-    if not shot or shot.project_id != project_id:
-        raise HTTPException(status_code=404, detail="Không tìm thấy Shot trong dự án.")
-
-    updates = payload.model_dump(exclude_unset=True)
-    nullable_fields = {"previous_shot_id", "first_frame_asset_id"}
-    invalid_null_fields = [
-        field_name
-        for field_name, value in updates.items()
-        if value is None and field_name not in nullable_fields
-    ]
-    if invalid_null_fields:
-        field_name = invalid_null_fields[0]
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Trường '{field_name}' không được phép là null.",
-        )
-
-    if "previous_shot_id" in updates and updates["previous_shot_id"] is not None:
-        if updates["previous_shot_id"] == shot_id:
-            raise HTTPException(status_code=422, detail="Shot không thể trỏ previous_shot_id vào chính nó.")
-        prev_shot = await repository.get_shot(updates["previous_shot_id"])
-        if not prev_shot or prev_shot.project_id != project_id:
-            raise HTTPException(status_code=422, detail="previous_shot_id không thuộc dự án này.")
-        # Walk the predecessor chain: linking to any shot that (transitively) points back
-        # to this shot would create a continuity cycle.
-        visited: set[str] = set()
-        cursor = prev_shot
-        while cursor is not None and cursor.previous_shot_id is not None:
-            if cursor.previous_shot_id == shot_id:
-                raise HTTPException(
-                    status_code=422,
-                    detail="previous_shot_id tạo thành vòng lặp continuity giữa các Shot.",
-                )
-            if cursor.previous_shot_id in visited:
-                break
-            visited.add(cursor.previous_shot_id)
-            cursor = await repository.get_shot(cursor.previous_shot_id)
-    if "reference_asset_ids" in updates and updates["reference_asset_ids"] is not None:
-        await _validate_project_asset_references(project_id, updates["reference_asset_ids"], repository)
-    if "first_frame_asset_id" in updates and updates["first_frame_asset_id"] is not None:
-        ff_asset = await repository.get_asset(updates["first_frame_asset_id"])
-        if not ff_asset or ff_asset.project_id != project_id:
-            raise HTTPException(status_code=422, detail="first_frame_asset_id không thuộc dự án này.")
-
-    # Chặn duyệt (approve) nếu trạng thái *sau khi cập nhật* còn lỗi Blocker. The check
-    # runs on a dry-run compile BEFORE any field is assigned or committed, so a rejected
-    # request leaves the database unchanged.
-    would_be_state = updates.get("approval_state", shot.approval_state)
-    if would_be_state == ShotApprovalState.APPROVED:
-        lint = await _dry_run_shot_lint(project_id, repository, shot_id, updates)
-        blockers = [i for i in lint if i.get("severity") == "blocker"]
-        if blockers:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Không thể Approve Shot khi còn lỗi Blocker: {blockers[0]['code']} - {blockers[0]['message']}",
-            )
-
-    for field_name, val in updates.items():
-        setattr(shot, field_name, val)
-
-    await repository.commit_pipeline_changes()
-    await _recompile_project_shots(project_id, repository)
-    await repository.refresh_pipeline_entity(shot)
-
+    shot = await service.update_shot(project_id, shot_id, payload.model_dump(exclude_unset=True))
     return {
         "id": shot.id,
         "prompt_final": shot.prompt_final,
@@ -641,6 +325,16 @@ async def update_and_review_shot(
         "approval_state": shot.approval_state,
         "generation_state": shot.generation_state,
     }
+
+
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: Any) -> Any:
+    """Neutralise spreadsheet formula injection (CWE-1236) in exported text cells."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
 
 
 @router.get(
@@ -671,19 +365,18 @@ async def export_shot_list(
             "generation_state", "prompt_hash", "prompt_final"
         ])
         for s in shots:
-            writer.writerow([
+            writer.writerow([_csv_safe(cell) for cell in [
                 s["sequence_index"], s["id"], s["title"], s["location_code"],
                 "|".join(s["subject_codes"]), s["shot_size"], s["camera_motion"],
                 s["duration_seconds"], s["approval_state"].value if hasattr(s["approval_state"], "value") else s["approval_state"],
                 s["generation_state"].value if hasattr(s["generation_state"], "value") else s["generation_state"],
                 s["prompt_hash"], s["prompt_final"]
-            ])
+            ]])
         return Response(
             content=buf.getvalue(),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{project_id}_shots.csv"'},
         )
-    import json
     return Response(
         content=json.dumps({"project_id": project_id, "shots": shots}, ensure_ascii=False, indent=2),
         media_type="application/json",

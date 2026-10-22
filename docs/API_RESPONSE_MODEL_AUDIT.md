@@ -4,8 +4,8 @@ Tài liệu này theo dõi việc thu hẹp các response thành object/list t�
 
 ## Quy trình
 
-- `python3 scripts/audit_openapi_responses.py`: đếm operation và in từng response thành công mà schema còn thiếu hoặc tổng quát. Chạy ở chế độ advisory trong giai đoạn di trú.
-- `python3 scripts/audit_openapi_responses.py --strict`: gate cuối khi toàn bộ response body được kỳ vọng có schema cụ thể.
+- `python3 scripts/audit_openapi_responses.py`: đếm operation và in từng response thành công mà schema còn thiếu hoặc tổng quát (chỉ báo cáo).
+- `python3 scripts/audit_openapi_responses.py --strict`: gate bắt buộc; job `openapi-contract` trong CI chạy chế độ này và fail khi còn bất kỳ success response tổng quát/thiếu schema nào.
 - `python3 scripts/audit_api_response_models.py --report --require-typed projects --require-typed connections --require-typed assets --require-typed pipeline --require-typed workflows --require-typed queue --require-typed batch --require-typed timeline --require-typed connection_accounts --require-typed metrics --require-typed maintenance --require-typed backups --require-typed system`: kiểm tra khai báo `response_model` trực tiếp trên cả 13 router; đây là kiểm tra bổ sung, khác với audit schema đã sinh trong OpenAPI.
 - `bash scripts/check_openapi.sh`: xác minh snapshot FastAPI và TypeScript schema đã sinh cùng khớp với source hiện tại.
 

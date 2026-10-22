@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
-MAX_UPLOAD_SIZE_BYTES = 150 * 1024 * 1024
+from muse_orchestrator.core.config import settings
+
+# ARCH-005: env MAX_UPLOAD_SIZE_BYTES; nginx client_max_body_size for the upload
+# location must stay >= this (tests/test_limits_consistency.py).
+MAX_UPLOAD_SIZE_BYTES = int(settings.max_upload_size_bytes)
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]")
 
 
@@ -26,8 +30,51 @@ class AssetStorageError(Exception):
     pass
 
 
+def media_rel_path(path: str | os.PathLike[str], media_root: str | os.PathLike[str]) -> str:
+    """Canonical POSIX path of ``path`` relative to ``media_root``.
+
+    Both sides are resolved first, so a symlinked MEDIA_ROOT (e.g. /var -> /private/var)
+    never yields ``../..`` paths that orphan scans and backups would misread.
+    """
+    root = Path(media_root).resolve()
+    try:
+        return Path(path).resolve().relative_to(root).as_posix()
+    except ValueError as exc:
+        raise AssetStorageError("Path is outside the media root.") from exc
+
+
+def normalize_stored_rel_path(
+    stored_rel_path: object, media_root: str | os.PathLike[str]
+) -> str | None:
+    """Canonical media-root-relative form of a persisted ``storage_rel_path``.
+
+    Older rows were written with ``os.path.relpath(resolved_file, MEDIA_ROOT)``; when
+    MEDIA_ROOT is a symlink (or contains one) that yields ``../../real/proj/x.png``.
+    Such a value is interpreted lexically against the configured root (exactly how it
+    was produced) and then canonicalised. Returns None for paths that do not land
+    inside the media root.
+    """
+    if not isinstance(stored_rel_path, str) or not stored_rel_path or "\x00" in stored_rel_path:
+        return None
+    if os.path.isabs(stored_rel_path):
+        candidates = [stored_rel_path]
+    else:
+        lexical_root = os.path.abspath(os.fspath(media_root))
+        candidates = [
+            os.path.normpath(os.path.join(lexical_root, stored_rel_path)),
+            os.path.join(Path(media_root).resolve(), stored_rel_path),
+        ]
+    for candidate in candidates:
+        try:
+            return media_rel_path(candidate, media_root)
+        except (AssetStorageError, OSError, RuntimeError):
+            continue
+    return None
+
+
 class LocalAssetStorage:
     def __init__(self, root_dir: str) -> None:
+        self.lexical_root = os.path.abspath(root_dir)
         self.root_path = Path(root_dir).resolve()
         self.root_path.mkdir(parents=True, exist_ok=True)
 
@@ -173,7 +220,12 @@ class LocalAssetStorage:
         try:
             candidate.relative_to(self.root_path)
         except ValueError as exc:
-            raise AssetStorageError("Asset path escaped the media root.") from exc
+            # Legacy rows computed against a symlinked MEDIA_ROOT ("../../real/x"):
+            # accept them only when they still land inside the canonical root.
+            canonical = normalize_stored_rel_path(storage_rel_path, self.lexical_root)
+            if canonical is None:
+                raise AssetStorageError("Asset path escaped the media root.") from exc
+            candidate = (self.root_path / canonical).resolve()
         if not candidate.is_file():
             raise AssetStorageError("Không tìm thấy file asset hợp lệ.")
         return candidate

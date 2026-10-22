@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Column, String, Table, create_engine, inspect, text
-
+from alembic.autogenerate import compare_metadata
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from muse_orchestrator.core.database import _run_alembic_upgrade
 from muse_orchestrator.models.domain import Base as CurrentBase
+from sqlalchemy import Column, String, Table, create_engine, inspect, text
+
+HEAD_REVISION = "0002_uniqueness"
+ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
 def test_alembic_bootstrap_is_idempotent_for_a_fresh_database(
@@ -36,7 +42,30 @@ def test_alembic_bootstrap_is_idempotent_for_a_fresh_database(
         )
 
         revisions = connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
-        assert revisions == ["0001_bootstrap"]
+        assert revisions == [HEAD_REVISION]
+
+
+def test_revision_history_is_linear_and_ends_at_expected_head() -> None:
+    script = ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
+    assert script.get_heads() == [HEAD_REVISION]
+    history = [revision.revision for revision in script.walk_revisions(base="base", head="heads")]
+    assert list(reversed(history)) == ["0001_bootstrap", HEAD_REVISION]
+
+
+def test_migrated_schema_matches_orm_metadata_without_drift(tmp_path: Path, monkeypatch) -> None:
+    """TEST-004: alembic upgrade head on an empty DB must equal Base.metadata (create_all)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    database_path = tmp_path / "alembic-drift.sqlite3"
+    _run_alembic_upgrade(f"sqlite+aiosqlite:///{database_path}")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection, opts={"compare_type": True})
+            # No differences are ignored: SQLite reflection matches the models exactly.
+            assert compare_metadata(context, CurrentBase.metadata) == []
+    finally:
+        engine.dispose()
 
 
 

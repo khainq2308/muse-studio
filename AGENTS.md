@@ -74,11 +74,11 @@ Legacy code may not fully meet the target layering. Do not add new violations; w
 | Media-engine tests | `scripts/test.sh media` |
 | Frontend typecheck/build | `scripts/test.sh web` |
 | OpenAPI snapshot + generated TypeScript drift check | `bash scripts/check_openapi.sh` (also included in `scripts/test.sh all`) |
-| Audit remaining generic OpenAPI success responses | `python3 scripts/audit_openapi_responses.py` (advisory during Phase 0c; add `--strict` after all response contracts are typed) |
-| Changed-Python Ruff lint + layering ratchet | `scripts/lint.sh` (default checks changed Python files repo-wide; `--all` checks the legacy app tree; `--fix` modifies application code) |
+| Typed OpenAPI success responses (CI gate) | `python3 scripts/audit_openapi_responses.py --strict` (fails on any generic/missing success schema; without `--strict` it only reports) |
+| Python Ruff lint + frontend lint + layering ratchet | `scripts/lint.sh` (Ruff with the committed `[tool.ruff]` config in `apps/orchestrator/pyproject.toml` over the whole `apps/orchestrator` + `apps/media-engine` tree plus changed Python files elsewhere, then frontend ESLint/Prettier and the layering ratchet; `--python-only` skips the frontend, `--all` equals the default, `--fix` modifies application code) |
 | Layering details | `python3 scripts/check_layering.py --report` |
-| Roadmap gap signals (advisory) | `python3 scripts/audit_roadmap.py` |
-| Roadmap gap hints (heuristic) | `python3 scripts/audit_roadmap.py` |\n| Documentation status metadata validation | `python3 scripts/check_docs_sync.py` (not feature-completion proof) |
+| Roadmap gap hints (heuristic, not behavioral proof) | `python3 scripts/audit_roadmap.py` |
+| Documentation status metadata validation | `python3 scripts/check_docs_sync.py` (not feature-completion proof) |
 | Cross-platform agent assets | `python3 scripts/check_agent_assets.py` |
 | Development API (SQLite) | `scripts/dev.sh` |
 

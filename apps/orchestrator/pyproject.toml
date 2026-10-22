@@ -35,6 +35,14 @@ dev = [
     "ruff>=0.6.9",
 ]
 
+# Correctness-focused lint gate run by scripts/lint.sh and CI on the whole Python tree.
+# Broad style rules are intentionally not enabled yet; widen `select` only with a clean tree.
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

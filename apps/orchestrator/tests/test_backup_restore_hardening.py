@@ -47,7 +47,8 @@ async def env(monkeypatch) -> Any:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    # Same options as core/database.AsyncSessionLocal: autoflush=True hid DATA-002.
+    maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
 
     async def override_get_db():
         async with maker() as session:
@@ -83,11 +84,14 @@ async def _seed_generation_graph(maker: async_sessionmaker[AsyncSession], projec
             id=f"conn_{suffix}", name=f"conn-{suffix}", provider_type="mock", base_url="http://localhost:9",
         ))
         db.add(SceneRecord(id=f"scn_{suffix}", project_id=project_id, scene_index=0, title="Scene"))
+        # Models declare FKs without relationship(): flush each parent level first.
+        await db.flush()
         db.add(ShotRecord(
             id=f"sht_{suffix}", project_id=project_id, scene_id=f"scn_{suffix}", sequence_index=0,
             title="Shot", location_code="loc", generation_state=ShotGenerationState.RUNNING,
             selected_take_id=f"tke_{suffix}",
         ))
+        await db.flush()
         db.add(GenerationTaskRecord(
             id=f"tsk_live_{suffix}", project_id=project_id, scene_id=f"scn_{suffix}", shot_id=f"sht_{suffix}",
             connection_id=f"conn_{suffix}", model_id="m", idempotency_key=f"idem_live_{suffix}",
@@ -98,11 +102,13 @@ async def _seed_generation_graph(maker: async_sessionmaker[AsyncSession], projec
             connection_id=f"conn_{suffix}", model_id="m", idempotency_key=f"idem_done_{suffix}",
             state=QueueTaskState.SUCCEEDED, result_asset_id=asset_id, take_id=f"tke_{suffix}",
         ))
+        await db.flush()
         db.add(ShotTakeRecord(
             id=f"tke_{suffix}", project_id=project_id, shot_id=f"sht_{suffix}", take_number=1,
             task_id=f"tsk_done_{suffix}", asset_id=asset_id, model_id="m", prompt_hash="h", is_selected=True,
         ))
         db.add(TimelineSequenceRecord(id=f"seq_{suffix}", project_id=project_id))
+        await db.flush()
         db.add(ExportJobRecord(
             id=f"exp_{suffix}", project_id=project_id, sequence_id=f"seq_{suffix}", state=ExportJobState.QUEUED,
             ffmpeg_args_json=["-i", "/etc/passwd"],

@@ -42,7 +42,12 @@ vault = SecretVault(settings.secret_encryption_key)
 async def verify_single_admin(x_studio_admin_token: str | None = Header(default=None)) -> str:
     expected = settings.studio_admin_token
     if expected:
-        if not x_studio_admin_token or not hmac.compare_digest(x_studio_admin_token, expected):
+        # Compare bytes: hmac.compare_digest raises TypeError for non-ASCII str input,
+        # which would turn a bad header into a 500 instead of a 401.
+        if not x_studio_admin_token or not hmac.compare_digest(
+            x_studio_admin_token.encode("utf-8", "surrogateescape"),
+            expected.encode("utf-8", "surrogateescape"),
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid X-Studio-Admin-Token.",

@@ -24,12 +24,14 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   useQueryClient: mocks.useQueryClient,
 }));
 
-vi.mock("@/lib/api/client", () => ({
+vi.mock("@/lib/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/client")>()),
   apiGet: mocks.apiGet,
   apiPost: mocks.apiPost,
 }));
 
 import { useQueueTaskAction, useQueueTasks } from "@/features/queue-monitor/api";
+import { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
 import { useSessionStore } from "@/lib/stores/session-store";
 
@@ -43,6 +45,7 @@ type QueryOptionsShape = {
         summary: { active_tasks: number };
       };
       status: "pending" | "error" | "success";
+      error?: unknown;
     };
   }) => number | false;
 };
@@ -53,7 +56,7 @@ describe("Queue Monitor query hooks", () => {
     vi.clearAllMocks();
   });
 
-  it("stops polling on errors, resets the window, and requests bounded pages", async () => {
+  it("polls slowly on retryable errors, stops on final errors, and requests bounded pages", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-22T00:00:00.000Z"));
 
@@ -87,12 +90,24 @@ describe("Queue Monitor query hooks", () => {
         status: "success" as const,
       },
     };
-    const failedQuery = {
-      state: { data: undefined, status: "error" as const },
+    const unauthorizedQuery = {
+      state: {
+        data: undefined,
+        status: "error" as const,
+        error: new ApiError({ status: 401, detail: "Unauthorized" }),
+      },
+    };
+    const timedOutRefreshQuery = {
+      state: {
+        ...runningQuery.state,
+        status: "error" as const,
+        error: new ApiError({ status: 0, detail: "timeout", category: "timeout", retryable: true }),
+      },
     };
 
     expect(options?.refetchInterval(runningQuery)).toBe(2_000);
-    expect(options?.refetchInterval(failedQuery)).toBe(false);
+    expect(options?.refetchInterval(unauthorizedQuery)).toBe(false);
+    expect(options?.refetchInterval(timedOutRefreshQuery)).toBe(10_000);
     expect(options?.queryKey).toContain(100);
 
     await act(async () => {
@@ -181,5 +196,33 @@ describe("Queue Monitor query hooks", () => {
     });
     expect(queryClient.getQueryState(keyA)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(keyB)?.isInvalidated).toBe(false);
+  });
+
+  it("tracks every concurrently pending task action, not just the latest one", async () => {
+    const actual = await vi.importActual<typeof ReactQuery>("@tanstack/react-query");
+    mocks.useMutation.mockImplementation(actual.useMutation);
+    mocks.useQueryClient.mockImplementation(actual.useQueryClient);
+    const queryClient = new actual.QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const resolvers = new Map<string, (value: unknown) => void>();
+    mocks.apiPost.mockImplementation(
+      (_path: string, _body: unknown, options: { pathParams: { task_id: string } }) =>
+        new Promise((resolve) => resolvers.set(options.pathParams.task_id, resolve)),
+    );
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(actual.QueryClientProvider, { client: queryClient }, children);
+    const { result } = renderHook(() => useQueueTaskAction("project-a"), { wrapper });
+
+    act(() => result.current.mutate({ taskId: "task-a", action: "pause" }));
+    act(() => result.current.mutate({ taskId: "task-b", action: "cancel" }));
+    await waitFor(() =>
+      expect([...result.current.pendingTaskIds].sort()).toEqual(["task-a", "task-b"]),
+    );
+
+    await act(async () => resolvers.get("task-b")?.({}));
+    await waitFor(() => expect([...result.current.pendingTaskIds]).toEqual(["task-a"]));
+    await act(async () => resolvers.get("task-a")?.({}));
+    await waitFor(() => expect(result.current.pendingTaskIds.size).toBe(0));
   });
 });

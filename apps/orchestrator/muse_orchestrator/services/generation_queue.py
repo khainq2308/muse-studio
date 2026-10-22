@@ -30,9 +30,25 @@ from muse_orchestrator.models.domain import (
 )
 from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
-    ProviderFailure, ErrorCategory
+    ProviderFailure, ErrorCategory, StoredMedia,
 )
-from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage
+from muse_orchestrator.services.arq_dispatch import generation_step_token
+from muse_orchestrator.services.asset_storage import (
+    AssetStorageError,
+    LocalAssetStorage,
+    media_rel_path,
+)
+from muse_orchestrator.services.generation_guards import (
+    ACTIVE_SLOT_TASK_STATES,
+    BLOCK_CONNECTION_DISABLED,
+    ConditioningFrame,
+    GenerationGuardError,
+    evaluate_generation_guard,
+    lint_blocker_message,
+    request_snapshot_entry,
+    request_snapshot_of,
+    resolve_conditioning_frame,
+)
 from muse_orchestrator.services.account_pool import (
     build_provider_for_account,
     mark_account_used,
@@ -315,29 +331,63 @@ _FIRST_FRAME_MAX_BYTES = 20 * 1024 * 1024
 _FIRST_FRAME_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 
+class StaleGenerationStepJob(Exception):
+    """An ARQ step job whose schedule token no longer matches the task row (superseded)."""
+
+
+_UNSET: Any = object()
+
+DISPATCH_OUTCOME_UNKNOWN_MESSAGE = (
+    "The provider request may have been accepted but no external task id was recorded "
+    "(interrupted or timed out after sending). The task was not re-sent to avoid a duplicate "
+    "paid generation; check the provider dashboard, then retry explicitly if nothing was created."
+)
+
+
+def _unlink_quietly(*paths: str | None) -> None:
+    for path in paths:
+        if not path:
+            continue
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 class GenerationQueueService:
     """
     Điều phối vòng đời sinh Ảnh/Video qua muse2api + Tự động tách Boundary Frames
     và lan truyền Frame Chaining giữa các Shot liên tiếp (M4 & M5).
     """
 
+    # --- conditioning frame -------------------------------------------------------------
+
     @staticmethod
-    async def load_first_frame_data_uri(db: AsyncSession, shot: ShotRecord) -> str | None:
-        """Load a validated local frame as a data URI; never pass an internal Asset ID upstream."""
-        # A shot's stored opening frame is also retained for review/take history. Only
-        # frame_chain mode means it should be sent as the conditioning input on dispatch.
-        if shot.continuity_mode != "frame_chain":
-            return None
-        if not shot.first_frame_asset_id:
-            if shot.previous_shot_id:
-                raise ProviderFailure(
-                    ErrorCategory.INVALID_REQUEST,
-                    "Frame-chained shot has no first-frame asset; refusing to dispatch without continuity.",
-                    retryable=False,
-                )
+    async def load_first_frame_data_uri(
+        db: AsyncSession, shot: Any, asset_id: Any = _UNSET
+    ) -> str | None:
+        """Load a validated local frame as a data URI; never pass an internal Asset ID upstream.
+
+        Dispatch passes the resolved conditioning ``asset_id`` explicitly (None = no
+        conditioning). Without it the legacy rule applies: only frame_chain shots use
+        ``shot.first_frame_asset_id`` and a chained shot without one fails closed.
+        """
+        if asset_id is _UNSET:
+            if shot.continuity_mode != "frame_chain":
+                return None
+            asset_id = shot.first_frame_asset_id
+            if not asset_id:
+                if shot.previous_shot_id:
+                    raise ProviderFailure(
+                        ErrorCategory.INVALID_REQUEST,
+                        "Frame-chained shot has no first-frame asset; refusing to dispatch without continuity.",
+                        retryable=False,
+                    )
+                return None
+        if not asset_id:
             return None
 
-        asset = await db.get(Asset, shot.first_frame_asset_id)
+        asset = await db.get(Asset, asset_id)
         if asset is None or asset.project_id != shot.project_id:
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST,
@@ -408,14 +458,54 @@ class GenerationQueueService:
         return f"data:{asset.mime_type};base64,{encoded}"
 
     @staticmethod
-    async def propagate_frame_chain_downstream(db: AsyncSession, upstream_shot: ShotRecord) -> list[str]:
-        """
-        Nếu Shot kế tiếp có continuity_mode == 'frame_chain' và phụ thuộc vào upstream_shot,
-        tự động gán first_frame_asset_id = upstream_shot.last_frame_asset_id và mở khoá.
-        """
-        if not upstream_shot.last_frame_asset_id:
-            return []
+    async def resolve_conditioning_frame(db: AsyncSession, shot: ShotRecord) -> ConditioningFrame:
+        """See :func:`generation_guards.resolve_conditioning_frame` (single resolver)."""
+        return await resolve_conditioning_frame(db, shot)
 
+    @staticmethod
+    async def find_active_task(
+        db: AsyncSession, shot_id: str, task_type: str
+    ) -> GenerationTaskRecord | None:
+        """The task occupying the (shot, task_type) active slot (QUEUED/RUNNING/PAUSED)."""
+        return (
+            await db.execute(
+                select(GenerationTaskRecord)
+                .where(
+                    GenerationTaskRecord.shot_id == shot_id,
+                    GenerationTaskRecord.task_type == task_type,
+                    GenerationTaskRecord.state.in_(ACTIVE_SLOT_TASK_STATES),
+                )
+                .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    @staticmethod
+    async def _selected_take_conditioning(db: AsyncSession, shot: ShotRecord) -> Any:
+        """Conditioning frame of the shot's selected take (``_UNSET`` when unknown)."""
+        if not shot.selected_take_id:
+            return _UNSET
+        take = await db.get(ShotTakeRecord, shot.selected_take_id)
+        if take is None or take.shot_id != shot.id:
+            return _UNSET
+        task = await db.get(GenerationTaskRecord, take.task_id)
+        if task is None:
+            return _UNSET
+        return conditioning_first_frame_of(task)
+
+    @staticmethod
+    async def propagate_frame_chain_downstream(db: AsyncSession, upstream_shot: ShotRecord) -> list[str]:
+        """Re-point frame-chained downstream shots at the upstream's selected last frame.
+
+        - Shots with an active (queued/running/paused) task are skipped; dispatch
+          re-validates their conditioning frame and fails a stale task explicitly.
+        - A SUCCEEDED shot whose selected take was conditioned on a different frame
+          becomes NOT_STARTED (stale) instead of claiming success for old continuity.
+        - Without an upstream last frame the downstream conditioning is cleared and a
+          not-started downstream shot is blocked again.
+        Returns the IDs of shots now pointing at the new frame. Commits when changed.
+        """
+        new_frame = upstream_shot.last_frame_asset_id
         downstream_shots = (
             await db.execute(
                 select(ShotRecord).where(
@@ -427,15 +517,62 @@ class GenerationQueueService:
         ).scalars().all()
 
         unlocked_ids: list[str] = []
+        changed = False
         for ds in downstream_shots:
-            ds.first_frame_asset_id = upstream_shot.last_frame_asset_id
+            if await GenerationQueueService.find_active_task(db, ds.id, "video") is not None:
+                continue
+            if ds.first_frame_asset_id != new_frame:
+                ds.first_frame_asset_id = new_frame
+                changed = True
+            if not new_frame:
+                # No valid conditioning input any more: a previous success (or failure)
+                # no longer reflects this shot's continuity. Lint blocks keep priority.
+                if ds.generation_state not in (
+                    ShotGenerationState.BLOCKED_UPSTREAM_FRAME,
+                    ShotGenerationState.BLOCKED_REFERENCE,
+                ):
+                    ds.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
+                    changed = True
+                continue
             if ds.generation_state == ShotGenerationState.BLOCKED_UPSTREAM_FRAME:
-                ds.generation_state = ShotGenerationState.NOT_STARTED
+                # Unblocked: keep the selected take when it was rendered on this frame.
+                rendered_on = await GenerationQueueService._selected_take_conditioning(db, ds)
+                ds.generation_state = (
+                    ShotGenerationState.SUCCEEDED
+                    if rendered_on is not _UNSET and rendered_on == new_frame
+                    else ShotGenerationState.NOT_STARTED
+                )
+                changed = True
+            elif ds.generation_state == ShotGenerationState.SUCCEEDED:
+                rendered_on = await GenerationQueueService._selected_take_conditioning(db, ds)
+                if rendered_on is not _UNSET and rendered_on != new_frame:
+                    ds.generation_state = ShotGenerationState.NOT_STARTED
+                    changed = True
             unlocked_ids.append(ds.id)
 
-        if unlocked_ids:
+        if changed:
             await db.commit()
         return unlocked_ids
+
+    @staticmethod
+    async def select_shot_take(
+        repository: "StudioRepository", shot: ShotRecord, take_id: str
+    ) -> list[str]:
+        """Select a take; the shot's last frame mirrors it (cleared when the take has none).
+
+        Raises LookupError when the take does not belong to the shot. Returns the
+        downstream shots re-pointed at the new last frame.
+        """
+        takes = await repository.list_shot_takes(shot.id)
+        selected = next((t for t in takes if t.id == take_id), None)
+        if selected is None:
+            raise LookupError("Take không thuộc về Shot này.")
+        for take in takes:
+            take.is_selected = take.id == take_id
+        shot.selected_take_id = take_id
+        shot.last_frame_asset_id = selected.last_frame_asset_id
+        await repository.save_selected_take(shot, takes)
+        return await GenerationQueueService.propagate_frame_chain_downstream(repository.session, shot)
 
     @staticmethod
     async def settle_shot_after_task_end(
@@ -462,7 +599,7 @@ class GenerationQueueService:
         ).scalar_one()
         if other_active:
             return
-        if shot.selected_take_id:
+        if shot.selected_take_id and ended_state != ShotGenerationState.NOT_STARTED:
             shot.generation_state = ShotGenerationState.SUCCEEDED
             return
         shot.generation_state = ended_state
@@ -478,23 +615,18 @@ class GenerationQueueService:
     @staticmethod
     def lint_blocker_message(shot: ShotRecord) -> str | None:
         """Every Prompt Linter blocker (not only BLOCKED_REFERENCE) forbids provider dispatch."""
-        blockers = [i for i in (shot.lint_report_json or []) if i.get("severity") == "blocker"]
-        if not blockers:
-            return None
-        return f"Shot còn lỗi Blocker từ Prompt Linter: {blockers[0].get('code')}."
+        return lint_blocker_message(shot)
 
     @staticmethod
-    async def check_enqueue_preconditions(db: AsyncSession, shot: ShotRecord) -> str | None:
-        """Side-effect-free version of the enqueue guards; returns an error message or None."""
-        if shot.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
-            return "Shot đang ở trạng thái BLOCKED_REFERENCE (thiếu file tham chiếu bắt buộc)."
-        if (message := GenerationQueueService.lint_blocker_message(shot)) is not None:
-            return message
-        if shot.continuity_mode == "frame_chain" and shot.previous_shot_id and not shot.first_frame_asset_id:
-            prev_shot = await db.get(ShotRecord, shot.previous_shot_id)
-            if not await GenerationQueueService.upstream_has_valid_last_frame(db, prev_shot):
-                return "Shot đang chờ last_frame từ Shot phía trước (BLOCKED_UPSTREAM_FRAME)."
-        return None
+    async def check_enqueue_preconditions(
+        db: AsyncSession,
+        shot: ShotRecord,
+        conn: ProviderConnection | None = None,
+        task_type: str = "video",
+    ) -> str | None:
+        """Side-effect-free enqueue guard (shared decision); returns an error message or None."""
+        decision = await evaluate_generation_guard(db, shot, conn, task_type=task_type, phase="enqueue")
+        return decision.message
 
     @staticmethod
     async def resolve_frame_chain_generation_config(
@@ -599,6 +731,8 @@ class GenerationQueueService:
 
         Shared by the HTTP tick and the ARQ worker. Shots without a resolvable config or
         whose resolved connection is missing/disabled stay NOT_STARTED for a later retry.
+        Shots that already have a selected take (stale after an upstream re-selection)
+        are not auto re-rendered; that paid re-render needs an explicit batch launch.
         ``upstream_shot_id`` narrows the scan to direct downstreams of one upstream shot.
         Returns (shot, task, created) for every enqueue attempt that produced a task.
         """
@@ -626,11 +760,31 @@ class GenerationQueueService:
                     priority=max(1, 30 - cs.sequence_index),
                 )
             except ValueError:
-                # Upstream frame disappeared between the scan and the enqueue; the shot
-                # is now BLOCKED_UPSTREAM_FRAME and will be re-evaluated on the next success.
+                # Guard refused (e.g. upstream frame disappeared between the scan and the
+                # enqueue); the shot state was updated and is re-evaluated later.
                 continue
             results.append((cs, task, created))
         return results
+
+    # --- enqueue -------------------------------------------------------------------------
+
+    @staticmethod
+    def _sync_shot_with_task(shot: ShotRecord, task: GenerationTaskRecord) -> None:
+        """A shot must not stay blocked/idle behind an already active or finished task."""
+        synced: ShotGenerationState | None = None
+        if task.state == QueueTaskState.QUEUED:
+            synced = ShotGenerationState.QUEUED
+        elif task.state == QueueTaskState.RUNNING:
+            synced = ShotGenerationState.RUNNING
+        elif task.state == QueueTaskState.SUCCEEDED and shot.selected_take_id:
+            synced = ShotGenerationState.SUCCEEDED
+        if synced is not None and shot.generation_state in (
+            ShotGenerationState.BLOCKED_UPSTREAM_FRAME,
+            ShotGenerationState.NOT_STARTED,
+            ShotGenerationState.FAILED,
+            ShotGenerationState.CANCELED,
+        ):
+            shot.generation_state = synced
 
     @staticmethod
     async def enqueue_shot_generation(
@@ -643,46 +797,39 @@ class GenerationQueueService:
         idempotency_key: str | None = None,
         force_retry: bool = False,
     ) -> tuple[GenerationTaskRecord, bool]:
-        if shot.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
-            raise ValueError("Shot đang ở trạng thái BLOCKED_REFERENCE (thiếu file tham chiếu bắt buộc).")
-        if (message := GenerationQueueService.lint_blocker_message(shot)) is not None:
-            # Same state batch launch assigns to any linter blocker.
-            shot.generation_state = ShotGenerationState.BLOCKED_REFERENCE
+        """Create (or return) the single active generation task for a shot.
+
+        Invariants:
+        - the shared guard (lint blockers, connection, conditioning frame) runs first;
+        - at most one QUEUED/RUNNING/PAUSED task per (shot, task_type) on every path:
+          an existing active task is returned (``created=False``) whatever the prompt,
+          model or frame, and a lost insert race on ``uq_generation_tasks_active_shot_type``
+          returns the winner;
+        - a refused enqueue only records a blocked shot state when no task is active.
+        Raises GenerationGuardError (a ValueError) when the guard refuses.
+        """
+        decision = await evaluate_generation_guard(db, shot, conn, task_type=task_type, phase="enqueue")
+        # Serialize enqueues per shot (row lock; no-op on SQLite).
+        await db.execute(select(ShotRecord.id).where(ShotRecord.id == shot.id).with_for_update())
+        active = await GenerationQueueService.find_active_task(db, shot.id, task_type)
+
+        if not decision.allowed:
+            if active is None and decision.blocked_state is not None:
+                shot.generation_state = decision.blocked_state
             await db.commit()
-            raise ValueError(message)
+            raise GenerationGuardError(decision)
 
-        # Kiểm tra Frame Chaining: Nếu cần nối từ shot trước mà shot trước chưa có last_frame_asset_id -> Chặn!
-        if shot.continuity_mode == "frame_chain" and shot.previous_shot_id and not shot.first_frame_asset_id:
-            prev_shot = await db.get(ShotRecord, shot.previous_shot_id)
-            if await GenerationQueueService.upstream_has_valid_last_frame(db, prev_shot):
-                shot.first_frame_asset_id = prev_shot.last_frame_asset_id
-            else:
-                shot.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
-                await db.commit()
-                raise ValueError("Shot đang chờ last_frame từ Shot phía trước (BLOCKED_UPSTREAM_FRAME).")
+        if active is not None:
+            GenerationQueueService._sync_shot_with_task(shot, active)
+            await db.commit()
+            return active, False
 
-        if force_retry:
-            # Serialize forced re-renders per shot (row lock; no-op on SQLite) and never
-            # start a second paid generation while one is already queued/running.
-            await db.execute(
-                select(ShotRecord.id).where(ShotRecord.id == shot.id).with_for_update()
-            )
-            active = (
-                await db.execute(
-                    select(GenerationTaskRecord)
-                    .where(
-                        GenerationTaskRecord.shot_id == shot.id,
-                        GenerationTaskRecord.task_type == task_type,
-                        GenerationTaskRecord.state.in_(_ACTIVE_TASK_STATES),
-                    )
-                    .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if active is not None:
-                return active, False
+        conditioning = decision.conditioning
+        if conditioning.source == "upstream" and shot.first_frame_asset_id != conditioning.asset_id:
+            # C1: first_frame_asset_id records the resolved conditioning input.
+            shot.first_frame_asset_id = conditioning.asset_id
 
-        frame_chain_seed = shot.first_frame_asset_id or "no_first_frame"
+        frame_chain_seed = conditioning.asset_id or "no_first_frame"
         computed_idem = idempotency_key or hashlib.sha256(
             f"{shot.id}:{task_type}:{model_id}:{shot.prompt_hash}:{frame_chain_seed}".encode("utf-8")
         ).hexdigest()[:32]
@@ -694,28 +841,14 @@ class GenerationQueueService:
         ).scalar_one_or_none()
 
         if existing is not None and not force_retry:
-            # Strict idempotency: the same key returns the same task, whatever its
-            # state. A new generation can cost provider quota, so it requires an
-            # explicit force_retry=True instead of happening on a plain retry.
-            # The shot must not stay BLOCKED/NOT_STARTED behind an already-finished or
-            # in-flight task for the same inputs (it would never be re-evaluated).
-            synced_state: ShotGenerationState | None = None
-            if existing.state == QueueTaskState.SUCCEEDED and shot.selected_take_id:
-                synced_state = ShotGenerationState.SUCCEEDED
-            elif existing.state == QueueTaskState.QUEUED:
-                synced_state = ShotGenerationState.QUEUED
-            elif existing.state == QueueTaskState.RUNNING:
-                synced_state = ShotGenerationState.RUNNING
-            if synced_state is not None and shot.generation_state in (
-                ShotGenerationState.BLOCKED_UPSTREAM_FRAME, ShotGenerationState.NOT_STARTED,
-            ):
-                shot.generation_state = synced_state
-                await db.commit()
+            # Strict idempotency: the same key returns the same (finished) task. A new
+            # generation can cost provider quota, so it requires force_retry=True.
+            GenerationQueueService._sync_shot_with_task(shot, existing)
+            await db.commit()
             return existing, False
 
         if existing is not None:
-            # force_retry=True: idempotency_key is UNIQUE, so a fresh task needs a
-            # fresh key (was an IntegrityError).
+            # force_retry=True: idempotency_key is UNIQUE, so a fresh task needs a fresh key.
             computed_idem = f"{computed_idem}_retry_{uuid.uuid4().hex[:6]}"
 
         task = GenerationTaskRecord(
@@ -732,30 +865,75 @@ class GenerationQueueService:
             prompt_snapshot=shot.prompt_final or shot.action,
             negative_prompt_snapshot=shot.negative_prompt,
             prompt_hash=shot.prompt_hash,
-            history_log=[f"Task enqueued for shot {shot.id} ({task_type}, first_frame={shot.first_frame_asset_id})."],
+            history_log=[
+                f"Task enqueued for shot {shot.id} ({task_type}, first_frame={conditioning.asset_id}).",
+                request_snapshot_entry(shot, conditioning),
+            ],
         )
-        shot.generation_state = ShotGenerationState.QUEUED
-        db.add(task)
         try:
-            await db.commit()
+            async with db.begin_nested():
+                db.add(task)
+                await db.flush()
         except IntegrityError:
-            # Lost a concurrent-enqueue race: two requests computed the same
-            # idempotency_key and both passed the pre-check above, so the UNIQUE
-            # constraint rejected this insert. Roll back and return the task the
-            # winning request created instead of surfacing a 500.
-            await db.rollback()
-            existing = (
-                await db.execute(
-                    select(GenerationTaskRecord).where(
-                        GenerationTaskRecord.idempotency_key == computed_idem
+            # Lost a concurrent enqueue: the active-slot index or the idempotency key
+            # rejected the insert. Return the winning task instead of a 500.
+            winner = await GenerationQueueService.find_active_task(db, shot.id, task_type)
+            if winner is None:
+                winner = (
+                    await db.execute(
+                        select(GenerationTaskRecord).where(
+                            GenerationTaskRecord.idempotency_key == computed_idem
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            if existing is not None:
-                return existing, False
-            raise
+                ).scalar_one_or_none()
+            if winner is None:
+                await db.rollback()
+                raise
+            GenerationQueueService._sync_shot_with_task(shot, winner)
+            await db.commit()
+            return winner, False
+        shot.generation_state = ShotGenerationState.QUEUED
+        await db.commit()
         await db.refresh(task)
         return task, True
+
+    # --- failure helpers -----------------------------------------------------------------
+
+    @staticmethod
+    async def _fail_task(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        *,
+        category: str,
+        message: str,
+        ended_state: ShotGenerationState = ShotGenerationState.FAILED,
+    ) -> GenerationTaskRecord:
+        """Terminal non-retryable failure decided locally (no provider outcome). Commits."""
+        task.state = QueueTaskState.FAILED
+        task.error_category = category
+        task.retryable = False
+        task.error_message_redacted = message
+        task.finished_at = datetime.now(timezone.utc)
+        task.history_log = list(task.history_log or []) + [message]
+        await GenerationQueueService.settle_shot_after_task_end(db, task, shot, ended_state)
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def _release_lease_and_return(
+        db: AsyncSession, task: GenerationTaskRecord
+    ) -> GenerationTaskRecord:
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
+        await db.commit()
+        await db.refresh(task)
+        return task
 
     @staticmethod
     async def _handle_poll_failure(
@@ -779,10 +957,7 @@ class GenerationQueueService:
         lease = await db.get(GenerationDispatchLeaseRecord, task.id)
         if lease is not None:
             await db.delete(lease)
-        if task.state in (
-            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
-            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
-        ):
+        if task.state in _TERMINAL_TASK_STATES:
             await db.commit()
             await db.refresh(task)
             return task
@@ -821,43 +996,90 @@ class GenerationQueueService:
         await db.refresh(task)
         return task
 
+    # --- step ----------------------------------------------------------------------------
+
     @staticmethod
-    async def step_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
+    async def step_task(
+        db: AsyncSession,
+        task_id: str,
+        *,
+        expected_schedule_token: str | None = None,
+    ) -> GenerationTaskRecord:
         """Advance one task by a single dispatch/poll/download step.
 
-        If the step is cancelled (ARQ job timeout, worker shutdown) while this call owns
-        the dispatch lease, the lease is released before re-raising so another worker can
-        resume the task instead of waiting for the lease to expire.
+        ``expected_schedule_token`` (ARQ jobs): when the task row changed since the job was
+        scheduled, StaleGenerationStepJob is raised before any work, so a superseded job
+        never forks a second step chain.
+
+        Cancellation (ARQ job timeout, worker shutdown) while a provider *generate* request
+        may already have been sent and no external task id was stored leaves the outcome
+        unknown: the task is marked FAILED ``dispatch_outcome_unknown`` (non-retryable)
+        instead of being re-sent, which could double-charge. Cancellation in any other
+        phase only releases the lease so another worker can resume the task.
         """
-        lease_state: dict[str, bool] = {"owned": False}
+        lease_state: dict[str, bool] = {"owned": False, "dispatch_in_flight": False}
         try:
-            return await GenerationQueueService._step_task_impl(db, task_id, lease_state)
+            return await GenerationQueueService._step_task_impl(
+                db, task_id, lease_state, expected_schedule_token
+            )
         except asyncio.CancelledError:
             if lease_state["owned"]:
-                await GenerationQueueService._release_lease_after_cancel(db, task_id)
+                await GenerationQueueService._handle_cancelled_step(
+                    db, task_id, outcome_unknown=lease_state["dispatch_in_flight"]
+                )
             raise
 
     @staticmethod
     async def _release_lease_after_cancel(db: AsyncSession, task_id: str) -> None:
+        await GenerationQueueService._handle_cancelled_step(db, task_id, outcome_unknown=False)
+
+    @staticmethod
+    async def _handle_cancelled_step(db: AsyncSession, task_id: str, *, outcome_unknown: bool) -> None:
         try:
             try:
                 await db.rollback()
             except Exception:  # noqa: BLE001 - best effort; the session may be mid-statement
                 pass
+            if outcome_unknown:
+                task = await db.get(GenerationTaskRecord, task_id, populate_existing=True)
+                if (
+                    task is not None
+                    and not task.external_task_id
+                    and task.state not in _TERMINAL_TASK_STATES
+                ):
+                    task.state = QueueTaskState.FAILED
+                    task.error_category = ErrorCategory.DISPATCH_OUTCOME_UNKNOWN.value
+                    task.retryable = False
+                    task.error_message_redacted = DISPATCH_OUTCOME_UNKNOWN_MESSAGE
+                    task.finished_at = datetime.now(timezone.utc)
+                    task.history_log = list(task.history_log or []) + [
+                        "Dispatch interrupted after the provider request was sent. "
+                        + DISPATCH_OUTCOME_UNKNOWN_MESSAGE
+                    ]
+                    shot = await db.get(ShotRecord, task.shot_id)
+                    if shot is not None:
+                        await GenerationQueueService.settle_shot_after_task_end(
+                            db, task, shot, ShotGenerationState.FAILED
+                        )
             lease = await db.get(GenerationDispatchLeaseRecord, task_id)
             if lease is not None:
                 await db.delete(lease)
-                await db.commit()
+            await db.commit()
         except Exception as exc:  # noqa: BLE001 - never mask the cancellation itself
+            # If the outcome-unknown marker could not be written the lease is kept until it
+            # expires, so the task is at least not re-dispatched immediately.
             logger.warning(
-                "Could not release dispatch lease for task %s after cancellation (%s)",
+                "Could not settle task %s after cancellation (%s)",
                 task_id,
                 type(exc).__name__,
             )
 
     @staticmethod
     async def _step_task_impl(
-        db: AsyncSession, task_id: str, lease_state: dict[str, bool]
+        db: AsyncSession,
+        task_id: str,
+        lease_state: dict[str, bool],
+        expected_schedule_token: str | None = None,
     ) -> GenerationTaskRecord:
         # Row lock (no-op on SQLite) so two workers cannot step/dispatch the same task at once.
         task = (
@@ -871,8 +1093,15 @@ class GenerationQueueService:
         if not task:
             raise ValueError("Task không tồn tại.")
 
-        if task.state in (QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED, QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT):
+        if task.state in _TERMINAL_TASK_STATES:
             return task
+
+        if (
+            expected_schedule_token is not None
+            and generation_step_token(task) != expected_schedule_token
+        ):
+            await db.rollback()
+            raise StaleGenerationStepJob(task_id)
 
         # Claim any in-flight dispatch/poll/download before releasing the task row lock.
         lease = await db.get(GenerationDispatchLeaseRecord, task.id)
@@ -907,25 +1136,22 @@ class GenerationQueueService:
         if not conn or not shot:
             raise ValueError("Connection hoặc Shot liên kết không tồn tại.")
 
-        if not conn.enabled and not task.external_task_id:
-            # Policy: a disabled connection never receives a new paid dispatch. The task
-            # fails non-retryably (instead of waiting forever) so the operator can retry
-            # explicitly on an enabled connection. Already-dispatched tasks keep polling
-            # so a result that was already paid for is still collected.
-            task.state = QueueTaskState.FAILED
-            task.error_category = "connection_disabled"
-            task.retryable = False
-            task.error_message_redacted = (
-                "Connection is disabled; the task was not dispatched. Retry on an enabled connection."
-            )
-            task.finished_at = datetime.now(timezone.utc)
-            task.history_log = list(task.history_log or []) + [task.error_message_redacted]
-            await GenerationQueueService.settle_shot_after_task_end(
-                db, task, shot, ShotGenerationState.FAILED
-            )
-            await db.commit()
-            await db.refresh(task)
-            return task
+        planned_frame: str | None = None
+        if not task.external_task_id:
+            if not conn.enabled:
+                # Policy: a disabled connection never receives a new paid dispatch. The task
+                # fails non-retryably (instead of waiting forever) so the operator can retry
+                # explicitly on an enabled connection. Already-dispatched tasks keep polling
+                # so a result that was already paid for is still collected.
+                return await GenerationQueueService._fail_task(
+                    db, task, shot,
+                    category=BLOCK_CONNECTION_DISABLED,
+                    message="Connection is disabled; the task was not dispatched. Retry on an enabled connection.",
+                )
+            guard_result = await GenerationQueueService._dispatch_guard(db, task, shot, conn)
+            if isinstance(guard_result, GenerationTaskRecord):
+                return guard_result
+            planned_frame = guard_result
 
         # M7: select a connection account (least-recently-used) if any exist.
         accounts = list((
@@ -937,18 +1163,9 @@ class GenerationQueueService:
         try:
             account = resolve_task_account(accounts, task.account_id_used, has_external_task)
         except LookupError as exc:
-            task.state = QueueTaskState.FAILED
-            task.error_category = "pinned_account_missing"
-            task.retryable = False
-            task.error_message_redacted = str(exc)
-            task.finished_at = datetime.now(timezone.utc)
-            await GenerationQueueService.settle_shot_after_task_end(
-                db, task, shot, ShotGenerationState.FAILED
+            return await GenerationQueueService._fail_task(
+                db, task, shot, category="pinned_account_missing", message=str(exc)
             )
-            task.history_log = list(task.history_log or []) + [str(exc)]
-            await db.commit()
-            await db.refresh(task)
-            return task
 
         if not has_external_task and accounts and account is None:
             # Never bypass a configured pool by falling back to connection-level keys
@@ -976,177 +1193,255 @@ class GenerationQueueService:
         ) or ""
 
         if not task.external_task_id:
-            # Reserve the slot in a short transaction, then release DB locks before network I/O.
-            now = datetime.now(timezone.utc)
-            running_count = (
-                await db.execute(
-                    select(func.count(GenerationTaskRecord.id)).where(
-                        GenerationTaskRecord.connection_id == conn.id,
-                        GenerationTaskRecord.state == QueueTaskState.RUNNING,
-                        GenerationTaskRecord.id != task.id,
-                    )
+            return await GenerationQueueService._dispatch_new_task(
+                db, task, shot, conn, account, provider, raw_secret, planned_frame, lease_state
+            )
+        return await GenerationQueueService._poll_and_collect(
+            db, task, shot, conn, provider, raw_secret, lease_state
+        )
+
+    @staticmethod
+    async def _dispatch_guard(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+    ) -> GenerationTaskRecord | str | None:
+        """Re-run the shared guard before every paid dispatch (resume/recovery included).
+
+        Returns the FAILED task when dispatch is refused, otherwise the conditioning frame
+        to send, validated against the enqueue-time snapshot.
+        """
+        decision = await evaluate_generation_guard(
+            db, shot, conn, task_type=task.task_type, phase="dispatch"
+        )
+        if not decision.allowed:
+            return await GenerationQueueService._fail_task(
+                db, task, shot,
+                category=decision.code or "dispatch_refused",
+                message=f"Dispatch refused by the generation guard: {decision.message}",
+                ended_state=decision.blocked_state or ShotGenerationState.FAILED,
+            )
+        if task.task_type != "video":
+            return None
+        snapshot = request_snapshot_of(task)
+        if snapshot is None:
+            # Legacy task enqueued before request snapshots existed: use the live resolution.
+            return decision.conditioning.asset_id
+        planned = snapshot.get("conditioning_first_frame")
+        if planned != decision.conditioning.asset_id:
+            return await GenerationQueueService._fail_task(
+                db, task, shot,
+                category="stale_conditioning_frame",
+                message=(
+                    "The conditioning first frame changed after enqueue (upstream take "
+                    "re-selected or continuity edited); re-enqueue to render on the current frame."
+                ),
+                ended_state=ShotGenerationState.NOT_STARTED,
+            )
+        return planned
+
+    @staticmethod
+    async def _dispatch_new_task(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+        account: ConnectionAccount | None,
+        provider: VideoProvider,
+        raw_secret: str,
+        planned_frame: str | None,
+        lease_state: dict[str, bool],
+    ) -> GenerationTaskRecord:
+        # Reserve the slot in a short transaction, then release DB locks before network I/O.
+        now = datetime.now(timezone.utc)
+        running_count = (
+            await db.execute(
+                select(func.count(GenerationTaskRecord.id)).where(
+                    GenerationTaskRecord.connection_id == conn.id,
+                    GenerationTaskRecord.state == QueueTaskState.RUNNING,
+                    GenerationTaskRecord.id != task.id,
                 )
-            ).scalar_one()
+            )
+        ).scalar_one()
 
-            if running_count >= conn.max_concurrency:
-                task.state = QueueTaskState.QUEUED
-                shot.generation_state = ShotGenerationState.QUEUED
-                task.next_poll_delay_seconds = compute_backoff_seconds(1)
-                task.history_log = list(task.history_log or []) + [
-                    f"Waiting for connection concurrency slot ({running_count}/{conn.max_concurrency} busy)."
-                ]
-                await db.commit()
-                await db.refresh(task)
-                return task
-
-            task.attempt_count += 1
-            task.state = QueueTaskState.RUNNING
-            shot.generation_state = ShotGenerationState.RUNNING
+        if running_count >= conn.max_concurrency:
+            task.state = QueueTaskState.QUEUED
+            shot.generation_state = ShotGenerationState.QUEUED
             task.next_poll_delay_seconds = compute_backoff_seconds(1)
-            lease_seconds = dispatch_lease_seconds(conn)
-            db.add(GenerationDispatchLeaseRecord(
-                task_id=task.id,
-                connection_id=conn.id,
-                expires_at=now + timedelta(seconds=lease_seconds),
-            ))
-            # expire_on_commit=False keeps the claimed task snapshot available without opening a
-            # new DB transaction while the provider request is in flight.
-            await db.commit()
-            lease_state["owned"] = True
-
-            dispatch_markers: list[str] = []
-            try:
-                if task.task_type == "image":
-                    p_task = await provider.generate_image(
-                        ImageGenerationRequest(
-                            shot_id=shot.id,
-                            prompt=task.prompt_snapshot,
-                            negative_prompt=task.negative_prompt_snapshot,
-                            model_id=task.model_id,
-                            aspect_ratio=shot.aspect_ratio,
-                            idempotency_key=task.idempotency_key,
-                        )
-                    )
-                else:
-                    first_frame_data_uri = await GenerationQueueService.load_first_frame_data_uri(db, shot)
-                    conditioning_id = shot.first_frame_asset_id if first_frame_data_uri else None
-                    dispatch_markers.append(
-                        f"{_CONDITIONING_MARKER}{conditioning_id or _CONDITIONING_NONE}"
-                    )
-                    p_task = await provider.generate_video(
-                        VideoGenerationRequest(
-                            shot_id=shot.id,
-                            prompt=task.prompt_snapshot,
-                            negative_prompt=task.negative_prompt_snapshot,
-                            model_id=task.model_id,
-                            duration_seconds=shot.duration_seconds,
-                            aspect_ratio=shot.aspect_ratio,
-                            first_frame_url=first_frame_data_uri,
-                            idempotency_key=task.idempotency_key,
-                        )
-                    )
-            except ProviderFailure as exc:
-                await db.refresh(task)
-                await db.refresh(shot)
-                lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-                if lease is not None:
-                    await db.delete(lease)
-                if task.state in (
-                    QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
-                    QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
-                ):
-                    await db.commit()
-                    await db.refresh(task)
-                    return task
-
-                safe_err = SecretRedactor.redact_text(str(exc), [raw_secret])
-                task.error_category = exc.category.value
-                task.retryable = exc.retryable
-                task.error_message_redacted = safe_err
-                if account is not None:
-                    account.last_error_redacted = safe_err
-                    account.last_checked_at = datetime.now(timezone.utc)
-                    if exc.category == ErrorCategory.AUTH_FAILED:
-                        account.health_state = ConnectionHealthState.AUTH_ERROR
-                    elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
-                        account.health_state = ConnectionHealthState.DEGRADED
-                if not exc.retryable or task.attempt_count >= task.max_attempts:
-                    task.state = QueueTaskState.FAILED
-                    task.finished_at = datetime.now(timezone.utc)
-                    await GenerationQueueService.settle_shot_after_task_end(
-                        db, task, shot, ShotGenerationState.FAILED
-                    )
-                    if exc.category == ErrorCategory.AUTH_FAILED:
-                        conn.health_state = ConnectionHealthState.AUTH_ERROR
-                    elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
-                        conn.health_state = ConnectionHealthState.DEGRADED
-                    task.history_log = list(task.history_log or []) + [
-                        f"Terminal failure on attempt {task.attempt_count}: {safe_err}"
-                    ]
-                else:
-                    delay = compute_backoff_seconds(task.attempt_count)
-                    task.state = QueueTaskState.QUEUED
-                    shot.generation_state = ShotGenerationState.QUEUED
-                    task.next_poll_delay_seconds = delay
-                    if account is not None and exc.category in (
-                        ErrorCategory.AUTH_FAILED, ErrorCategory.QUOTA_EXHAUSTED
-                    ):
-                        # This account is no longer the candidate for the retry.
-                        task.account_id_used = None
-                    task.history_log = list(task.history_log or []) + [
-                        f"Transient failure on attempt {task.attempt_count} (will retry in {delay}s): {safe_err}"
-                    ]
-                await db.commit()
-                await db.refresh(task)
-                return task
-            except Exception as exc:
-                # Unexpected adapter failures are terminal rather than leaving RUNNING with no upstream ID.
-                await db.refresh(task)
-                await db.refresh(shot)
-                lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-                if lease is not None:
-                    await db.delete(lease)
-                if task.state not in (
-                    QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
-                    QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
-                ):
-                    task.state = QueueTaskState.FAILED
-                    task.finished_at = datetime.now(timezone.utc)
-                    task.retryable = False
-                    task.error_category = "provider_internal_error"
-                    task.error_message_redacted = f"Unexpected provider adapter error ({type(exc).__name__})."
-                    await GenerationQueueService.settle_shot_after_task_end(
-                        db, task, shot, ShotGenerationState.FAILED
-                    )
-                    task.history_log = list(task.history_log or []) + [task.error_message_redacted]
-                await db.commit()
-                await db.refresh(task)
-                return task
-
-            # Another operator may have paused/canceled the task while the request was in flight.
-            await db.refresh(task)
-            await db.refresh(shot)
-            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-            if lease is not None:
-                await db.delete(lease)
-            task.external_task_id = p_task.external_task_id
-            task.history_log = list(task.history_log or []) + dispatch_markers + [
-                f"Dispatched to {conn.name} -> external_task_id={p_task.external_task_id}."
+            task.history_log = list(task.history_log or []) + [
+                f"Waiting for connection concurrency slot ({running_count}/{conn.max_concurrency} busy)."
             ]
-            if task.state not in (
-                QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
-                QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
-            ):
-                task.state = QueueTaskState.RUNNING
-                shot.generation_state = ShotGenerationState.RUNNING
-            else:
-                task.history_log = list(task.history_log or []) + [
-                    "Provider accepted the request after the local task state changed; local state was preserved."
-                ]
             await db.commit()
             await db.refresh(task)
             return task
 
+        # Dispatch from the enqueue-time snapshot, not the live (possibly edited) shot.
+        snapshot = request_snapshot_of(task) or {}
+        duration_seconds = float(snapshot.get("duration_seconds", shot.duration_seconds))
+        aspect_ratio = str(snapshot.get("aspect_ratio", shot.aspect_ratio))
+
+        task.attempt_count += 1
+        task.state = QueueTaskState.RUNNING
+        shot.generation_state = ShotGenerationState.RUNNING
+        task.next_poll_delay_seconds = compute_backoff_seconds(1)
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=task.id,
+            connection_id=conn.id,
+            expires_at=now + timedelta(seconds=dispatch_lease_seconds(conn)),
+        ))
+        # expire_on_commit=False keeps the claimed task snapshot available without opening a
+        # new DB transaction while the provider request is in flight.
+        await db.commit()
+        lease_state["owned"] = True
+
+        dispatch_markers: list[str] = []
+        try:
+            if task.task_type == "image":
+                lease_state["dispatch_in_flight"] = True
+                p_task = await provider.generate_image(
+                    ImageGenerationRequest(
+                        shot_id=shot.id,
+                        prompt=task.prompt_snapshot,
+                        negative_prompt=task.negative_prompt_snapshot,
+                        model_id=task.model_id,
+                        aspect_ratio=aspect_ratio,
+                        idempotency_key=task.idempotency_key,
+                    )
+                )
+            else:
+                first_frame_data_uri = await GenerationQueueService.load_first_frame_data_uri(
+                    db, shot, asset_id=planned_frame
+                )
+                dispatch_markers.append(
+                    f"{_CONDITIONING_MARKER}{planned_frame or _CONDITIONING_NONE}"
+                )
+                lease_state["dispatch_in_flight"] = True
+                p_task = await provider.generate_video(
+                    VideoGenerationRequest(
+                        shot_id=shot.id,
+                        prompt=task.prompt_snapshot,
+                        negative_prompt=task.negative_prompt_snapshot,
+                        model_id=task.model_id,
+                        duration_seconds=duration_seconds,
+                        aspect_ratio=aspect_ratio,
+                        first_frame_url=first_frame_data_uri,
+                        idempotency_key=task.idempotency_key,
+                    )
+                )
+        except ProviderFailure as exc:
+            # The provider answered or the adapter classified the outcome explicitly
+            # (dispatch_outcome_unknown is a non-retryable category).
+            lease_state["dispatch_in_flight"] = False
+            return await GenerationQueueService._handle_dispatch_failure(
+                db, task, shot, conn, account, exc, raw_secret
+            )
+        except Exception as exc:
+            lease_state["dispatch_in_flight"] = False
+            # Unexpected adapter failures are terminal rather than leaving RUNNING with no upstream ID.
+            await db.refresh(task)
+            await db.refresh(shot)
+            if task.state in _TERMINAL_TASK_STATES:
+                return await GenerationQueueService._release_lease_and_return(db, task)
+            return await GenerationQueueService._fail_task(
+                db, task, shot,
+                category="provider_internal_error",
+                message=f"Unexpected provider adapter error ({type(exc).__name__}).",
+            )
+
+        # Another operator may have paused/canceled the task while the request was in flight.
+        await db.refresh(task)
+        await db.refresh(shot)
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
+        task.external_task_id = p_task.external_task_id
+        task.history_log = list(task.history_log or []) + dispatch_markers + [
+            f"Dispatched to {conn.name} -> external_task_id={p_task.external_task_id}."
+        ]
+        if task.state not in _TERMINAL_TASK_STATES:
+            task.state = QueueTaskState.RUNNING
+            shot.generation_state = ShotGenerationState.RUNNING
+        else:
+            task.history_log = list(task.history_log or []) + [
+                "Provider accepted the request after the local task state changed; local state was preserved."
+            ]
+        await db.commit()
+        lease_state["dispatch_in_flight"] = False
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def _handle_dispatch_failure(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+        account: ConnectionAccount | None,
+        exc: ProviderFailure,
+        raw_secret: str,
+    ) -> GenerationTaskRecord:
+        await db.refresh(task)
+        await db.refresh(shot)
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
+        if task.state in _TERMINAL_TASK_STATES:
+            await db.commit()
+            await db.refresh(task)
+            return task
+
+        safe_err = SecretRedactor.redact_text(str(exc), [raw_secret])
+        task.error_category = exc.category.value
+        task.retryable = exc.retryable
+        task.error_message_redacted = safe_err
+        if account is not None:
+            account.last_error_redacted = safe_err
+            account.last_checked_at = datetime.now(timezone.utc)
+            if exc.category == ErrorCategory.AUTH_FAILED:
+                account.health_state = ConnectionHealthState.AUTH_ERROR
+            elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
+                account.health_state = ConnectionHealthState.DEGRADED
+        if not exc.retryable or task.attempt_count >= task.max_attempts:
+            task.state = QueueTaskState.FAILED
+            task.finished_at = datetime.now(timezone.utc)
+            await GenerationQueueService.settle_shot_after_task_end(
+                db, task, shot, ShotGenerationState.FAILED
+            )
+            if exc.category == ErrorCategory.AUTH_FAILED:
+                conn.health_state = ConnectionHealthState.AUTH_ERROR
+            elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
+                conn.health_state = ConnectionHealthState.DEGRADED
+            task.history_log = list(task.history_log or []) + [
+                f"Terminal failure on attempt {task.attempt_count}: {safe_err}"
+            ]
+        else:
+            delay = compute_backoff_seconds(task.attempt_count)
+            task.state = QueueTaskState.QUEUED
+            shot.generation_state = ShotGenerationState.QUEUED
+            task.next_poll_delay_seconds = delay
+            if account is not None and exc.category in (
+                ErrorCategory.AUTH_FAILED, ErrorCategory.QUOTA_EXHAUSTED
+            ):
+                # This account is no longer the candidate for the retry.
+                task.account_id_used = None
+            task.history_log = list(task.history_log or []) + [
+                f"Transient failure on attempt {task.attempt_count} (will retry in {delay}s): {safe_err}"
+            ]
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def _poll_and_collect(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+        provider: VideoProvider,
+        raw_secret: str,
+        lease_state: dict[str, bool],
+    ) -> GenerationTaskRecord:
         task.poll_count += 1
         if task.poll_count > task.max_polls:
             task.state = QueueTaskState.POLL_TIMEOUT
@@ -1183,16 +1478,8 @@ class GenerationQueueService:
             return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, unexpected, raw_secret, "poll")
         await db.refresh(task)
         await db.refresh(shot)
-        if task.state in (
-            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
-            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
-        ):
-            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-            if lease is not None:
-                await db.delete(lease)
-            await db.commit()
-            await db.refresh(task)
-            return task
+        if task.state in _TERMINAL_TASK_STATES:
+            return await GenerationQueueService._release_lease_and_return(db, task)
 
         if p_status.account_used and not task.account_used:
             task.account_used = p_status.account_used
@@ -1228,41 +1515,52 @@ class GenerationQueueService:
             return task
 
         dest_dir = os.path.join(settings.media_root, task.project_id, "generated")
-        stored = None
+        stored: StoredMedia | None = None
         try:
             stored = await provider.download_result(p_status.result_media_url or task.external_task_id, dest_dir)
             await _verify_downloaded_artifact(
                 stored.local_path, task.task_type, conn.provider_type, stored.mime_type
             )
         except ProviderFailure as exc:
-            if stored is not None:
-                try:
-                    os.unlink(stored.local_path)
-                except OSError:
-                    pass
+            _unlink_quietly(stored.local_path if stored is not None else None)
             return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "download")
+        except Exception as exc:
+            # Any unexpected adapter/verification error is a classified terminal failure that
+            # releases the lease (never a RUNNING task stuck behind its own lease).
+            _unlink_quietly(stored.local_path if stored is not None else None)
+            unexpected = ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                f"Unexpected result download error ({type(exc).__name__}).",
+                retryable=False,
+            )
+            return await GenerationQueueService._handle_poll_failure(
+                db, task, shot, conn, unexpected, raw_secret, "download"
+            )
+        return await GenerationQueueService._finalize_media(
+            db, task, shot, conn, stored, dest_dir, raw_secret
+        )
+
+    @staticmethod
+    async def _finalize_media(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+        stored: StoredMedia,
+        dest_dir: str,
+        raw_secret: str,
+    ) -> GenerationTaskRecord:
+        """Extract boundary frames and compute storage paths before persisting the take."""
         await db.refresh(task)
         await db.refresh(shot)
-        if task.state in (
-            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
-            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
-        ):
-            try:
-                os.unlink(stored.local_path)
-            except OSError:
-                pass
-            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-            if lease is not None:
-                await db.delete(lease)
-            await db.commit()
-            await db.refresh(task)
-            return task
+        if task.state in _TERMINAL_TASK_STATES:
+            _unlink_quietly(stored.local_path)
+            return await GenerationQueueService._release_lease_and_return(db, task)
 
         existing_max_take_num = (
             await db.execute(select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id))
         ).scalar_one()
         take_num = (int(existing_max_take_num) if existing_max_take_num is not None else 0) + 1
-        is_first_take = existing_max_take_num is None
 
         boundary_artifacts: list[_BoundaryFrameArtifact] = []
         if task.task_type == "video":
@@ -1275,36 +1573,57 @@ class GenerationQueueService:
                     conn.provider_type,
                 )
             except ProviderFailure as exc:
-                try:
-                    os.unlink(stored.local_path)
-                except OSError:
-                    pass
+                _unlink_quietly(stored.local_path)
                 return await GenerationQueueService._handle_poll_failure(
                     db, task, shot, conn, exc, raw_secret, "boundary-frame extraction"
                 )
+        all_paths = [stored.local_path, *(frame.path for frame in boundary_artifacts)]
 
         # Extraction runs outside the event loop; re-check cancellation before persisting artifacts.
         await db.refresh(task)
         await db.refresh(shot)
-        if task.state in (
-            QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
-            QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
-        ):
-            for path in [stored.local_path, *(frame.path for frame in boundary_artifacts)]:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-            if lease is not None:
-                await db.delete(lease)
-            await db.commit()
-            await db.refresh(task)
-            return task
+        if task.state in _TERMINAL_TASK_STATES:
+            _unlink_quietly(*all_paths)
+            return await GenerationQueueService._release_lease_and_return(db, task)
 
+        try:
+            rel_path = media_rel_path(stored.local_path, settings.media_root)
+            frame_rel_paths = {
+                frame.path: media_rel_path(frame.path, settings.media_root)
+                for frame in boundary_artifacts
+            }
+        except AssetStorageError:
+            _unlink_quietly(*all_paths)
+            return await GenerationQueueService._handle_poll_failure(
+                db, task, shot, conn,
+                ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    "Generated media path resolved outside MEDIA_ROOT; result rejected.",
+                    retryable=False,
+                ),
+                raw_secret, "media persistence",
+            )
+
+        return await GenerationQueueService._persist_take(
+            db, task, shot, conn, stored, boundary_artifacts, rel_path, frame_rel_paths, raw_secret
+        )
+
+    @staticmethod
+    async def _persist_take(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        conn: ProviderConnection,
+        stored: StoredMedia,
+        boundary_artifacts: list[_BoundaryFrameArtifact],
+        rel_path: str,
+        frame_rel_paths: dict[str, str],
+        raw_secret: str,
+    ) -> GenerationTaskRecord:
+        """Allocate the take number, persist assets/take and complete the task."""
         # Serialize take-number selection per shot on databases that support row locks.
         # This lock is acquired after FFmpeg work so it is not held during extraction.
-        locked_shot = (
+        shot = (
             await db.execute(
                 select(ShotRecord)
                 .where(ShotRecord.id == shot.id)
@@ -1312,7 +1631,6 @@ class GenerationQueueService:
                 .execution_options(populate_existing=True)
             )
         ).scalar_one()
-        shot = locked_shot
         latest_max_take_num = (
             await db.execute(
                 select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id)
@@ -1321,10 +1639,8 @@ class GenerationQueueService:
         take_num = (int(latest_max_take_num) if latest_max_take_num is not None else 0) + 1
         is_first_take = latest_max_take_num is None
 
-        rel_path = os.path.relpath(stored.local_path, settings.media_root)
-
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"
-        asset = Asset(
+        db.add(Asset(
             id=asset_id,
             project_id=task.project_id,
             scene_id=task.scene_id,
@@ -1338,8 +1654,7 @@ class GenerationQueueService:
             provider_id=conn.id,
             model_id=task.model_id,
             is_locked_reference=(task.task_type == "image"),
-        )
-        db.add(asset)
+        ))
 
         first_frame_aid: str | None = None
         last_frame_aid: str | None = None
@@ -1361,7 +1676,7 @@ class GenerationQueueService:
                 shot_id=shot.id,
                 asset_type="reference",
                 filename=os.path.basename(frame.path),
-                storage_rel_path=os.path.relpath(frame.path, settings.media_root),
+                storage_rel_path=frame_rel_paths[frame.path],
                 mime_type="image/png",
                 size_bytes=frame.size_bytes,
                 sha256=frame.sha256,
@@ -1387,13 +1702,8 @@ class GenerationQueueService:
             account_used=task.account_used,
             is_selected=is_first_take,
         )
-        inserted_take = await _insert_take_with_number_retry(db, take)
-        if not inserted_take:
-            for path in [stored.local_path, *(frame.path for frame in boundary_artifacts)]:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
+        if not await _insert_take_with_number_retry(db, take):
+            _unlink_quietly(stored.local_path, *(frame.path for frame in boundary_artifacts))
             await db.rollback()
             conflict = ProviderFailure(
                 ErrorCategory.TRANSIENT_NETWORK,
@@ -1404,12 +1714,10 @@ class GenerationQueueService:
                 db, task, shot, conn, conflict, raw_secret, "take persistence"
             )
 
-        take_num = take.take_number
-        is_first_take = take.is_selected
-        if is_first_take:
+        if take.is_selected:
             shot.selected_take_id = take_id
-            if not shot.first_frame_asset_id:
-                shot.first_frame_asset_id = first_frame_aid
+            # C1: the take keeps its own opening frame (take.first_frame_asset_id);
+            # shot.first_frame_asset_id is reserved for the conditioning input.
             shot.last_frame_asset_id = last_frame_aid
 
         shot.generation_state = ShotGenerationState.SUCCEEDED

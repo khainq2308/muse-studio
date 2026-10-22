@@ -205,11 +205,17 @@ async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monke
                 id="conn_lease", name="lease-mock", provider_type="mock",
                 base_url="http://localhost:8080", max_concurrency=1,
             ),
-            SceneRecord(id="scene_lease", project_id="proj_lease", scene_index=1, title="Scene"),
-            ShotRecord(
-                id="shot_lease", project_id="proj_lease", scene_id="scene_lease",
-                sequence_index=1, title="Shot", location_code="roof",
-            ),
+        ])
+        # Models declare FKs without relationship(): flush each parent level first.
+        await session.flush()
+        session.add(SceneRecord(id="scene_lease", project_id="proj_lease", scene_index=1, title="Scene"))
+        await session.flush()
+        session.add(ShotRecord(
+            id="shot_lease", project_id="proj_lease", scene_id="scene_lease",
+            sequence_index=1, title="Shot", location_code="roof",
+        ))
+        await session.flush()
+        session.add_all([
             GenerationTaskRecord(
                 id="task_lease", project_id="proj_lease", scene_id="scene_lease",
                 shot_id="shot_lease", connection_id="conn_lease", task_type="video",

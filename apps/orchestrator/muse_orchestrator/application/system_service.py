@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.core.config import SecretRedactor
 from muse_orchestrator.infrastructure.repositories import StudioRepository
@@ -124,3 +128,37 @@ async def write_audit(
         details_redacted=SecretRedactor.redact_dict(details or {}),
     )
     await repository.create_audit_event(event)
+
+
+READINESS_CHECK_TIMEOUT_SECONDS = 2.0
+
+
+async def check_readiness(
+    session: AsyncSession,
+    arq_pool: Any | None,
+    timeout_seconds: float = READINESS_CHECK_TIMEOUT_SECONDS,
+) -> dict[str, str]:
+    """Probe the database (SELECT 1) and Redis (PING) with bounded timeouts.
+
+    Returns a mapping of dependency -> "ok" | "unavailable" | "timeout". Error details
+    are deliberately not returned: driver messages can contain DSNs with credentials.
+    """
+    checks: dict[str, str] = {}
+    try:
+        await asyncio.wait_for(session.execute(text("SELECT 1")), timeout=timeout_seconds)
+        checks["database"] = "ok"
+    except asyncio.TimeoutError:
+        checks["database"] = "timeout"
+    except Exception:  # noqa: BLE001 -- any failure means "not ready"
+        checks["database"] = "unavailable"
+    if arq_pool is None:
+        checks["redis"] = "unavailable"
+    else:
+        try:
+            await asyncio.wait_for(arq_pool.ping(), timeout=timeout_seconds)
+            checks["redis"] = "ok"
+        except asyncio.TimeoutError:
+            checks["redis"] = "timeout"
+        except Exception:  # noqa: BLE001 -- any failure means "not ready"
+            checks["redis"] = "unavailable"
+    return checks

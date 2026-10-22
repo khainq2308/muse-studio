@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from arq import cron, func
 from arq.connections import RedisSettings
-from sqlalchemy import select
-
 from muse_orchestrator.core.config import SecretRedactor, settings
 from muse_orchestrator.core.database import AsyncSessionLocal
 from muse_orchestrator.infrastructure.repositories import StudioRepository
@@ -18,13 +18,14 @@ from muse_orchestrator.models.domain import (
     Asset,
     ExportJobRecord,
     ExportJobState,
-    GenerationTaskRecord,
     QueueTaskState,
 )
+from muse_orchestrator.services.asset_storage import media_rel_path
 from muse_orchestrator.services.arq_dispatch import enqueue_export_job, enqueue_generation_step
 from muse_orchestrator.services.generation_queue import (
     GENERATION_STEP_JOB_TIMEOUT_SECONDS,
     GenerationQueueService,
+    StaleGenerationStepJob,
 )
 from muse_orchestrator.services.maintenance_service import cleanup_orphan_media
 from muse_orchestrator.services.timeline_service import (
@@ -35,19 +36,53 @@ from muse_orchestrator.services.timeline_service import (
 
 logger = logging.getLogger(__name__)
 
-# FFmpeg exports can render for up to the 1800s subprocess timeout.
-EXPORT_JOB_TIMEOUT_SECONDS = 1900
+# Must exceed the FFmpeg render timeout plus output verification (ARCH-005; validated in
+# core/config.py Settings and tests/test_limits_consistency.py). Env: EXPORT_JOB_TIMEOUT_SECONDS.
+EXPORT_JOB_TIMEOUT_SECONDS = settings.export_job_timeout_seconds
 # A RUNNING export older than this has outlived any possible worker job (timeout + grace).
 EXPORT_STALE_RUNNING_AFTER_SECONDS = EXPORT_JOB_TIMEOUT_SECONDS + 300
 _EXPORT_STARTED_AT_KEY = "worker_started_at"
+# Recovery cron bound: at most this many active tasks are (re)scheduled per run.
+RECOVERY_MAX_TASKS_PER_RUN = 500
+# How long a cancelled export waits for the render thread to kill FFmpeg and clean up.
+_EXPORT_CANCEL_GRACE_SECONDS = 30.0
 
 
-async def process_generation_task_step(ctx: dict[str, Any], task_id: str) -> dict[str, Any]:
+def _accepts_kwarg(function: Any, name: str) -> bool:
+    """True when ``function`` accepts keyword ``name`` (test doubles may not)."""
+    try:
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+    )
+
+
+async def process_generation_task_step(
+    ctx: dict[str, Any], task_id: str, schedule_token: str | None = None
+) -> dict[str, Any]:
     """
     ARQ Worker Job: chạy một bước của task và lên lịch poll tiếp theo theo backoff.
+
+    ``schedule_token`` identifies the task version this job was scheduled for. A job
+    superseded by a newer step (manual tick/step, resume, recovery) exits without
+    stepping or scheduling, so each task keeps exactly one step chain. Jobs without a
+    token (scheduled by an older release) still run once.
     """
     async with AsyncSessionLocal() as db:
-        task = await GenerationQueueService.step_task(db, task_id)
+        try:
+            task = await GenerationQueueService.step_task(
+                db, task_id, expected_schedule_token=schedule_token
+            )
+        except StaleGenerationStepJob:
+            return {
+                "task_id": task_id,
+                "state": "stale_job_skipped",
+                "external_task_id": None,
+                "next_poll_delay_seconds": None,
+                "auto_enqueued_task_ids": [],
+            }
         redis = ctx.get("redis")
         if redis:
             await enqueue_generation_step(redis, task)
@@ -87,12 +122,9 @@ async def recover_pending_generation_tasks_job(ctx: dict[str, Any]) -> dict[str,
         return {"found": 0, "scheduled": 0}
 
     async with AsyncSessionLocal() as db:
-        rows = await db.execute(
-            select(GenerationTaskRecord)
-            .where(GenerationTaskRecord.state.in_((QueueTaskState.QUEUED, QueueTaskState.RUNNING)))
-            .order_by(GenerationTaskRecord.priority.desc(), GenerationTaskRecord.created_at.asc())
+        tasks = await StudioRepository(db).list_active_generation_tasks_for_recovery(
+            RECOVERY_MAX_TASKS_PER_RUN
         )
-        tasks = rows.scalars().all()
         scheduled = 0
         for task in tasks:
             if await enqueue_generation_step(redis, task):
@@ -125,6 +157,7 @@ async def process_export_job(ctx: dict[str, Any], export_id: str) -> dict[str, A
         await repository.update_export_job(job)
 
         out_dir = os.path.join(settings.media_root, job.project_id, "exports")
+        cancel_event = threading.Event()
 
         try:
             clips = [ExportClip(**clip) for clip in manifest.get("resolved_clips", [])]
@@ -133,15 +166,31 @@ async def process_export_job(ctx: dict[str, Any], export_id: str) -> dict[str, A
                 if not _path_inside_media_root(clip.path):
                     raise ExportError("Export clip path resolves outside MEDIA_ROOT; refusing to render.")
 
-            # FFmpeg is a blocking subprocess; keep it off the worker event loop.
-            out_path, size_bytes, sha256_hex, ffmpeg_args, probe_meta = await asyncio.to_thread(
-                TimelineValidationService.render_and_probe_mp4,
-                output_dir=out_dir,
-                export_id=export_id,
-                fps=job.fps,
-                resolution=job.resolution,
-                clips=clips,
-            )
+            # FFmpeg is a blocking subprocess; keep it off the worker event loop. On ARQ
+            # cancellation the event makes the render kill its FFmpeg child and remove the
+            # partial output; we wait for that before marking the job FAILED.
+            render_kwargs: dict[str, Any] = {
+                "output_dir": out_dir,
+                "export_id": export_id,
+                "fps": job.fps,
+                "resolution": job.resolution,
+                "clips": clips,
+            }
+            render = TimelineValidationService.render_and_probe_mp4
+            if _accepts_kwarg(render, "cancel_event"):
+                render_kwargs["cancel_event"] = cancel_event
+            render_future = asyncio.ensure_future(asyncio.to_thread(render, **render_kwargs))
+            try:
+                out_path, size_bytes, sha256_hex, ffmpeg_args, probe_meta = await asyncio.shield(
+                    render_future
+                )
+            except asyncio.CancelledError:
+                cancel_event.set()
+                if not render_future.done():
+                    await asyncio.wait({render_future}, timeout=_EXPORT_CANCEL_GRACE_SECONDS)
+                if render_future.done() and not render_future.cancelled():
+                    render_future.exception()  # consume ExportCanceledError / result
+                raise
             if not probe_meta.get("valid"):
                 raise ExportError(
                     "File export không vượt qua kiểm tra FFprobe.",
@@ -171,30 +220,49 @@ async def process_export_job(ctx: dict[str, Any], export_id: str) -> dict[str, A
             )
             raise
 
-        probe_meta["unsupported_features"] = manifest.get("unsupported_features", [])
         asset_id = f"ast_exp_{uuid.uuid4().hex[:8]}"
-        asset = Asset(
-            id=asset_id,
-            project_id=job.project_id,
-            asset_type="video",
-            filename=f"{job.project_id}_{export_id}.mp4",
-            storage_rel_path=os.path.relpath(out_path, settings.media_root),
-            mime_type="video/mp4",
-            size_bytes=size_bytes,
-            sha256=sha256_hex,
-            is_locked_reference=False,
-        )
-        job.state = ExportJobState.SUCCEEDED
-        job.output_asset_id = asset_id
-        job.ffmpeg_args_json = ffmpeg_args
-        job.ffprobe_verification_json = probe_meta
-        job.finished_at = datetime.now(timezone.utc)
-        await repository.create_export_result(asset, job)
+        try:
+            probe_meta["unsupported_features"] = manifest.get("unsupported_features", [])
+            asset = Asset(
+                id=asset_id,
+                project_id=job.project_id,
+                asset_type="video",
+                filename=f"{job.project_id}_{export_id}.mp4",
+                storage_rel_path=media_rel_path(out_path, settings.media_root),
+                mime_type="video/mp4",
+                size_bytes=size_bytes,
+                sha256=sha256_hex,
+                is_locked_reference=False,
+            )
+            job.state = ExportJobState.SUCCEEDED
+            job.output_asset_id = asset_id
+            job.ffmpeg_args_json = ffmpeg_args
+            job.ffprobe_verification_json = probe_meta
+            job.finished_at = datetime.now(timezone.utc)
+            await repository.create_export_result(asset, job)
+        except BaseException as exc:
+            # Persisting the verified result failed (DB error or cancellation): never leave
+            # a RUNNING job or an untracked MP4 behind.
+            _discard_file(out_path)
+            await _mark_export_failed_fresh_session(
+                export_id,
+                f"Export result could not be saved ({type(exc).__name__}); the rendered file was discarded.",
+            )
+            if isinstance(exc, Exception):
+                return {"export_id": export_id, "state": ExportJobState.FAILED.value}
+            raise
         return {
             "export_id": export_id,
             "state": ExportJobState.SUCCEEDED.value,
             "output_asset_id": asset_id,
         }
+
+
+def _discard_file(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _path_inside_media_root(path: str) -> bool:

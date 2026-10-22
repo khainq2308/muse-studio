@@ -107,7 +107,7 @@ Do not require custom slash-command support to perform repository tasks. Start f
 | `/audit-roadmap` | Read current plan + architecture + tests; classify each milestone as done / backend-only / UI missing / simulated / unverified / not started; cite file and test evidence. |
 | `/close-gap <name>` | Verify the named gap still exists; define acceptance criteria; branch; implement only that gap; add regression tests; validate; update docs from evidence. |
 | `/fix-ci` | Reproduce CI failure locally, trace root cause, make minimal fix, run exact failing check then relevant suites. Do not loosen CI to hide a bug. |
-| `/layering` | Run `python3 scripts/check_layering.py --report`; avoid increasing direct DB access in API routes; update a baseline only when actual debt was reduced and the diff explains why. |
+| `/layering` | Run `python3 scripts/check_layering.py --report`. It ratchets two metrics per API route file against `scripts/layering_baseline.json`: `direct_db` (session method calls, session aliases and `get_db`/`AsyncSession` injection in routes) and `session_passthrough` (routes passing `repository.session` or an injected session into services); `--report` lists each site. Never increase either metric; lower a baseline only when the debt was actually removed and the diff explains why. A passing ratchet does not prove complete layering. |
 | `/new-endpoint` | Read `add-api-endpoint`; follow API → application → repository layering, protected routing, bounded inputs, tests and documentation. |
 | `/migrate` | Read `alembic-migrations`; inspect actual migration state; write reversible revisions; test on disposable databases; never touch production. |
 

@@ -61,12 +61,12 @@ def test_production_settings_reject_missing_or_default_secrets(monkeypatch: pyte
     with pytest.raises(ValidationError):
         Settings(
             environment="production",
-            studio_admin_token="configured-token",
+            studio_admin_token="configured-token-0123456789abcdefghij",
             secret_encryption_key="dev-only-32-byte-secret-key-change-me!!",
         )
     validated = Settings(
         environment="production",
-        studio_admin_token="configured-token",
+        studio_admin_token="configured-token-0123456789abcdefghij",
         secret_encryption_key="replace-this-with-a-stable-production-secret-32",
     )
     assert validated.environment == "production"

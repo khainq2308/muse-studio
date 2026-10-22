@@ -44,7 +44,9 @@ async def client(monkeypatch):
     test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    _SESSION_MAKER = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+    _SESSION_MAKER = async_sessionmaker(
+        bind=test_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+    )
 
     async def override_get_db():
         async with _SESSION_MAKER() as session:
@@ -104,20 +106,29 @@ async def test_orphan_scan_and_cleanup(client: AsyncClient):
         referenced_rel = stored.storage_rel_path
 
     media_root = Path(_TEMP_MEDIA_DIR)
+    # Cleanup only deletes inside managed subtrees (project dirs, backups/), so the
+    # strays live in the project's storage directory.
+    project_dir = media_root / project["id"]
+    project_dir.mkdir(parents=True, exist_ok=True)
     # An old unreferenced file -> orphan.
-    orphan_old = media_root / "stray_old.png"
+    orphan_old = project_dir / "stray_old.png"
     orphan_old.write_bytes(PNG_BYTES)
     old_mtime = time.time() - 48 * 3600
     os.utime(orphan_old, (old_mtime, old_mtime))
     # A fresh unreferenced file -> protected by the retention window.
-    orphan_fresh = media_root / "stray_fresh.png"
+    orphan_fresh = project_dir / "stray_fresh.png"
     orphan_fresh.write_bytes(PNG_BYTES)
+    # An old file outside managed subtrees -> never reported or deleted.
+    unmanaged = media_root / "operator_notes.png"
+    unmanaged.write_bytes(PNG_BYTES)
+    os.utime(unmanaged, (old_mtime, old_mtime))
 
     scan = await client.post("/api/v1/maintenance/orphans/scan", json={"retention_hours": 24})
     assert scan.status_code == 200, scan.text
     found = {item["rel_path"] for item in scan.json()["orphans"]}
-    assert "stray_old.png" in found
-    assert "stray_fresh.png" not in found
+    assert f"{project['id']}/stray_old.png" in found
+    assert f"{project['id']}/stray_fresh.png" not in found
+    assert "operator_notes.png" not in found
     assert referenced_rel not in found
 
     # Dry run must not delete anything.
@@ -135,6 +146,7 @@ async def test_orphan_scan_and_cleanup(client: AsyncClient):
     assert body["freed_bytes"] == len(PNG_BYTES)
     assert not orphan_old.exists()
     assert orphan_fresh.exists()
+    assert unmanaged.exists()
     assert (media_root / referenced_rel).exists()
 
 
@@ -269,7 +281,7 @@ async def test_orphan_cleanup_unlinks_symlink_without_deleting_target(client: As
         stored = await db.get(Asset, asset["id"])
         assert stored is not None
         referenced_path = Path(_TEMP_MEDIA_DIR, stored.storage_rel_path)
-    alias = Path(_TEMP_MEDIA_DIR, "orphan-alias.png")
+    alias = Path(_TEMP_MEDIA_DIR, project["id"], "orphan-alias.png")
     try:
         alias.symlink_to(referenced_path)
     except (NotImplementedError, OSError):
@@ -297,10 +309,13 @@ async def test_restore_keeps_generation_task_terminal_when_source_connection_is_
             provider_type="mock", base_url="http://localhost:8080",
         ))
         db.add(SceneRecord(id="scn_restore_external", project_id=project_id, scene_index=0, title="Scene"))
+        # Models declare FKs without relationship(): flush each parent level first.
+        await db.flush()
         db.add(ShotRecord(
             id="sht_restore_external", project_id=project_id, scene_id="scn_restore_external",
             sequence_index=0, title="Shot", location_code="loc_default",
         ))
+        await db.flush()
         db.add(GenerationTaskRecord(
             id="tsk_restore_external", project_id=project_id, scene_id="scn_restore_external",
             shot_id="sht_restore_external", connection_id="conn_restore_external", task_type="video",

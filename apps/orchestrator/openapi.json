@@ -612,6 +612,8 @@
           },
           "model_id": {
             "default": "muse-video-mock-v1",
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Model Id",
             "type": "string"
           },
@@ -825,6 +827,7 @@
           },
           "immutable_traits": {
             "default": "",
+            "maxLength": 8000,
             "title": "Immutable Traits",
             "type": "string"
           },
@@ -839,6 +842,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 32,
             "title": "Reference Asset Ids",
             "type": "array"
           },
@@ -874,6 +878,8 @@
         "properties": {
           "asset_type": {
             "default": "reference",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Asset Type",
             "type": "string"
           },
@@ -888,6 +894,8 @@
             "type": "boolean"
           },
           "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Project Id",
             "type": "string"
           }
@@ -1049,6 +1057,7 @@
           "api_key": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -1090,6 +1099,7 @@
           "proxy_display_host": {
             "anyOf": [
               {
+                "maxLength": 255,
                 "type": "string"
               },
               {
@@ -1284,6 +1294,8 @@
           },
           "model_id": {
             "default": "muse-video-mock-v1",
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Model Id",
             "type": "string"
           },
@@ -1532,6 +1544,7 @@
           "idempotency_key": {
             "anyOf": [
               {
+                "maxLength": 128,
                 "type": "string"
               },
               {
@@ -1549,6 +1562,8 @@
           },
           "model_id": {
             "default": "muse-video-mock-v1",
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Model Id",
             "type": "string"
           },
@@ -2071,6 +2086,7 @@
           "project_id": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -2082,6 +2098,7 @@
           "task_id": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -2349,6 +2366,8 @@
           },
           "language": {
             "default": "vi",
+            "maxLength": 16,
+            "minLength": 1,
             "title": "Language",
             "type": "string"
           },
@@ -2360,11 +2379,15 @@
           },
           "output_profile": {
             "default": "1080p_h264",
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Output Profile",
             "type": "string"
           },
           "style_preset": {
             "default": "2d_anime_cinematic",
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Style Preset",
             "type": "string"
           }
@@ -2927,6 +2950,27 @@
         "title": "QueueTaskSummaryOut",
         "type": "object"
       },
+      "ReadinessOut": {
+        "properties": {
+          "checks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ],
+        "title": "ReadinessOut",
+        "type": "object"
+      },
       "RetryFailedTasksOut": {
         "properties": {
           "new_task_ids": {
@@ -2998,12 +3042,20 @@
             "type": "boolean"
           },
           "raw_content": {
+            "maxLength": 1000000,
             "minLength": 5,
             "title": "Raw Content",
             "type": "string"
           },
+          "replace_existing": {
+            "default": false,
+            "title": "Replace Existing",
+            "type": "boolean"
+          },
           "source_format": {
             "default": "museflow",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Source Format",
             "type": "string"
           }
@@ -3047,6 +3099,13 @@
           "version_number": {
             "title": "Version Number",
             "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -3318,7 +3377,7 @@
           "camera_motion": {
             "anyOf": [
               {
-                "maxLength": 128,
+                "maxLength": 64,
                 "minLength": 1,
                 "type": "string"
               },
@@ -3372,6 +3431,8 @@
           "first_frame_asset_id": {
             "anyOf": [
               {
+                "maxLength": 64,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3383,6 +3444,8 @@
           "previous_shot_id": {
             "anyOf": [
               {
+                "maxLength": 64,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -3397,6 +3460,7 @@
                 "items": {
                   "type": "string"
                 },
+                "maxItems": 32,
                 "type": "array"
               },
               {
@@ -3419,7 +3483,7 @@
           "shot_size": {
             "anyOf": [
               {
-                "maxLength": 128,
+                "maxLength": 64,
                 "minLength": 1,
                 "type": "string"
               },
@@ -4321,6 +4385,7 @@
         "properties": {
           "description": {
             "default": "M3 Default Typed DAG Workflow",
+            "maxLength": 4000,
             "title": "Description",
             "type": "string"
           },
@@ -4329,11 +4394,14 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 1000,
             "title": "Edges",
             "type": "array"
           },
           "name": {
             "default": "Script to Batch Film Pipeline",
+            "maxLength": 255,
+            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
@@ -4342,6 +4410,7 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 200,
             "title": "Nodes",
             "type": "array"
           },
@@ -4561,6 +4630,7 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 1000,
             "title": "Edges",
             "type": "array"
           },
@@ -4569,6 +4639,7 @@
               "additionalProperties": true,
               "type": "object"
             },
+            "maxItems": 200,
             "title": "Nodes",
             "type": "array"
           },
@@ -14332,6 +14403,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 128,
                   "type": "string"
                 },
                 {
@@ -14348,6 +14420,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 64,
                   "type": "string"
                 },
                 {
@@ -14364,6 +14437,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 64,
                   "type": "string"
                 },
                 {
@@ -14714,6 +14788,7 @@
     },
     "/healthz": {
       "get": {
+        "description": "Liveness: the process is serving requests (no dependency checks).",
         "operationId": "healthz_healthz_get",
         "responses": {
           "200": {
@@ -14852,6 +14927,145 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "Readiness: database and Redis are reachable. Public like /healthz; no secrets.",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication failed"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Payload too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limited"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Upstream provider error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Upstream timeout"
+          }
+        },
+        "summary": "Readyz"
       }
     }
   }

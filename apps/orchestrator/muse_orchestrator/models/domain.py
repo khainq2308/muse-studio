@@ -1,14 +1,28 @@
 from __future__ import annotations
+
 import enum
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from sqlalchemy import String, Integer, Float, Boolean, ForeignKey, DateTime, Enum, JSON, Text
-from sqlalchemy import UniqueConstraint
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -93,6 +107,9 @@ class Project(Base):
 
 class ProjectRevision(Base):
     __tablename__ = "project_revisions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "revision_number", name="uq_project_revisions_project_number"),
+    )
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -156,6 +173,9 @@ class AuditEvent(Base):
 
 class ScriptRevision(Base):
     __tablename__ = "script_revisions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "version_number", name="uq_script_revisions_project_version"),
+    )
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -169,6 +189,9 @@ class ScriptRevision(Base):
 
 class StoryBibleEntry(Base):
     __tablename__ = "story_bible_entries"
+    __table_args__ = (
+        UniqueConstraint("project_id", "code_name", name="uq_story_bible_project_code_name"),
+    )
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     entry_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -261,6 +284,9 @@ class WorkflowDefinition(Base):
 
 class WorkflowVersion(Base):
     __tablename__ = "workflow_versions"
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "version_number", name="uq_workflow_versions_workflow_number"),
+    )
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -314,8 +340,24 @@ class WorkflowCacheEntry(Base):
 
 # --- M4 & M5: ASYNC GENERATION QUEUE, TAKES & BATCH RENDER MODELS ---
 
+# sqlalchemy.Enum(QueueTaskState) persists enum *names* on SQLite and PostgreSQL,
+# so the partial-index predicate must use the upper-case names. Mirrors migration 0002.
+ACTIVE_GENERATION_TASK_PREDICATE = "state IN ('QUEUED', 'RUNNING', 'PAUSED')"
+
+
 class GenerationTaskRecord(Base):
     __tablename__ = "generation_tasks"
+    __table_args__ = (
+        # At most one queued/running/paused task per shot and task type.
+        Index(
+            "uq_generation_tasks_active_shot_type",
+            "shot_id",
+            "task_type",
+            unique=True,
+            sqlite_where=text(ACTIVE_GENERATION_TASK_PREDICATE),
+            postgresql_where=text(ACTIVE_GENERATION_TASK_PREDICATE),
+        ),
+    )
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     scene_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

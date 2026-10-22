@@ -4,6 +4,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from sqlalchemy import select
 
 from muse_orchestrator.core.config import SecretRedactor, settings
 from muse_orchestrator.core.security import SecretVault, vault
@@ -11,9 +14,14 @@ from muse_orchestrator.models.domain import (
     Asset,
     AuditEvent,
     ConnectionHealthState,
+    GenerationTaskRecord,
     Project,
     ProjectRevision,
     ProviderConnection,
+    ShotGenerationState,
+    ShotRecord,
+    ShotTakeRecord,
+    StoryBibleEntry,
 )
 from muse_orchestrator.providers.base import ProviderFailure
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
@@ -27,12 +35,58 @@ from muse_orchestrator.infrastructure.repositories import StudioRepository
 
 
 class ApplicationError(Exception):
-    """Expected application failure translated to HTTP only at the API boundary."""
+    """Expected application failure translated to HTTP only at the API boundary.
 
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
+    ``category``/``retryable`` override the defaults derived from the status code in the
+    shared error envelope (e.g. a 409 caused by a concurrent writer is retryable).
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: Any,
+        *,
+        category: str | None = None,
+        retryable: bool | None = None,
+    ) -> None:
+        super().__init__(detail if isinstance(detail, str) else str(detail))
         self.status_code = status_code
         self.detail = detail
+        self.category = category
+        self.retryable = retryable
+
+
+def validate_provider_base_url(raw_url: str) -> str:
+    """Normalise and validate a provider base URL; raise ApplicationError(422) if unsafe.
+
+    The URL is never echoed back in the error because it may embed credentials.
+    """
+    base_url = raw_url.strip().rstrip("/")
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+    try:
+        parts = urlsplit(base_url)
+        parts.port  # noqa: B018 -- property access validates the port range/syntax
+    except ValueError as exc:
+        raise ApplicationError(422, "Base URL is not a valid URL.") from exc
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ApplicationError(422, "Base URL must start with http:// or https://.")
+    if not parts.hostname:
+        raise ApplicationError(422, "Base URL has no valid host.")
+    if "@" in parts.netloc or parts.username is not None or parts.password is not None:
+        raise ApplicationError(
+            422, "Base URL must not contain credentials; store the API key separately."
+        )
+    if parts.query or parts.fragment:
+        raise ApplicationError(422, "Base URL must not contain a query string or fragment.")
+    if scheme == "http" and not settings.is_development and not settings.allow_insecure_provider_http:
+        raise ApplicationError(
+            422,
+            "Base URL must use https:// outside development "
+            "(set ALLOW_INSECURE_PROVIDER_HTTP=true to allow http explicitly).",
+        )
+    return base_url
 
 
 class ProjectService:
@@ -114,13 +168,9 @@ class ConnectionService:
 
     async def create_connection(self, values: dict[str, Any]) -> ProviderConnection:
         name = str(values.get("name", "")).strip()
-        base_url = str(values.get("base_url", "")).strip().rstrip("/")
-        if base_url.endswith("/v1"):
-            base_url = base_url[:-3]
         if not name:
             raise ApplicationError(422, "Connection name cannot be blank.")
-        if not base_url.startswith(("http://", "https://")):
-            raise ApplicationError(422, "Base URL must start with http:// or https://.")
+        base_url = validate_provider_base_url(str(values.get("base_url", "")))
         for existing in await self.repository.list_connections():
             if existing.name.lower() == name.lower():
                 raise ApplicationError(409, f"Connection '{name}' already exists.")
@@ -262,6 +312,61 @@ class AssetService:
         except AssetStorageError as exc:
             raise ApplicationError(404, "File của asset không còn trên máy chủ.") from exc
 
+    async def _find_asset_references(
+        self, asset: Asset
+    ) -> tuple[list[ShotTakeRecord], list[ShotRecord], list[StoryBibleEntry]]:
+        session = self.repository.session
+        takes = list(
+            (
+                await session.execute(
+                    select(ShotTakeRecord).where(
+                        (ShotTakeRecord.asset_id == asset.id)
+                        | (ShotTakeRecord.first_frame_asset_id == asset.id)
+                        | (ShotTakeRecord.last_frame_asset_id == asset.id)
+                    )
+                )
+            ).scalars().all()
+        )
+        content_take_ids = {take.id for take in takes if take.asset_id == asset.id}
+        project_shots = await self.repository.list_project_shots(asset.project_id) or []
+        shots = [
+            shot
+            for shot in project_shots
+            if asset.id in (shot.reference_asset_ids or [])
+            or shot.first_frame_asset_id == asset.id
+            or shot.last_frame_asset_id == asset.id
+            or (shot.selected_take_id is not None and shot.selected_take_id in content_take_ids)
+        ]
+        bible = [
+            entry
+            for entry in await self.repository.list_story_bible_entries(asset.project_id)
+            if asset.id in (entry.reference_asset_ids or [])
+        ]
+        return takes, shots, bible
+
+    @staticmethod
+    def _describe_references(
+        asset_id: str,
+        takes: list[ShotTakeRecord],
+        shots: list[ShotRecord],
+        bible: list[StoryBibleEntry],
+    ) -> str:
+        def ids(values: list[str]) -> str:
+            shown = ", ".join(values[:20])
+            return shown + (f", ... (+{len(values) - 20})" if len(values) > 20 else "")
+
+        parts: list[str] = []
+        if takes:
+            parts.append(f"takes [{ids([t.id for t in takes])}]")
+        if shots:
+            parts.append(f"shots [{ids([s.id for s in shots])}]")
+        if bible:
+            parts.append(f"story bible [{ids([b.code_name for b in bible])}]")
+        return (
+            f"Asset '{asset_id}' is still referenced by " + "; ".join(parts)
+            + ". Retry with force=true to detach these references and delete it."
+        )
+
     async def delete_asset(self, asset_id: str, force: bool = False) -> None:
         asset = await self.repository.get_asset(asset_id)
         if asset is None:
@@ -273,9 +378,77 @@ class AssetService:
             candidate.relative_to(self.storage.root_path)
         except ValueError as exc:
             raise ApplicationError(500, "Stored asset path escaped the media root.") from exc
+
+        takes, shots, bible = await self._find_asset_references(asset)
+        if (takes or shots or bible) and not force:
+            raise ApplicationError(409, self._describe_references(asset.id, takes, shots, bible))
+
         shared_path = await self.repository.has_other_asset_with_storage_path(
             asset.storage_rel_path, asset.id
         )
-        await self.repository.delete_asset(asset)
+        session = self.repository.session
+        if takes or shots or bible:
+            await self._detach_asset_references(asset, takes, shots, bible)
+            # No relationship(): the unit of work would DELETE the asset before its takes,
+            # the FK cascade would remove the takes first and the take DELETE would then
+            # match 0 rows. Delete the children explicitly before the parent.
+            await self.repository.flush_changes()
+        await session.delete(asset)
+        if takes or shots or bible:
+            # Recompile lint in the SAME transaction so a shot that lost a required
+            # reference is blocked before anything can enqueue it.
+            from muse_orchestrator.application.pipeline_service import PipelineService
+
+            await session.flush()
+            await PipelineService(self.repository).recompile_project_shots(
+                asset.project_id, commit=False
+            )
+        await self.repository.commit_pipeline_changes()
         if not shared_path and candidate.is_file():
             candidate.unlink(missing_ok=True)
+
+    async def _detach_asset_references(
+        self,
+        asset: Asset,
+        takes: list[ShotTakeRecord],
+        shots: list[ShotRecord],
+        bible: list[StoryBibleEntry],
+    ) -> None:
+        session = self.repository.session
+        deleted_take_ids = {take.id for take in takes if take.asset_id == asset.id}
+        for shot in shots:
+            if shot.selected_take_id in deleted_take_ids:
+                shot.selected_take_id = None
+                if shot.generation_state == ShotGenerationState.SUCCEEDED:
+                    # Never keep claiming success once the selected output is gone.
+                    shot.generation_state = ShotGenerationState.NOT_STARTED
+            if asset.id in (shot.reference_asset_ids or []):
+                shot.reference_asset_ids = [ref for ref in shot.reference_asset_ids if ref != asset.id]
+            if shot.first_frame_asset_id == asset.id:
+                shot.first_frame_asset_id = None
+            if shot.last_frame_asset_id == asset.id:
+                shot.last_frame_asset_id = None
+        for entry in bible:
+            entry.reference_asset_ids = [ref for ref in entry.reference_asset_ids if ref != asset.id]
+        if deleted_take_ids:
+            tasks = (
+                await session.execute(
+                    select(GenerationTaskRecord).where(
+                        GenerationTaskRecord.take_id.in_(deleted_take_ids)
+                        | (GenerationTaskRecord.result_asset_id == asset.id)
+                    )
+                )
+            ).scalars().all()
+            for task in tasks:
+                task.take_id = None
+                task.result_asset_id = None
+        for take in takes:
+            if take.id in deleted_take_ids:
+                # The FK would cascade on PostgreSQL; delete explicitly so every backend
+                # ends in the same state.
+                await session.delete(take)
+            else:
+                if take.first_frame_asset_id == asset.id:
+                    take.first_frame_asset_id = None
+                if take.last_frame_asset_id == asset.id:
+                    take.last_frame_asset_id = None

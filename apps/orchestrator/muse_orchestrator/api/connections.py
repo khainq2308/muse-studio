@@ -16,8 +16,8 @@ class ConnectionCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     provider_type: str = Field(default="muse2api", pattern=r"^(muse2api|mock)$")
     base_url: str = Field(..., min_length=4, max_length=512)
-    api_key: str | None = Field(default=None)
-    proxy_display_host: str | None = Field(default=None)
+    api_key: str | None = Field(default=None, max_length=4096)
+    proxy_display_host: str | None = Field(default=None, max_length=255)
     timeout_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
     max_concurrency: int = Field(default=2, ge=1, le=20)
     enabled: bool = True
