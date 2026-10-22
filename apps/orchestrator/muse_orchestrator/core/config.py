@@ -117,6 +117,11 @@ class SecretRedactor:
         """Deeply redact sensitive values in mappings, sequences, and nested structures."""
         return cls._redact_mapping(data, explicit_secrets, inherited=False)
 
+    @classmethod
+    def redact_value(cls, value: Any, explicit_secrets: list[str] | None = None) -> Any:
+        """Redact arbitrary JSON-like values, including root lists and tuples."""
+        return cls._redact_value(value, explicit_secrets, sensitive=False)
+
     _SENSITIVE_KEYS = frozenset(
         {
             "api_key",

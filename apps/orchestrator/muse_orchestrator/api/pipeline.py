@@ -391,6 +391,23 @@ async def get_story_bible(project_id: str, repository: StudioRepository = Depend
     ]
 
 
+async def _validate_project_asset_references(
+    project_id: str,
+    asset_ids: list[str] | None,
+    repository: StudioRepository,
+) -> None:
+    """Reject references to assets outside the owning project before persisting them."""
+    requested_ids = set(asset_ids or [])
+    if not requested_ids:
+        return
+    project_asset_ids = set(await repository.list_project_asset_ids(project_id))
+    if not requested_ids.issubset(project_asset_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Mọi reference_asset_ids phải thuộc project đang thao tác.",
+        )
+
+
 @router.post("/story-bible", response_model=StoryBibleUpsertOut, status_code=status.HTTP_201_CREATED)
 async def upsert_story_bible_entry(
     project_id: str,
@@ -400,6 +417,7 @@ async def upsert_story_bible_entry(
 ) -> StoryBibleUpsertOut:
     if not await repository.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
+    await _validate_project_asset_references(project_id, payload.reference_asset_ids, repository)
     existing = await repository.get_story_bible_entry(project_id, payload.code_name)
 
     if existing:
@@ -493,6 +511,8 @@ async def update_and_review_shot(
         prev_shot = await repository.get_shot(updates["previous_shot_id"])
         if not prev_shot or prev_shot.project_id != project_id:
             raise HTTPException(status_code=422, detail="previous_shot_id không thuộc dự án này.")
+    if "reference_asset_ids" in updates and updates["reference_asset_ids"] is not None:
+        await _validate_project_asset_references(project_id, updates["reference_asset_ids"], repository)
     if "first_frame_asset_id" in updates and updates["first_frame_asset_id"] is not None:
         ff_asset = await repository.get_asset(updates["first_frame_asset_id"])
         if not ff_asset or ff_asset.project_id != project_id:

@@ -107,7 +107,7 @@ def _error_envelope_response(
     elif isinstance(detail, dict):
         safe_detail = SecretRedactor.redact_dict(detail)
     else:
-        safe_detail = jsonable_encoder(detail)
+        safe_detail = SecretRedactor.redact_value(jsonable_encoder(detail))
     return JSONResponse(
         status_code=status_code,
         content={
@@ -152,9 +152,15 @@ async def http_exception_handler(_request: Request, exc: StarletteHTTPException)
 async def request_validation_exception_handler(
     _request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    # Pydantic validation errors include the raw submitted value under "input".
+    # Never echo it: a malformed field can contain an API key, password, or proxy URL.
+    safe_errors = [
+        {key: value for key, value in error.items() if key not in {"input", "ctx"}}
+        for error in exc.errors()
+    ]
     return _error_envelope_response(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
-        exc.errors(),
+        safe_errors,
         category="validation",
         retryable=False,
     )

@@ -207,3 +207,57 @@ async def test_shot_reads_and_exports_do_not_recompile_or_write(client: AsyncCli
     json_response = await client.get(f"/api/v1/projects/{project_id}/shots/export?format=json")
     assert json_response.status_code == 200
     assert json_response.json()["shots"][0]["prompt_hash"] == shots[0]["prompt_hash"]
+
+
+@pytest.mark.asyncio
+async def test_request_validation_does_not_echo_raw_secret_input(client: AsyncClient):
+    secret = "sk-live-validation-secret-123"
+    response = await client.post("/api/v1/projects", json={"name": [secret]})
+
+    assert response.status_code == 422
+    assert secret not in response.text
+    body = response.json()
+    assert body["category"] == "validation"
+    assert body["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_story_bible_and_shot_references_must_belong_to_the_project(client: AsyncClient):
+    project_a = (await client.post("/api/v1/projects", json={"name": "Reference owner"})).json()["id"]
+    project_b = (await client.post("/api/v1/projects", json={"name": "Foreign reference"})).json()["id"]
+
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+    upload = await client.post(
+        "/api/v1/assets/upload",
+        data={"project_id": project_b, "asset_type": "reference"},
+        files={"file": ("foreign.png", png_bytes, "image/png")},
+    )
+    assert upload.status_code == 201
+    foreign_asset_id = upload.json()["id"]
+
+    bible_response = await client.post(
+        f"/api/v1/projects/{project_a}/story-bible",
+        json={
+            "entry_type": "character",
+            "code_name": "char_foreign_ref",
+            "display_name": "Foreign reference",
+            "reference_asset_ids": [foreign_asset_id],
+            "requires_reference_lock": True,
+        },
+    )
+    assert bible_response.status_code == 422
+    assert "reference_asset_ids" in bible_response.json()["detail"]
+
+    script_response = await client.post(
+        f"/api/v1/projects/{project_a}/scripts/import",
+        json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "auto_apply_proposal": True},
+    )
+    assert script_response.status_code == 201
+    shot_id = (await client.get(f"/api/v1/projects/{project_a}/shots")).json()[0]["id"]
+
+    shot_response = await client.patch(
+        f"/api/v1/projects/{project_a}/shots/{shot_id}",
+        json={"reference_asset_ids": [foreign_asset_id]},
+    )
+    assert shot_response.status_code == 422
+    assert "reference_asset_ids" in shot_response.json()["detail"]

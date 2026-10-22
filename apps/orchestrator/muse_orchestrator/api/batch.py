@@ -210,6 +210,41 @@ async def launch_batch_render(
     }
 
 
+async def _resolve_frame_chain_generation_config(
+    repository: StudioRepository,
+    project_id: str,
+    shot: Any,
+    requested_connection_id: str | None = None,
+) -> tuple[str, str] | None:
+    """Resolve a deterministic provider configuration for an unlocked frame-chain shot.
+
+    By default, preserve the configuration of the task that generated this shot's
+    upstream frame. An explicit connection override is honored only if that
+    connection has a known model configuration in this project. Never guess with
+    an unrelated task or silently fall back to the mock model.
+    """
+    upstream_task = None
+    if getattr(shot, "previous_shot_id", None):
+        upstream_task = await repository.get_latest_generation_task_for_shot(shot.previous_shot_id)
+        if upstream_task is not None and upstream_task.project_id != project_id:
+            upstream_task = None
+
+    if requested_connection_id is None:
+        if upstream_task is None:
+            return None
+        return upstream_task.connection_id, upstream_task.model_id
+
+    if upstream_task is not None and upstream_task.connection_id == requested_connection_id:
+        return requested_connection_id, upstream_task.model_id
+
+    project_tasks = await repository.list_project_generation_tasks(project_id)
+    matching_tasks = [task for task in project_tasks if task.connection_id == requested_connection_id]
+    if not matching_tasks:
+        return None
+    # list_project_generation_tasks is ordered oldest-to-newest with a stable ID tie-breaker.
+    return requested_connection_id, matching_tasks[-1].model_id
+
+
 @router.post("/batch/tick", response_model=BatchTickOut)
 async def tick_project_batch_queue(
     project_id: str,
@@ -248,34 +283,35 @@ async def tick_project_batch_queue(
 
     # Kiểm tra xem có shot nào vừa được mở khoá khỏi BLOCKED_UPSTREAM_FRAME nhờ Frame Chaining không
     # Nếu có và vừa được chuyển về NOT_STARTED (có first_frame_asset_id), tự động enqueue vào cùng Connection!
-    default_conn_id = connection_id or (active_tasks[0].connection_id if active_tasks else None)
-    default_model_id = active_tasks[0].model_id if active_tasks else "muse-video-mock-v1"
-    if not default_conn_id:
-        prior_tasks = await repository.list_project_generation_tasks(project_id)
-        if prior_tasks:
-            default_conn_id = prior_tasks[-1].connection_id
-            default_model_id = prior_tasks[-1].model_id
-    if default_conn_id:
-        conn = await repository.get_connection(default_conn_id)
-        if conn:
-            ready_chained_shots = await repository.list_ready_frame_chain_shots(project_id)
-            for cs in ready_chained_shots:
-                new_t, created = await GenerationQueueService.enqueue_shot_generation(
-                    db=repository.session,
-                    shot=cs,
-                    conn=conn,
-                    task_type="video",
-                    model_id=default_model_id,
-                    priority=max(1, 30 - cs.sequence_index),
-                )
-                await schedule_generation_task(request, new_t)
-                if created:
-                    stepped_results.append({
-                        "task_id": new_t.id,
-                        "shot_id": cs.id,
-                        "state": new_t.state.value,
-                        "auto_enqueued_from_frame_chain": True,
-                    })
+    ready_chained_shots = await repository.list_ready_frame_chain_shots(project_id)
+    for cs in ready_chained_shots:
+        config = await _resolve_frame_chain_generation_config(
+            repository, project_id, cs, requested_connection_id=connection_id
+        )
+        if config is None:
+            # Leave the shot NOT_STARTED rather than dispatching it with an arbitrary
+            # historical model or the mock provider. A later tick with valid config can retry.
+            continue
+        resolved_connection_id, resolved_model_id = config
+        conn = await repository.get_connection(resolved_connection_id)
+        if conn is None:
+            continue
+        new_t, created = await GenerationQueueService.enqueue_shot_generation(
+            db=repository.session,
+            shot=cs,
+            conn=conn,
+            task_type="video",
+            model_id=resolved_model_id,
+            priority=max(1, 30 - cs.sequence_index),
+        )
+        await schedule_generation_task(request, new_t)
+        if created:
+            stepped_results.append({
+                "task_id": new_t.id,
+                "shot_id": cs.id,
+                "state": new_t.state.value,
+                "auto_enqueued_from_frame_chain": True,
+            })
 
     all_project_tasks = await repository.list_project_generation_tasks(project_id)
     counts: dict[str, int] = {}

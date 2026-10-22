@@ -234,7 +234,9 @@ class StudioRepository:
 
     async def list_project_generation_tasks(self, project_id: str) -> list[GenerationTaskRecord]:
         result = await self.session.execute(
-            select(GenerationTaskRecord).where(GenerationTaskRecord.project_id == project_id)
+            select(GenerationTaskRecord)
+            .where(GenerationTaskRecord.project_id == project_id)
+            .order_by(GenerationTaskRecord.created_at.asc(), GenerationTaskRecord.id.asc())
         )
         return list(result.scalars().all())
 
@@ -253,7 +255,7 @@ class StudioRepository:
         result = await self.session.execute(
             select(GenerationTaskRecord)
             .where(GenerationTaskRecord.shot_id == shot_id)
-            .order_by(GenerationTaskRecord.created_at.desc())
+            .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()

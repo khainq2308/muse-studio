@@ -253,3 +253,43 @@ SHOT 2: Hero lands on opposite roof
 
     final_shots = {s["id"]: s for s in (await client.get(f"/api/v1/projects/{proj_id}/shots")).json()}
     assert final_shots[shot2["id"]]["first_frame_asset_id"] == takes_s1_after[1]["last_frame_asset_id"]
+
+
+@pytest.mark.asyncio
+async def test_frame_chain_resolves_config_from_its_upstream_task():
+    from types import SimpleNamespace
+    from muse_orchestrator.api.batch import _resolve_frame_chain_generation_config
+
+    upstream = SimpleNamespace(
+        project_id="project-a",
+        connection_id="conn-upstream",
+        model_id="model-from-upstream",
+    )
+    unrelated_latest = SimpleNamespace(
+        project_id="project-a",
+        connection_id="conn-unrelated",
+        model_id="unrelated-model",
+    )
+
+    class FakeRepository:
+        async def get_latest_generation_task_for_shot(self, shot_id: str):
+            assert shot_id == "shot-upstream"
+            return upstream
+
+        async def list_project_generation_tasks(self, project_id: str):
+            assert project_id == "project-a"
+            return [upstream, unrelated_latest]
+
+    repo = FakeRepository()
+    shot = SimpleNamespace(previous_shot_id="shot-upstream")
+
+    assert await _resolve_frame_chain_generation_config(repo, "project-a", shot) == (
+        "conn-upstream",
+        "model-from-upstream",
+    )
+    assert await _resolve_frame_chain_generation_config(
+        repo, "project-a", shot, requested_connection_id="conn-unrelated"
+    ) == ("conn-unrelated", "unrelated-model")
+    assert await _resolve_frame_chain_generation_config(
+        repo, "project-a", shot, requested_connection_id="conn-not-configured"
+    ) is None
