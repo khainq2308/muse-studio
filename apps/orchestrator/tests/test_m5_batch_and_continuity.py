@@ -306,10 +306,23 @@ async def test_frame_chain_resolves_only_successful_upstream_config_and_allows_n
             return [upstream, unrelated_success, failed_newer]
 
         async def get_shot_take(self, take_id: str):
-            raise AssertionError("No take was selected in this test")
+            assert take_id == "take-selected"
+            return SimpleNamespace(
+                project_id="project-a",
+                shot_id="shot-upstream",
+                task_id="task-selected",
+            )
 
         async def get_generation_task(self, task_id: str):
-            raise AssertionError("No take was selected in this test")
+            assert task_id == "task-selected"
+            return SimpleNamespace(
+                id="task-selected",
+                project_id="project-a",
+                shot_id="shot-upstream",
+                state=QueueTaskState.SUCCEEDED,
+                connection_id="conn-selected",
+                model_id="selected-take-model",
+            )
 
     repo = FakeRepository()
     shot = SimpleNamespace(previous_shot_id="shot-upstream")
@@ -318,6 +331,13 @@ async def test_frame_chain_resolves_only_successful_upstream_config_and_allows_n
         "conn-upstream",
         "model-from-selected-take",
     )
+    # The selected take owns the propagated frame, so it overrides a newer successful task.
+    upstream_shot.selected_take_id = "take-selected"
+    assert await _resolve_frame_chain_generation_config(repo, "project-a", shot) == (
+        "conn-selected",
+        "selected-take-model",
+    )
+    upstream_shot.selected_take_id = None
     assert await _resolve_frame_chain_generation_config(
         repo, "project-a", shot, requested_connection_id="conn-unrelated"
     ) == ("conn-unrelated", "unrelated-success-model")
