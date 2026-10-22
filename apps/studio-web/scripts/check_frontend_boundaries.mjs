@@ -255,10 +255,7 @@ for (const file of collectFiles(srcRoot)) {
   const isUiPrimitive = relative.startsWith("components/ui/");
 
   for (const specifier of collectImportSpecifiers(sourceFile)) {
-    if (
-      specifier === "@muse-studio/contracts" ||
-      specifier.startsWith("@muse-studio/contracts/")
-    ) {
+    if (specifier === "@muse-studio/contracts" || specifier.startsWith("@muse-studio/contracts/")) {
       failures.push(
         `${relative}: import "${specifier}" targets the retired contracts package; use generated OpenAPI types from lib/api/schema.d.ts.`,
       );
