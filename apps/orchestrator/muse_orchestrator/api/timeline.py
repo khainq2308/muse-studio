@@ -16,6 +16,7 @@ from muse_orchestrator.models.domain import (
     TimelineSequenceRecord, TimelineTrackRecord, TimelineClipRecord,
     ExportJobRecord, ExportJobState
 )
+from muse_orchestrator.services import timeline_service
 from muse_orchestrator.services.asset_storage import AssetStorageError, LocalAssetStorage
 from muse_orchestrator.services.timeline_service import (
     ExportClip, TimelineValidationService
@@ -26,6 +27,9 @@ router = APIRouter(prefix="/api/v1/projects/{project_id}/timeline", tags=["M6 Ti
 
 MAX_EXPORT_DIMENSION = 4096
 MIN_EXPORT_DIMENSION = 16
+# Enforced in the handler (not as schema maxItems) so the OpenAPI contract is unchanged.
+MAX_TIMELINE_CLIPS = 500
+MAX_TIMELINE_AUDIO_TRACKS = 32
 
 
 class ClipEditItemIn(BaseModel):
@@ -277,6 +281,26 @@ async def assemble_or_update_timeline(
 
     missing_shot_ids: list[str] = []
     clip_dicts: list[dict[str, Any]] = []
+
+    clip_count = len(payload.custom_clips) if payload.custom_clips is not None else len(shots)
+    if clip_count > MAX_TIMELINE_CLIPS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Timeline vượt giới hạn {MAX_TIMELINE_CLIPS} clip.",
+        )
+    if len(payload.audio_tracks) > MAX_TIMELINE_AUDIO_TRACKS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Timeline vượt giới hạn {MAX_TIMELINE_AUDIO_TRACKS} audio track.",
+        )
+    for position, audio in enumerate(payload.audio_tracks):
+        if audio.asset_id is not None:
+            asset = await repository.get_asset(audio.asset_id)
+            if asset is None or asset.project_id != project_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"audio_tracks[{position}]: asset_id không thuộc dự án này.",
+                )
 
     if payload.custom_clips is not None:
         # Người dùng chủ động truyền danh sách clip đã trim/reorder/gap test
@@ -624,6 +648,11 @@ async def launch_ffmpeg_export(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Không thể export vì còn clip thiếu video: " + "; ".join(unresolved),
+        )
+    if len(clips) > timeline_service.MAX_EXPORT_CLIPS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Timeline vượt giới hạn export {timeline_service.MAX_EXPORT_CLIPS} clip.",
         )
     unsupported = _unsupported_export_features(seq)
 

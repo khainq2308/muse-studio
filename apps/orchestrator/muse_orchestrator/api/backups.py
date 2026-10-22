@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -11,7 +12,8 @@ from pydantic import BaseModel, Field
 from muse_orchestrator.api.dependencies import get_backup_service
 from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.models.domain import BackupRecord
-from muse_orchestrator.services.backup_service import BACKUP_MAX_BYTES, BackupService
+from muse_orchestrator.services import backup_service as backup_module
+from muse_orchestrator.services.backup_service import BackupService
 
 router = APIRouter(tags=["Backups"])
 
@@ -117,10 +119,7 @@ async def download_backup(
     service: BackupService = Depends(get_backup_service),
 ) -> FileResponse:
     """M7: download the backup ZIP file."""
-    record = await service.repository.get_backup_record(backup_id)
-    if record is None:
-        raise ApplicationError(404, "Backup not found.")
-    path = service.backup_file_path(record)
+    record, path = await service.get_backup_download(backup_id)
     return FileResponse(
         path=str(path),
         filename=record.filename,
@@ -155,9 +154,9 @@ async def restore_backup(
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > BACKUP_MAX_BYTES:
+                if total > backup_module.backup_limits().max_archive_bytes:
                     raise ApplicationError(413, "Backup file exceeds the 500MB limit.")
-                target.write(chunk)
+                await asyncio.to_thread(target.write, chunk)
 
         project, report = await service.restore_backup(temporary_path, project_name=project_name)
     finally:

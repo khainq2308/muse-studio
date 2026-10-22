@@ -1,12 +1,18 @@
 from __future__ import annotations
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
+import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
+
+from muse_orchestrator.core.config import settings
 
 ASPECT_RESOLUTION_MAP: dict[str, str] = {
     "16:9": "1920x1080",
@@ -20,9 +26,44 @@ _SAFE_RES_RE = re.compile(r"^\d{2,4}x\d{2,4}$")
 # Thresholds shared with analyze_clips_and_detect_anomalies.
 _GAP_TOLERANCE_SECONDS = 0.05
 _MIN_TRANSITION_MARGIN_SECONDS = 0.05
-_FFMPEG_TIMEOUT_SECONDS = 1800.0
-_FFPROBE_TIMEOUT_SECONDS = 60.0
+# ARCH-005: limits come from Settings (env EXPORT_FFMPEG_TIMEOUT_SECONDS,
+# EXPORT_FFPROBE_TIMEOUT_SECONDS, EXPORT_MAX_DURATION_SECONDS, EXPORT_MAX_CLIPS).
+_FFMPEG_TIMEOUT_SECONDS = float(settings.export_ffmpeg_timeout_seconds)
+_FFPROBE_TIMEOUT_SECONDS = float(settings.export_ffprobe_timeout_seconds)
 _STDERR_TAIL_CHARS = 800
+# Hard caps for one export render; restored or tampered timelines must not be able
+# to request an unbounded encode (e.g. a 10^7 s black gap).
+MAX_EXPORT_DURATION_SECONDS = float(settings.export_max_duration_seconds)
+MAX_EXPORT_CLIPS = int(settings.export_max_clips)
+# A verified output may differ from the plan by max(0.5 s, 1 %): enough for codec
+# frame rounding, small enough to catch a dropped or duplicated clip.
+_VERIFY_MIN_TOLERANCE_SECONDS = 0.5
+_VERIFY_RELATIVE_TOLERANCE = 0.01
+_CANCEL_POLL_SECONDS = 0.25
+# ARCH-005: total wall-clock budget build_export_plan may spend probing source clips.
+# One ARQ export job covers source probing + the FFmpeg render + output verification
+# (two FFprobe calls). Settings guarantees job timeout > render + verification; half of
+# the remaining slack goes to source probing, the other half stays as headroom for
+# DB/filesystem work, so per-clip probing can never push the job past its ARQ timeout.
+_EXPORT_PROBE_BUDGET_SECONDS = max(
+    0.0,
+    (
+        float(settings.export_job_timeout_seconds)
+        - _FFMPEG_TIMEOUT_SECONDS
+        - float(settings.export_verify_budget_seconds)
+    )
+    / 2.0,
+)
+
+
+def _finite(value: Any, label: str, position: int) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ExportError(f"Clip #{position}: {label} is not a number.") from exc
+    if not math.isfinite(number):
+        raise ExportError(f"Clip #{position}: {label} must be a finite number.")
+    return number
 
 
 class ExportError(Exception):
@@ -41,6 +82,14 @@ class ExportError(Exception):
         self.status_code = status_code
         self.ffmpeg_args = ffmpeg_args or []
         self.probe_meta = probe_meta or {}
+
+
+class ExportCanceledError(ExportError):
+    """The render was cancelled by the caller; the child FFmpeg was killed and output removed."""
+
+    def __init__(self, message: str = "Export was cancelled.", **kwargs: Any) -> None:
+        kwargs.setdefault("status_code", 409)
+        super().__init__(message, **kwargs)
 
 
 @dataclass
@@ -144,6 +193,8 @@ class TimelineValidationService:
         output_path: str,
         fps: int,
         resolution: str,
+        *,
+        probe_budget_seconds: float | None = None,
     ) -> ExportPlan:
         """
         Build an FFmpeg argv (list[str], never a shell string) that assembles the real clips:
@@ -155,9 +206,45 @@ class TimelineValidationService:
 
         Clip audio is not mixed: the output carries a silent AAC track. Callers must tell the
         user about every timeline feature that is not rendered.
+
+        Source clips are probed with FFprobe under one overall deadline
+        (``probe_budget_seconds``, default ``_EXPORT_PROBE_BUDGET_SECONDS``); each probe gets
+        at most the remaining budget and ExportError(504) is raised once it is exhausted.
         """
         if not clips:
             raise ExportError("Timeline không có clip video nào có asset hợp lệ để export.")
+        if len(clips) > MAX_EXPORT_CLIPS:
+            raise ExportError(f"Timeline có {len(clips)} clip, vượt giới hạn export {MAX_EXPORT_CLIPS} clip.")
+        # Reject NaN/Infinity before any arithmetic: restored rows bypass API validation.
+        clips = [
+            ExportClip(
+                path=clip.path,
+                effective_duration=_finite(clip.effective_duration, "effective_duration", position),
+                trim_start=_finite(clip.trim_start, "trim_start", position),
+                transition_type=clip.transition_type,
+                transition_duration=_finite(clip.transition_duration, "transition_duration", position),
+                start_time=(
+                    None if clip.start_time is None else _finite(clip.start_time, "start_time", position)
+                ),
+            )
+            for position, clip in enumerate(clips, start=1)
+        ]
+        max_duration = float(MAX_EXPORT_DURATION_SECONDS)
+        probe_budget = _EXPORT_PROBE_BUDGET_SECONDS if probe_budget_seconds is None else float(probe_budget_seconds)
+        probe_deadline: float | None = None  # started lazily at the first real probe
+
+        def probe_timeout(position: int) -> float:
+            nonlocal probe_deadline
+            if probe_deadline is None:
+                probe_deadline = time.monotonic() + max(0.0, probe_budget)
+            remaining = probe_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ExportError(
+                    f"FFprobe source-clip probing exceeded its {probe_budget:.0f}s budget "
+                    f"at clip #{position}; export aborted.",
+                    status_code=504,
+                )
+            return min(_FFPROBE_TIMEOUT_SECONDS, remaining)
 
         safe_res = cls.resolve_resolution("", resolution)
         width, height = (int(v) for v in safe_res.split("x"))
@@ -198,6 +285,10 @@ class TimelineValidationService:
             return label
 
         def append_segment(label: str, duration: float, dissolve: float) -> None:
+            if state["end"] + duration - dissolve > max_duration:
+                raise ExportError(
+                    f"Timeline dài hơn giới hạn export {max_duration:.0f}s; hãy rút ngắn timeline."
+                )
             if state["acc"] is None:
                 state["acc"], state["end"], state["last"] = label, duration, duration
                 return
@@ -217,9 +308,17 @@ class TimelineValidationService:
         notes: list[str] = []
         for position, clip in enumerate(clips, start=1):
             duration = max(0.1, round(float(clip.effective_duration), 3))
+            if duration > max_duration or abs(clip.trim_start) > max_duration:
+                raise ExportError(f"Clip #{position} dài hơn giới hạn export {max_duration:.0f}s.")
             if clip.path and os.path.isfile(clip.path) and shutil.which("ffprobe"):
                 req_span = round(max(0.0, float(clip.trim_start)) + duration, 3)
-                ok_probe, actual_v_dur = cls._probe_video_stream_duration(clip.path)
+                ok_probe, actual_v_dur = cls._probe_video_stream_duration(
+                    clip.path, timeout=probe_timeout(position)
+                )
+                if not ok_probe:
+                    # A probe cut short by the overall budget must not be read as "duration
+                    # unknown, carry on": fail the export instead of skipping the check.
+                    probe_timeout(position)
                 if ok_probe and actual_v_dur is not None and (actual_v_dur + 0.15) < req_span:
                     raise ExportError(
                         f"Source video stream for clip #{position} is shorter ({actual_v_dur:.2f}s) "
@@ -234,6 +333,10 @@ class TimelineValidationService:
                 # > 0 is a real gap on the timeline, < 0 is an overlap with the previous clip.
                 # The transition is not part of the gap; it only exists where clips overlap.
                 lead = round(float(clip.start_time) - state["end"], 3)
+                if state["end"] + lead > max_duration:
+                    raise ExportError(
+                        f"Clip #{position} bắt đầu sau giới hạn export {max_duration:.0f}s."
+                    )
                 if lead > _GAP_TOLERANCE_SECONDS:
                     append_segment(add_black(lead), lead, 0.0)
                     dissolve = 0.0
@@ -279,6 +382,8 @@ class TimelineValidationService:
             )), duration, dissolve)
 
         expected = round(float(state["end"]), 3)
+        if expected > max_duration:
+            raise ExportError(f"Timeline dài hơn giới hạn export {max_duration:.0f}s.")
         audio_idx = state["inputs"]
         inputs.extend([
             "-f", "lavfi", "-t", f"{expected:.3f}",
@@ -330,7 +435,9 @@ class TimelineValidationService:
             return float(fallback)
 
     @classmethod
-    def _probe_video_stream_duration(cls, file_path: str, fallback_fps: float = 24.0) -> tuple[bool, float | None]:
+    def _probe_video_stream_duration(
+        cls, file_path: str, fallback_fps: float = 24.0, *, timeout: float | None = None
+    ) -> tuple[bool, float | None]:
         if not shutil.which("ffprobe") or not os.path.isfile(file_path):
             return False, None
         cmd = [
@@ -339,7 +446,13 @@ class TimelineValidationService:
             "-of", "json", str(file_path),
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_FFPROBE_TIMEOUT_SECONDS)
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_FFPROBE_TIMEOUT_SECONDS if timeout is None else timeout,
+            )
         except (OSError, subprocess.TimeoutExpired):
             return False, None
         if proc.returncode != 0:
@@ -434,7 +547,7 @@ class TimelineValidationService:
         except (TypeError, ValueError):
             duration = 0.0
         meta["duration_seconds"] = round(duration, 3)
-        tolerance = max(0.5, plan.expected_duration * 0.05)
+        tolerance = max(_VERIFY_MIN_TOLERANCE_SECONDS, plan.expected_duration * _VERIFY_RELATIVE_TOLERANCE)
         if duration <= 0:
             problems.append("Output duration could not be read.")
         elif abs(duration - plan.expected_duration) > tolerance:
@@ -463,12 +576,19 @@ class TimelineValidationService:
         fps: int,
         resolution: str,
         clips: list[ExportClip],
+        cancel_event: threading.Event | None = None,
+        timeout_seconds: float | None = None,
     ) -> tuple[str, int, str, list[str], dict[str, Any]]:
         """
         Really render the timeline with FFmpeg and verify the result with FFprobe.
 
         Raises ExportError when FFmpeg/FFprobe are missing, FFmpeg fails, or the output does not
         match the plan. It never fabricates an MP4 or reports an unverified file as valid.
+
+        Blocking; call it from a worker thread. ``cancel_event`` (optional) lets the caller
+        stop the render: once it is set the FFmpeg child is killed, the partial output is
+        removed and ExportCanceledError is raised. ``timeout_seconds`` overrides the default
+        render deadline (ExportError 504 on expiry).
         """
         if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
             raise ExportError(
@@ -480,25 +600,31 @@ class TimelineValidationService:
         out_path = os.path.join(output_dir, f"{export_id}.mp4")
         plan = cls.build_export_plan(clips, out_path, fps, resolution)
 
+        deadline = float(timeout_seconds) if timeout_seconds is not None else _FFMPEG_TIMEOUT_SECONDS
         try:
-            proc = subprocess.run(
-                plan.args, capture_output=True, text=True, check=False, timeout=_FFMPEG_TIMEOUT_SECONDS
-            )
+            returncode, stderr = cls._run_render(plan.args, deadline, cancel_event)
         except subprocess.TimeoutExpired as exc:
             cls._discard(out_path)
             raise ExportError("FFmpeg bị quá thời gian khi export.", status_code=504, ffmpeg_args=plan.args) from exc
+        except ExportCanceledError as exc:
+            cls._discard(out_path)
+            exc.ffmpeg_args = plan.args
+            raise
         except OSError as exc:
             cls._discard(out_path)
             raise ExportError(
                 f"Không chạy được FFmpeg: {type(exc).__name__}.", status_code=503, ffmpeg_args=plan.args
             ) from exc
 
-        if proc.returncode != 0 or not os.path.isfile(out_path):
+        if returncode != 0 or not os.path.isfile(out_path):
             cls._discard(out_path)
             raise ExportError(
-                f"FFmpeg export thất bại (exit {proc.returncode}): {cls._stderr_tail(proc.stderr)}",
+                f"FFmpeg export thất bại (exit {returncode}): {cls._stderr_tail(stderr)}",
                 ffmpeg_args=plan.args,
             )
+        if cancel_event is not None and cancel_event.is_set():
+            cls._discard(out_path)
+            raise ExportCanceledError(ffmpeg_args=plan.args)
 
         try:
             probe_meta = cls.verify_output(out_path, plan)
@@ -523,6 +649,48 @@ class TimelineValidationService:
                 digest.update(chunk)
                 size += len(chunk)
         return out_path, size, digest.hexdigest(), plan.args, probe_meta
+
+    @staticmethod
+    def _run_render(
+        args: list[str], timeout_seconds: float, cancel_event: threading.Event | None
+    ) -> tuple[int, str]:
+        """Run FFmpeg (argv list, no shell) and return (returncode, stderr text).
+
+        Without a cancel event this is a plain subprocess.run with a timeout. With one,
+        the child is polled and killed as soon as the event is set or the deadline passes,
+        so a cancelled worker job never leaves a stray FFmpeg process behind.
+        """
+        if cancel_event is None:
+            proc = subprocess.run(args, capture_output=True, text=True, check=False, timeout=timeout_seconds)
+            return proc.returncode, proc.stderr or ""
+        if cancel_event.is_set():
+            raise ExportCanceledError()
+        # stderr goes to a temp file so a chatty child can never block on a full pipe.
+        with tempfile.TemporaryFile(mode="w+b") as stderr_file:
+            child = subprocess.Popen(
+                args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=stderr_file
+            )
+            try:
+                deadline = time.monotonic() + timeout_seconds
+                while True:
+                    try:
+                        returncode = child.wait(timeout=_CANCEL_POLL_SECONDS)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
+                    if cancel_event.is_set():
+                        raise ExportCanceledError()
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(args, timeout_seconds)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+            stderr_file.seek(0)
+            # Only the tail is ever reported; never read an unbounded log into memory.
+            stderr_file.seek(max(0, os.fstat(stderr_file.fileno()).st_size - 64 * 1024))
+            stderr = stderr_file.read().decode("utf-8", errors="replace")
+        return returncode, stderr
 
     @staticmethod
     def _discard(path: str) -> None:
