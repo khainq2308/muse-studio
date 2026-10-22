@@ -36,12 +36,33 @@ Columns: local time, request, HTTP status, task status, task duration (ms), task
 | 03:32:48 | POST /v1/videos | 200 | failed | 608571 | video generation timed out |
 | 03:42:57 | POST /v1/images/generations | 200 | - (async; the log does not record image task status, the test observed `succeeded`) | - | - |
 
+## Third run (gateway restarted with `MUSE2API_VIDEO_TIMEOUT=1200`, real first frame)
+
+Run 03:47:36–03:51:30, gateway PID unchanged during the run: **3 passed** in 233.6 s.
+
+| Test | Result | Observation |
+| --- | --- | --- |
+| `test_live_health_and_models` | passed | as above |
+| `test_live_video_round_trip` | passed | `POST /v1/videos` at 03:47:37 (`duration: 4` from a 4.5 s shot, `size: "16:9"`, `image` = 1280x720 PNG data URI) → polled `GET /v1/videos/{id}` → `result.url` → downloaded through the adapter → ffprobe: H.264, 1920x1080, 30 fps, 4.000 s, 1,224,090 bytes. |
+| `test_live_image_round_trip` | passed | WebP image, 503,070 bytes. |
+
+### First-frame conditioning: not applied
+
+The first decoded frame of the generated video shows a red fox running through snow (the
+text prompt) and has no visual relation to the submitted first frame (an ffmpeg
+`testsrc2` colour-bar pattern). At `949f326` the browser driver
+(`src/muse2api/drivers/browser/driver.py`, `generate_video` / `_media_prompt`) only
+attaches the image to a chat message reading `Generate a video (aspect ratio 16:9,
+4 seconds long): <prompt>`; it never instructs muse.ai to use the image as the first
+frame, and muse.ai ignored it in this run. Frame chaining through this gateway therefore
+does not produce visual continuity.
+
 ## Known limitations
 
-- The failed video runs used an undecodable 72-byte placeholder PNG as the first frame and,
-  in the second run, a concurrent text-to-video request on the same account. The test now
-  sends a real 1280x720 PNG; video generation, video download and first-frame conditioning
-  remain **unverified** until a run passes.
+- The first two video runs failed for environmental reasons (a gateway restart, then the
+  default 600 s gateway timeout with an undecodable placeholder first frame and a
+  concurrent video on the same account); the third run passed with a 1200 s gateway
+  timeout and a real first frame.
 - A separate operator text-to-video request sent with curl (not through the adapter)
   completed in ~175 s and produced a decodable H.264 1920x1080 5.0 s MP4. It shows the
   gateway and account can render video, not that the adapter's image-to-video path works.
