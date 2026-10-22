@@ -11,7 +11,7 @@
     "gen:api:check": "openapi-typescript ../orchestrator/openapi.json -o src/lib/api/schema.d.ts --check",
     "lint": "eslint . --max-warnings 0 && node scripts/check_frontend_boundaries.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format:check": "prettier --check . || (prettier src/lib/api/client.ts | diff -u src/lib/api/client.ts -; exit 1)",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test"
