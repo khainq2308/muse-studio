@@ -46,7 +46,11 @@ MUSE2API_CONTRACT_REQUIRE=1 MUSE2API_CONTRACT_REQUIRE_MP4=1 MUSE2API_CONTRACT_TI
 ```
 
 `MUSE2API_CONTRACT_REQUIRE_MP4=1` additionally requires the downloaded video to decode
-with ffprobe. One run creates one paid video and one image on the account.
+with ffprobe. One run creates one paid video and one image on the account. The video
+test sends a real 1280x720 first frame (image-to-video), which is slower than
+text-to-video; if the gateway reports `upstream_timeout`, raise `MUSE2API_VIDEO_TIMEOUT`
+in muse2api's `.env` (default 600 s) and avoid running other videos on the same account
+at the same time.
 
 ## 4. Record the evidence
 

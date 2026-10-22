@@ -133,6 +133,19 @@ if os.environ.get("MUSE2API_CONTRACT_REQUIRE") == "1" and not (LIVE_URL and LIVE
 live = pytest.mark.skipif(not (LIVE_URL and LIVE_KEY), reason="MUSE2API_CONTRACT_URL/KEY not set")
 
 
+def _decodable_first_frame(tmp_path) -> str:
+    """A real 1280x720 PNG; a real gateway may stall on an undecodable placeholder."""
+    if not shutil.which("ffmpeg"):
+        return PNG_DATA_URI
+    frame = tmp_path / "first_frame.png"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=1",
+         "-frames:v", "1", str(frame)],
+        check=True, timeout=60,
+    )
+    return "data:image/png;base64," + base64.b64encode(frame.read_bytes()).decode()
+
+
 async def _poll(adapter: Muse2ApiAdapter, task_id: str, timeout: float):
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
@@ -156,7 +169,8 @@ async def test_live_video_round_trip(www222fff, tmp_path) -> None:
     adapter = Muse2ApiAdapter(LIVE_URL, LIVE_KEY)
     task = await adapter.generate_video(VideoGenerationRequest(
         shot_id="contract", prompt="A red fox runs through snow", model_id="muse-video",
-        duration_seconds=4.5, first_frame_url=PNG_DATA_URI, idempotency_key="contract-video",
+        duration_seconds=4.5, first_frame_url=_decodable_first_frame(tmp_path),
+        idempotency_key="contract-video",
     ))
     status = await _poll(adapter, task.external_task_id, timeout=float(os.environ.get("MUSE2API_CONTRACT_TIMEOUT", "900")))
     assert status.status == "succeeded", status.error_message
