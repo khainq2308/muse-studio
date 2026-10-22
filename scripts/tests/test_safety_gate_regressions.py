@@ -131,7 +131,8 @@ class LayeringCheckerRegressionTests(unittest.TestCase):
             "async def endpoint(connection: DatabaseSession):\n"
             "    await connection.commit()\n"
         )
-        self.assertEqual(self.count(source), 1)
+        # One site for the injected session parameter plus one for the DB call.
+        self.assertEqual(self.count(source), 2)
 
     def test_detects_database_session_access_through_alias(self):
         source = (
@@ -139,14 +140,16 @@ class LayeringCheckerRegressionTests(unittest.TestCase):
             "    storage = database\n"
             "    await storage.refresh(entity)\n"
         )
-        self.assertEqual(self.count(source), 1)
+        # One site for the injected session parameter plus one for the DB call.
+        self.assertEqual(self.count(source), 2)
 
     def test_detects_untyped_session_parameter_injected_by_get_db(self):
         source = (
             "async def endpoint(unit=Depends(get_db)):\n"
             "    await unit.rollback()\n"
         )
-        self.assertEqual(self.count(source), 1)
+        # One site for the injected session parameter plus one for the DB call.
+        self.assertEqual(self.count(source), 2)
 
 
     def test_detects_session_reached_through_repository_attribute(self):
@@ -166,6 +169,11 @@ class LayeringCheckerRegressionTests(unittest.TestCase):
             "    await repository.get_project(project_id)\n"
         )
         self.assertEqual(self.count(source), 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "route.py"
+            path.write_text(source, encoding="utf-8")
+            # Pass-through is tracked as a separately ratcheted metric.
+            self.assertEqual(self.checker.count_passthrough(path), 2)
 
 
 class StopGateBaselineRegressionTests(unittest.TestCase):

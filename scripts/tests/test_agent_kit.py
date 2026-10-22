@@ -369,7 +369,11 @@ class LayeringBaselineTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             result = self.module.main(["--update-baseline"])
         self.assertEqual(result, 0)
-        self.assertEqual(json.loads(self.module.BASELINE.read_text()), {"projects.py": 0})
+        # A legacy flat baseline is migrated to the per-metric format on update.
+        self.assertEqual(
+            json.loads(self.module.BASELINE.read_text()),
+            {"direct_db": {"projects.py": 0}, "session_passthrough": {"projects.py": 0}},
+        )
 
 
 class StopGateTests(unittest.TestCase):
