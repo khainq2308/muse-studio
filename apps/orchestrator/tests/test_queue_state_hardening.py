@@ -170,6 +170,52 @@ async def test_worker_completion_enqueues_ready_frame_chain_downstream(client: A
     assert (await _shots(client, pid))[s2["id"]]["generation_state"] == "queued"
 
 
+@pytest.mark.asyncio
+async def test_worker_never_auto_enqueues_frame_chain_shot_with_lint_blocker(client: AsyncClient):
+    pid, cid, s1, s2 = await _setup(client)
+    await client.patch(f"/api/v1/projects/{pid}/shots/{s2['id']}", json={"continuity_mode": "frame_chain"})
+    launch = (await client.post(f"/api/v1/projects/{pid}/batch/launch", json={"connection_id": cid})).json()
+    assert launch["blocked_shot_ids"] == [s2["id"]]
+    # CAMERA_MOTION_CONFLICT is a linter blocker that is not a BLOCKED_REFERENCE code.
+    patched = (await client.patch(
+        f"/api/v1/projects/{pid}/shots/{s2['id']}",
+        json={"camera_motion": "static", "action": "Quick dolly toward the hero"},
+    )).json()
+    assert [i["code"] for i in patched["lint_report"] if i["severity"] == "blocker"] == ["CAMERA_MOTION_CONFLICT"]
+
+    redis = _FakeArqPool()
+    result: dict = {}
+    for _ in range(8):
+        result = await queue_worker.process_generation_task_step({"redis": redis}, launch["enqueued_task_ids"][0])
+        if result["state"] == "succeeded":
+            break
+    assert result["state"] == "succeeded"
+    assert result["auto_enqueued_task_ids"] == []
+
+    await _ticks(client, pid)
+    assert await _tasks_for_shot(s2["id"]) == []
+    assert (await _shots(client, pid))[s2["id"]]["generation_state"] == "blocked_reference"
+
+    # Recompiling (another PATCH) must keep the shot blocked while any blocker remains.
+    await client.patch(f"/api/v1/projects/{pid}/shots/{s2['id']}", json={"shot_size": "wide"})
+    assert (await _shots(client, pid))[s2["id"]]["generation_state"] == "blocked_reference"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_paths_share_the_lint_blocker_guard(client: AsyncClient):
+    pid, cid, s1, _ = await _setup(client)
+    await client.patch(
+        f"/api/v1/projects/{pid}/shots/{s1['id']}",
+        json={"camera_motion": "static", "action": "Quick dolly toward the hero"},
+    )
+    async with STATE["maker"]() as db:
+        shot = await db.get(ShotRecord, s1["id"])
+        assert await GenerationQueueService.check_enqueue_preconditions(db, shot) is not None
+    r = await client.post("/api/v1/queue/tasks", json={"shot_id": s1["id"], "connection_id": cid})
+    assert r.status_code == 422, r.text
+    assert await _tasks_for_shot(s1["id"]) == []
+
+
 # --- BUG-002: forced re-render never strands downstream as BLOCKED_UPSTREAM_FRAME --------
 
 

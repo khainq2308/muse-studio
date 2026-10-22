@@ -476,10 +476,20 @@ class GenerationQueueService:
         return asset is not None and asset.project_id == upstream.project_id
 
     @staticmethod
+    def lint_blocker_message(shot: ShotRecord) -> str | None:
+        """Every Prompt Linter blocker (not only BLOCKED_REFERENCE) forbids provider dispatch."""
+        blockers = [i for i in (shot.lint_report_json or []) if i.get("severity") == "blocker"]
+        if not blockers:
+            return None
+        return f"Shot còn lỗi Blocker từ Prompt Linter: {blockers[0].get('code')}."
+
+    @staticmethod
     async def check_enqueue_preconditions(db: AsyncSession, shot: ShotRecord) -> str | None:
         """Side-effect-free version of the enqueue guards; returns an error message or None."""
         if shot.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
             return "Shot đang ở trạng thái BLOCKED_REFERENCE (thiếu file tham chiếu bắt buộc)."
+        if (message := GenerationQueueService.lint_blocker_message(shot)) is not None:
+            return message
         if shot.continuity_mode == "frame_chain" and shot.previous_shot_id and not shot.first_frame_asset_id:
             prev_shot = await db.get(ShotRecord, shot.previous_shot_id)
             if not await GenerationQueueService.upstream_has_valid_last_frame(db, prev_shot):
@@ -635,6 +645,11 @@ class GenerationQueueService:
     ) -> tuple[GenerationTaskRecord, bool]:
         if shot.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
             raise ValueError("Shot đang ở trạng thái BLOCKED_REFERENCE (thiếu file tham chiếu bắt buộc).")
+        if (message := GenerationQueueService.lint_blocker_message(shot)) is not None:
+            # Same state batch launch assigns to any linter blocker.
+            shot.generation_state = ShotGenerationState.BLOCKED_REFERENCE
+            await db.commit()
+            raise ValueError(message)
 
         # Kiểm tra Frame Chaining: Nếu cần nối từ shot trước mà shot trước chưa có last_frame_asset_id -> Chặn!
         if shot.continuity_mode == "frame_chain" and shot.previous_shot_id and not shot.first_frame_asset_id:

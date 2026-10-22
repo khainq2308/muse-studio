@@ -297,7 +297,8 @@ async def _compile_project_shots(
         s.lint_report_json = lint
         if any(i.code == "BLOCKED_REFERENCE" for i in compiled.lint_issues):
             s.generation_state = ShotGenerationState.BLOCKED_REFERENCE
-        elif s.generation_state == ShotGenerationState.BLOCKED_REFERENCE:
+        elif s.generation_state == ShotGenerationState.BLOCKED_REFERENCE and not compiled.has_blockers:
+            # Only unblock once no linter blocker remains (batch launch uses this state for all).
             s.generation_state = ShotGenerationState.NOT_STARTED
 
     if dry_run_overrides is not None:
