@@ -203,7 +203,12 @@ _ERROR_RESPONSE_DESCRIPTIONS = {
     504: "Upstream timeout",
 }
 _COMMON_ERROR_RESPONSES = {
-    code: {"model": ErrorEnvelope, "description": description}
+    code: {
+        "model": ErrorEnvelope,
+        "description": description,
+        # Make the actual JSON error payload explicit in OpenAPI as well as at runtime.
+        "content": {"application/json": {}},
+    }
     for code, description in _ERROR_RESPONSE_DESCRIPTIONS.items()
 }
 app.include_router(projects_router, dependencies=_protected_dependencies, responses=_COMMON_ERROR_RESPONSES)
