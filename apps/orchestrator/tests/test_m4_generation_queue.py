@@ -262,3 +262,164 @@ async def test_dispatch_lease_prevents_duplicate_provider_submit(tmp_path, monke
         release.set()
         await engine.dispose()
 
+
+
+async def _create_queue_test_tasks(client: AsyncClient, *, project_name: str, shot_count: int):
+    project_response = await client.post("/api/v1/projects", json={"name": project_name})
+    assert project_response.status_code == 201, project_response.text
+    project_id = project_response.json()["id"]
+
+    connection_response = await client.post(
+        "/api/v1/connections",
+        json={
+            "name": f"{project_name}-connection",
+            "provider_type": "mock",
+            "base_url": "http://localhost:8080",
+            "max_concurrency": 5,
+        },
+    )
+    assert connection_response.status_code == 201, connection_response.text
+    connection_id = connection_response.json()["id"]
+
+    script = "SCENE 1: Queue API\\n" + "\\n".join(
+        f"SHOT {index}: Shot {index}\\n- Action: A subject moves {index}"
+        for index in range(1, shot_count + 1)
+    )
+    import_response = await client.post(
+        f"/api/v1/projects/{project_id}/scripts/import",
+        json={"raw_content": script, "auto_apply_proposal": True},
+    )
+    assert import_response.status_code == 200, import_response.text
+    shots = (await client.get(f"/api/v1/projects/{project_id}/shots")).json()
+    assert len(shots) == shot_count
+
+    tasks = []
+    for index, shot in enumerate(shots, start=1):
+        response = await client.post(
+            "/api/v1/queue/tasks",
+            json={
+                "shot_id": shot["id"],
+                "connection_id": connection_id,
+                "idempotency_key": f"{project_name}-task-{index}",
+            },
+        )
+        assert response.status_code == 201, response.text
+        tasks.append(response.json())
+    return project_id, shots, tasks
+
+
+@pytest.mark.asyncio
+async def test_queue_task_pagination_summary_and_admin_read_access(client: AsyncClient):
+    from fastapi import Header, HTTPException
+    from muse_orchestrator.core.security import verify_single_admin
+
+    project_id, shots, _tasks = await _create_queue_test_tasks(
+        client, project_name="Queue Pagination", shot_count=3
+    )
+
+    async def require_test_admin(
+        x_studio_admin_token: str | None = Header(default=None),
+    ) -> str:
+        if x_studio_admin_token != "test-admin-token":
+            raise HTTPException(status_code=401, detail="Admin token required.")
+        return "test-admin"
+
+    app.dependency_overrides[verify_single_admin] = require_test_admin
+    headers = {"X-Studio-Admin-Token": "test-admin-token"}
+    try:
+        anonymous_tasks = await client.get("/api/v1/queue/tasks", params={"project_id": project_id})
+        anonymous_takes = await client.get(f"/api/v1/queue/shots/{shots[0]['id']}/takes")
+        assert anonymous_tasks.status_code == 401
+        assert anonymous_takes.status_code == 401
+
+        first_response = await client.get(
+            "/api/v1/queue/tasks",
+            params={"project_id": project_id, "limit": 2, "offset": 0},
+            headers=headers,
+        )
+        assert first_response.status_code == 200, first_response.text
+        first_page = first_response.json()
+        assert len(first_page["items"]) == 2
+        assert first_page["total"] == 3
+        assert first_page["limit"] == 2
+        assert first_page["offset"] == 0
+        assert first_page["has_more"] is True
+        assert first_page["summary"] == {
+            "total_tasks": 3,
+            "active_tasks": 3,
+            "failed_tasks": 0,
+        }
+
+        second_response = await client.get(
+            "/api/v1/queue/tasks",
+            params={"project_id": project_id, "limit": 2, "offset": 2},
+            headers=headers,
+        )
+        assert second_response.status_code == 200, second_response.text
+        second_page = second_response.json()
+        assert len(second_page["items"]) == 1
+        assert second_page["total"] == 3
+        assert second_page["has_more"] is False
+        assert {
+            task["id"] for task in first_page["items"] + second_page["items"]
+        } == {task["id"] for task in _tasks}
+
+        filtered_response = await client.get(
+            "/api/v1/queue/tasks",
+            params={"project_id": project_id, "state": "failed", "limit": 2, "offset": 0},
+            headers=headers,
+        )
+        assert filtered_response.status_code == 200
+        filtered_page = filtered_response.json()
+        assert filtered_page["items"] == []
+        assert filtered_page["total"] == 0
+        # Summary cards are project-level totals and do not shrink with the selected filter.
+        assert filtered_page["summary"]["total_tasks"] == 3
+        assert filtered_page["summary"]["active_tasks"] == 3
+
+        invalid_limit = await client.get(
+            "/api/v1/queue/tasks",
+            params={"project_id": project_id, "limit": 101},
+            headers=headers,
+        )
+        assert invalid_limit.status_code == 422
+
+        authorized_takes = await client.get(
+            f"/api/v1/queue/shots/{shots[0]['id']}/takes",
+            headers=headers,
+        )
+        assert authorized_takes.status_code == 200
+    finally:
+        app.dependency_overrides.pop(verify_single_admin, None)
+
+
+@pytest.mark.asyncio
+async def test_queue_task_action_state_conflicts_are_explicit(client: AsyncClient):
+    _project_id, _shots, tasks = await _create_queue_test_tasks(
+        client, project_name="Queue State Conflicts", shot_count=1
+    )
+    task_id = tasks[0]["id"]
+
+    paused = await client.post(f"/api/v1/queue/tasks/{task_id}/pause")
+    assert paused.status_code == 200
+    assert paused.json()["state"] == "paused"
+
+    repeated_pause = await client.post(f"/api/v1/queue/tasks/{task_id}/pause")
+    assert repeated_pause.status_code == 409
+    assert "paused" in repeated_pause.json()["detail"]
+
+    resumed = await client.post(f"/api/v1/queue/tasks/{task_id}/resume")
+    assert resumed.status_code == 200
+    assert resumed.json()["state"] == "queued"
+
+    repeated_resume = await client.post(f"/api/v1/queue/tasks/{task_id}/resume")
+    assert repeated_resume.status_code == 409
+    assert "queued" in repeated_resume.json()["detail"]
+
+    canceled = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert canceled.status_code == 200
+    assert canceled.json()["state"] == "canceled"
+
+    repeated_cancel = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert repeated_cancel.status_code == 409
+    assert "canceled" in repeated_cancel.json()["detail"]

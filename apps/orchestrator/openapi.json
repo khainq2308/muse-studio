@@ -22,8 +22,8 @@
           },
           "priority": {
             "default": 100,
-            "maximum": 10000.0,
-            "minimum": 0.0,
+            "maximum": 10000,
+            "minimum": 0,
             "title": "Priority",
             "type": "integer"
           },
@@ -204,8 +204,8 @@
           "priority": {
             "anyOf": [
               {
-                "maximum": 10000.0,
-                "minimum": 0.0,
+                "maximum": 10000,
+                "minimum": 0,
                 "type": "integer"
               },
               {
@@ -317,13 +317,13 @@
           },
           "fade_in_seconds": {
             "default": 0.5,
-            "minimum": 0.0,
+            "minimum": 0,
             "title": "Fade In Seconds",
             "type": "number"
           },
           "fade_out_seconds": {
-            "default": 1.0,
-            "minimum": 0.0,
+            "default": 1,
+            "minimum": 0,
             "title": "Fade Out Seconds",
             "type": "number"
           },
@@ -345,8 +345,8 @@
           },
           "volume": {
             "default": 0.8,
-            "maximum": 2.0,
-            "minimum": 0.0,
+            "maximum": 2,
+            "minimum": 0,
             "title": "Volume",
             "type": "number"
           }
@@ -868,16 +868,16 @@
             "title": "Asset Id"
           },
           "fade_in_seconds": {
-            "default": 0.0,
-            "maximum": 10.0,
-            "minimum": 0.0,
+            "default": 0,
+            "maximum": 10,
+            "minimum": 0,
             "title": "Fade In Seconds",
             "type": "number"
           },
           "fade_out_seconds": {
-            "default": 0.0,
-            "maximum": 10.0,
-            "minimum": 0.0,
+            "default": 0,
+            "maximum": 10,
+            "minimum": 0,
             "title": "Fade Out Seconds",
             "type": "number"
           },
@@ -897,8 +897,8 @@
             "title": "Shot Id"
           },
           "source_duration_seconds": {
-            "default": 5.0,
-            "maximum": 600.0,
+            "default": 5,
+            "maximum": 600,
             "minimum": 0.2,
             "title": "Source Duration Seconds",
             "type": "number"
@@ -926,9 +926,9 @@
             "title": "Take Id"
           },
           "transition_duration_seconds": {
-            "default": 0.0,
-            "maximum": 5.0,
-            "minimum": 0.0,
+            "default": 0,
+            "maximum": 5,
+            "minimum": 0,
             "title": "Transition Duration Seconds",
             "type": "number"
           },
@@ -939,21 +939,21 @@
             "type": "string"
           },
           "trim_end_seconds": {
-            "default": 0.0,
-            "minimum": 0.0,
+            "default": 0,
+            "minimum": 0,
             "title": "Trim End Seconds",
             "type": "number"
           },
           "trim_start_seconds": {
-            "default": 0.0,
-            "minimum": 0.0,
+            "default": 0,
+            "minimum": 0,
             "title": "Trim Start Seconds",
             "type": "number"
           },
           "volume": {
-            "default": 1.0,
-            "maximum": 2.0,
-            "minimum": 0.0,
+            "default": 1,
+            "maximum": 2,
+            "minimum": 0,
             "title": "Volume",
             "type": "number"
           }
@@ -1021,8 +1021,8 @@
           },
           "max_concurrency": {
             "default": 2,
-            "maximum": 20.0,
-            "minimum": 1.0,
+            "maximum": 20,
+            "minimum": 1,
             "title": "Max Concurrency",
             "type": "integer"
           },
@@ -1050,9 +1050,9 @@
             "title": "Proxy Display Host"
           },
           "timeout_seconds": {
-            "default": 30.0,
-            "maximum": 120.0,
-            "minimum": 5.0,
+            "default": 30,
+            "maximum": 120,
+            "minimum": 5,
             "title": "Timeout Seconds",
             "type": "number"
           }
@@ -1493,8 +1493,8 @@
           },
           "max_polls": {
             "default": 60,
-            "maximum": 500.0,
-            "minimum": 1.0,
+            "maximum": 500,
+            "minimum": 1,
             "title": "Max Polls",
             "type": "integer"
           },
@@ -1505,8 +1505,8 @@
           },
           "priority": {
             "default": 10,
-            "maximum": 100.0,
-            "minimum": 1.0,
+            "maximum": 100,
+            "minimum": 1,
             "title": "Priority",
             "type": "integer"
           },
@@ -1858,8 +1858,8 @@
           "fps": {
             "anyOf": [
               {
-                "maximum": 60.0,
-                "minimum": 12.0,
+                "maximum": 60,
+                "minimum": 12,
                 "type": "integer"
               },
               {
@@ -2101,9 +2101,9 @@
             "type": "boolean"
           },
           "retention_hours": {
-            "default": 24.0,
-            "maximum": 8760.0,
-            "minimum": 0.0,
+            "default": 24,
+            "maximum": 8760,
+            "minimum": 0,
             "title": "Retention Hours",
             "type": "number"
           }
@@ -2186,9 +2186,9 @@
       "OrphanScanIn": {
         "properties": {
           "retention_hours": {
-            "default": 24.0,
-            "maximum": 8760.0,
-            "minimum": 0.0,
+            "default": 24,
+            "maximum": 8760,
+            "minimum": 0,
             "title": "Retention Hours",
             "type": "number"
           }
@@ -2282,8 +2282,8 @@
           },
           "fps": {
             "default": 24,
-            "maximum": 60.0,
-            "minimum": 12.0,
+            "maximum": 60,
+            "minimum": 12,
             "title": "Fps",
             "type": "integer"
           },
@@ -2791,6 +2791,46 @@
         "title": "QueueTaskOut",
         "type": "object"
       },
+      "QueueTaskPageOut": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QueueTaskOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/QueueTaskSummaryOut"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset",
+          "has_more",
+          "summary"
+        ],
+        "title": "QueueTaskPageOut",
+        "type": "object"
+      },
       "QueueTaskState": {
         "enum": [
           "queued",
@@ -2803,6 +2843,29 @@
         ],
         "title": "QueueTaskState",
         "type": "string"
+      },
+      "QueueTaskSummaryOut": {
+        "properties": {
+          "active_tasks": {
+            "title": "Active Tasks",
+            "type": "integer"
+          },
+          "failed_tasks": {
+            "title": "Failed Tasks",
+            "type": "integer"
+          },
+          "total_tasks": {
+            "title": "Total Tasks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_tasks",
+          "active_tasks",
+          "failed_tasks"
+        ],
+        "title": "QueueTaskSummaryOut",
+        "type": "object"
       },
       "RetryFailedTasksOut": {
         "properties": {
@@ -3650,8 +3713,8 @@
           "fps": {
             "anyOf": [
               {
-                "maximum": 60.0,
-                "minimum": 12.0,
+                "maximum": 60,
+                "minimum": 12,
                 "type": "integer"
               },
               {
@@ -3682,9 +3745,9 @@
             "type": "object"
           },
           "transition_duration_seconds": {
-            "default": 0.0,
-            "maximum": 3.0,
-            "minimum": 0.0,
+            "default": 0,
+            "maximum": 3,
+            "minimum": 0,
             "title": "Transition Duration Seconds",
             "type": "number"
           }
@@ -7981,6 +8044,29 @@
               ],
               "title": "X-Studio-Admin-Token"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -7988,11 +8074,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/QueueTaskOut"
-                  },
-                  "title": "Response List Queue Tasks Api V1 Queue Tasks Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/QueueTaskPageOut"
                 }
               }
             },
