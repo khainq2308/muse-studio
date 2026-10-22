@@ -1960,11 +1960,35 @@ export interface components {
              */
             task_type: "image" | "video";
         };
+        /** QueueTaskPageOut */
+        QueueTaskPageOut: {
+            /** Has More */
+            has_more: boolean;
+            /** Items */
+            items: components["schemas"]["QueueTaskOut"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Summary */
+            summary: components["schemas"]["QueueTaskSummaryOut"];
+            /** Total */
+            total: number;
+        };
         /**
          * QueueTaskState
          * @enum {string}
          */
         QueueTaskState: "queued" | "paused" | "running" | "succeeded" | "failed" | "poll_timeout" | "canceled";
+        /** QueueTaskSummaryOut */
+        QueueTaskSummaryOut: {
+            /** Active Tasks */
+            active_tasks: number;
+            /** Failed Tasks */
+            failed_tasks: number;
+            /** Total Tasks */
+            total_tasks: number;
+        };
         /** RetryFailedTasksOut */
         RetryFailedTasksOut: {
             /** New Task Ids */
@@ -4308,6 +4332,8 @@ export interface operations {
                 state?: components["schemas"]["QueueTaskState"] | null;
                 model_id?: string | null;
                 account_used?: string | null;
+                limit?: number;
+                offset?: number;
             };
             header?: {
                 "x-studio-admin-token"?: string | null;
@@ -4323,7 +4349,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["QueueTaskOut"][];
+                    "application/json": components["schemas"]["QueueTaskPageOut"];
                 };
             };
             /** @description Validation Error */
@@ -4337,7 +4363,7 @@ export interface operations {
             };
         };
     };
-    enqueue_generation_task_api_v1_queue_tasks_post: {
+        enqueue_generation_task_api_v1_queue_tasks_post: {
         parameters: {
             query?: never;
             header?: {

@@ -1,9 +1,12 @@
 import type { components } from "@/lib/api/schema";
 
 export type QueueTask = components["schemas"]["QueueTaskOut"];
+export type QueueTaskPage = components["schemas"]["QueueTaskPageOut"];
 export type QueueTaskState = components["schemas"]["QueueTaskState"];
 export type QueueTaskFilter = QueueTaskState | "all";
 export type QueueTaskAction = "pause" | "resume" | "cancel";
+
+export const QUEUE_TASKS_PAGE_SIZE = 50;
 
 export const QUEUE_TASK_STATES = [
   "queued",
@@ -65,11 +68,13 @@ export function getQueueRefetchInterval(
   states: readonly QueueTaskState[] | undefined,
   elapsedMs: number,
   queryStatus: QueueQueryStatus = states === undefined ? "pending" : "success",
+  projectActiveCount?: number,
 ): number | false {
   if (queryStatus === "error") return false;
 
   const interval = getQueuePollIntervalMs(elapsedMs);
   if (interval === false) return false;
+  if (projectActiveCount !== undefined) return projectActiveCount > 0 ? interval : false;
   if (states && !states.some(isQueueTaskActive)) return false;
   return interval;
 }

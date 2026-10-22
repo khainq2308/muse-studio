@@ -4,6 +4,10 @@ export const queryKeys = {
   connections: (sessionVersion: number) => ["connections", sessionVersion] as const,
   queueTasksPrefix: (sessionVersion: number, projectId: string) =>
     ["queue-tasks", sessionVersion, projectId] as const,
-  queueTasks: (sessionVersion: number, projectId: string, stateFilter: string) =>
-    ["queue-tasks", sessionVersion, projectId, stateFilter] as const,
+  queueTasks: (
+    sessionVersion: number,
+    projectId: string,
+    stateFilter: string,
+    offset: number,
+  ) => ["queue-tasks", sessionVersion, projectId, stateFilter, offset] as const,
 };
