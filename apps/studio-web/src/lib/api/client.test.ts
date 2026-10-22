@@ -5,6 +5,7 @@ import {
   apiGet,
   apiPatch,
   apiPost,
+  apiRequest,
   apiPut,
   apiGetText,
   downloadFile,
@@ -129,7 +130,7 @@ describe("API client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(apiGet("/api/v1/example")).resolves.toEqual({ status: "ok" });
+    await expect(apiGet("/healthz")).resolves.toEqual({ status: "ok" });
   });
 
   it("uses a fallback for whitespace-only validation messages", async () => {
@@ -217,6 +218,19 @@ describe("API client", () => {
     expect((error as Error).message).toBe("Access denied");
   });
 
+  it("substitutes encoded path parameters from the generated OpenAPI template", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiGet("/api/v1/projects/{project_id}/shots", {
+      pathParams: { project_id: "project 42" },
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/v1/projects/project%2042/shots",
+    );
+  });
+
   it("encodes API path parameters as one safe segment", () => {
     expect(encodePathSegment("project-42 with space")).toBe("project-42%20with%20space");
     expect(() => encodePathSegment("..")).toThrow("path separators or dot segments");
@@ -233,7 +247,7 @@ describe("API client", () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(apiGet(path)).rejects.toThrow(/dot segments|path separators|repeated separators/);
+    await expect(apiRequest(path)).rejects.toThrow(/dot segments|path separators|repeated separators/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -353,7 +367,7 @@ describe("API client", () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(apiGet("api/v1/projects")).rejects.toThrow("absolute paths");
+    await expect(apiRequest("api/v1/projects")).rejects.toThrow("absolute paths");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
