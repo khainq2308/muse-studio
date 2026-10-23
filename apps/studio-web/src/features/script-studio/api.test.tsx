@@ -165,6 +165,50 @@ describe("Script Studio hooks", () => {
     });
   });
 
+  it("does not invalidate pipeline queries when saving a draft revision (auto_apply_proposal: false)", async () => {
+    mocks.apiPost.mockResolvedValue({
+      revision_id: "scr_rev02",
+      version_number: 2,
+      raw_content_preserved: true,
+      diff_summary: "Detected 1 scene and 2 shots.",
+      detected_characters: 1,
+      detected_locations: 1,
+      detected_scenes: 1,
+      generated_shots: 0,
+      warnings: [],
+    });
+    const { invalidate, wrapper } = setup();
+    const { result } = renderHook(() => useImportScript("project-1"), { wrapper });
+
+    const request = {
+      raw_content: "SCENE 1: Alley\nSHOT 1: Arrival",
+      source_format: "museflow",
+      auto_apply_proposal: false,
+      replace_existing: false,
+    };
+
+    act(() => result.current.mutate(request));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mocks.apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/{project_id}/scripts/import",
+      request,
+      { pathParams: { project_id: "project-1" } },
+    );
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: queryKeys.projects(sessionVersion),
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: queryKeys.storyBible(sessionVersion, "project-1"),
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: queryKeys.projectShots(sessionVersion, "project-1"),
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: queryKeys.shotTakesPrefix(sessionVersion, "project-1"),
+    });
+  });
+
   it("uploads a reference asset via FormData and invalidates the project list", async () => {
     mocks.apiRequest.mockResolvedValue({
       id: "ast_ref99",

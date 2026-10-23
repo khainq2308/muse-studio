@@ -76,6 +76,7 @@ const inputClass = cn(
 interface ScriptImportPanelProps {
   projectId: string;
   existingEntriesCount?: number;
+  existingShotsCount?: number;
   isImporting: boolean;
   fieldErrors: Partial<Record<ScriptImportField, string>>;
   formError: string | null;
@@ -88,6 +89,7 @@ interface ScriptImportPanelProps {
 export function ScriptImportPanel({
   projectId,
   existingEntriesCount = 0,
+  existingShotsCount = 0,
   isImporting,
   fieldErrors,
   formError,
@@ -338,22 +340,37 @@ export function ScriptImportPanel({
               </span>
             </label>
 
-            {existingEntriesCount > 0 && autoApply && (
-              <div
-                role="note"
-                data-testid="existing-pipeline-overwrite-warning"
-                className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning"
-              >
-                <p className="flex items-center gap-1.5 font-medium">
-                  <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
-                  Project already has {existingEntriesCount} Story Bible{" "}
-                  {existingEntriesCount === 1 ? "entry" : "entries"}.
-                </p>
-                <p className="mt-1 text-foreground/80">
-                  Applying this script will replace active scenes, Story Bible locks, and shots.
-                </p>
-              </div>
-            )}
+            {(() => {
+              const hasExistingPipeline = existingEntriesCount > 0 || existingShotsCount > 0;
+              if (!hasExistingPipeline || !autoApply) return null;
+              const summary =
+                existingEntriesCount > 0 && existingShotsCount > 0
+                  ? `Project already has ${existingEntriesCount} Story Bible ${
+                      existingEntriesCount === 1 ? "entry" : "entries"
+                    } and ${existingShotsCount} ${existingShotsCount === 1 ? "shot" : "shots"}.`
+                  : existingEntriesCount > 0
+                    ? `Project already has ${existingEntriesCount} Story Bible ${
+                        existingEntriesCount === 1 ? "entry" : "entries"
+                      }.`
+                    : `Project already has ${existingShotsCount} ${
+                        existingShotsCount === 1 ? "shot" : "shots"
+                      }.`;
+              return (
+                <div
+                  role="note"
+                  data-testid="existing-pipeline-overwrite-warning"
+                  className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning"
+                >
+                  <p className="flex items-center gap-1.5 font-medium">
+                    <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+                    {summary}
+                  </p>
+                  <p className="mt-1 text-foreground/80">
+                    Applying this script will replace active scenes, Story Bible locks, and shots.
+                  </p>
+                </div>
+              );
+            })()}
 
             <div
               className={cn(
@@ -372,8 +389,8 @@ export function ScriptImportPanel({
                 <span>
                   Confirm replacing existing shots and generated takes
                   <span className="block text-xs font-normal text-muted-foreground">
-                    Required when re-applying a script to a project that already has generated
-                    takes.
+                    Required when re-applying a script to a project that already has active Story
+                    Bible entries, shots, or generated takes.
                   </span>
                 </span>
               </label>

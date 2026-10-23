@@ -32,6 +32,19 @@ export function useStoryBible(projectId: string) {
   });
 }
 
+/** Project shot list (`GET /api/v1/projects/{project_id}/shots`). */
+export function useProjectShots(projectId: string) {
+  const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  return useQuery({
+    queryKey: queryKeys.projectShots(sessionVersion, projectId),
+    queryFn: ({ signal }) =>
+      apiGet("/api/v1/projects/{project_id}/shots", {
+        signal,
+        pathParams: { project_id: projectId },
+      }),
+  });
+}
+
 function invalidateStoryBibleAndShots(
   queryClient: ReturnType<typeof useQueryClient>,
   scope: MutationScope,
@@ -122,7 +135,15 @@ export function useImportScript(projectId: string) {
       apiPost("/api/v1/projects/{project_id}/scripts/import", request, {
         pathParams: { project_id: scopeProjectId },
       }),
-    onSettled: (_data, _error, variables) => invalidatePipelineAfterImport(queryClient, variables),
+    onSettled: (_data, _error, variables) => {
+      if (!variables) return;
+      if (variables.request.auto_apply_proposal) {
+        return invalidatePipelineAfterImport(queryClient, variables);
+      }
+      return queryClient.invalidateQueries({
+        queryKey: queryKeys.projects(variables.sessionVersion),
+      });
+    },
   });
   const { mutate: rawMutate } = mutation;
   const mutate = useCallback(

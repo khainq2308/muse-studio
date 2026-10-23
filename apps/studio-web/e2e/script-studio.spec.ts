@@ -91,21 +91,23 @@ async function mockApi(
         ? [testProject]
         : recorded.pathname === "/api/v1/projects/test-project/story-bible"
           ? initialBible
-          : recorded.pathname === "/api/v1/queue/tasks"
-            ? {
-                items: [],
-                total: 0,
-                limit: 50,
-                offset: 0,
-                has_more: false,
-                summary: {
-                  total_tasks: 0,
-                  active_tasks: 0,
-                  failed_tasks: 0,
-                  awaiting_input_tasks: 0,
-                },
-              }
-            : null;
+          : recorded.pathname === "/api/v1/projects/test-project/shots"
+            ? []
+            : recorded.pathname === "/api/v1/queue/tasks"
+              ? {
+                  items: [],
+                  total: 0,
+                  limit: 50,
+                  offset: 0,
+                  has_more: false,
+                  summary: {
+                    total_tasks: 0,
+                    active_tasks: 0,
+                    failed_tasks: 0,
+                    awaiting_input_tasks: 0,
+                  },
+                }
+              : null;
     await route.fulfill({
       status: body === null ? 404 : 200,
       contentType: "application/json",

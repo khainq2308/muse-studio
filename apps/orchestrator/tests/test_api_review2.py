@@ -172,6 +172,28 @@ async def test_reimport_refuses_to_cascade_delete_takes_without_replace_flag(cli
     assert sid not in {s["id"] for s in await _shots(client, pid)}
 
 
+async def test_reimport_refuses_when_project_has_existing_pipeline_without_replace_flag(
+    client: AsyncClient,
+) -> None:
+    pid = await _project(client)
+    # First import creates pipeline data (bible entries, scenes, shots) with no takes
+    assert (await _import(client, pid)).status_code == 201
+    original_shots = await _shots(client, pid)
+    assert len(original_shots) > 0
+    assert await _count(d.ShotTakeRecord) == 0
+
+    # Second import with auto_apply_proposal=True and replace_existing=False must fail with 409
+    r = await _import(client, pid, replace_existing=False)
+    assert r.status_code == 409, r.text
+    assert "replace_existing" in r.json()["detail"]
+    # Existing shots must remain untouched
+    assert [s["id"] for s in await _shots(client, pid)] == [s["id"] for s in original_shots]
+
+    # Re-import with replace_existing=True succeeds and replaces pipeline
+    r = await _import(client, pid, replace_existing=True)
+    assert r.status_code == 201, r.text
+
+
 async def test_reimport_refuses_while_tasks_are_active_even_with_replace(client: AsyncClient) -> None:
     pid = await _project(client)
     await _import(client, pid)

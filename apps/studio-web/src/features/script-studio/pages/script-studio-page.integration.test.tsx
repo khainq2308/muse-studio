@@ -70,7 +70,12 @@ function stubApi(handler: Handler) {
       };
       requests.push(request);
       const response = handler(request);
-      if (!response) return buildResponse(404, { detail: "Not mocked", category: "not_found" });
+      if (!response) {
+        if (request.method === "GET" && request.pathname.endsWith("/shots")) {
+          return buildResponse(200, []);
+        }
+        return buildResponse(404, { detail: "Not mocked", category: "not_found" });
+      }
       return buildResponse(response.status, response.body, response.contentType);
     }),
   );
@@ -418,5 +423,42 @@ describe("ScriptStudioPage", () => {
     expect(await screen.findByTestId("shot-export-error")).toHaveTextContent(
       "Could not export shots (CSV): Export storage unavailable",
     );
+  });
+
+  it("warns about overwriting pipeline data when project has shots but no Story Bible entries", async () => {
+    const user = userEvent.setup();
+    stubApi(({ pathname }) => {
+      if (pathname === "/api/v1/projects/project-1/story-bible") {
+        return { status: 200, body: [] };
+      }
+      if (pathname === "/api/v1/projects/project-1/shots") {
+        return {
+          status: 200,
+          body: [
+            {
+              id: "shot_1",
+              project_id: "project-1",
+              sequence_index: 0,
+              title: "Shot 1",
+              generation_state: "queued",
+            },
+          ],
+        };
+      }
+      return undefined;
+    });
+
+    mount();
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(
+      within(importPanel).getByRole("checkbox", {
+        name: /Apply changes directly to Story Bible & shots/,
+      }),
+    );
+    const warning = within(importPanel).getByTestId("existing-pipeline-overwrite-warning");
+    expect(warning).toBeInTheDocument();
+    expect(warning).toHaveTextContent(/Project already has 1 shot/);
   });
 });

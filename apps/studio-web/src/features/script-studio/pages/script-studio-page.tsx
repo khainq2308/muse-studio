@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   useExportProjectShots,
   useImportScript,
+  useProjectShots,
   useStoryBible,
   useUploadReferenceAsset,
   useUpsertStoryBibleEntry,
@@ -40,6 +41,7 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
 
   const bibleQuery = useStoryBible(projectId);
+  const shotsQuery = useProjectShots(projectId);
   const upsertMutation = useUpsertStoryBibleEntry(projectId);
   const importMutation = useImportScript(projectId);
   const uploadMutation = useUploadReferenceAsset(projectId);
@@ -50,6 +52,7 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
   const [newEntryNonce, setNewEntryNonce] = useState(0);
 
   const entries = useMemo(() => bibleQuery.data ?? [], [bibleQuery.data]);
+  const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
 
   const { reset: resetUpsert } = upsertMutation;
   const { reset: resetImport } = importMutation;
@@ -275,6 +278,7 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
         key={sessionVersion}
         projectId={projectId}
         existingEntriesCount={entries.length}
+        existingShotsCount={shots.length}
         isImporting={importInCurrentSession && importMutation.isPending}
         fieldErrors={importErrors ? importErrors.fieldErrors : NO_IMPORT_FIELD_ERRORS}
         formError={importErrors?.formError ?? null}

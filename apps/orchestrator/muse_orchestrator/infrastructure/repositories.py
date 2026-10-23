@@ -510,6 +510,16 @@ class StudioRepository:
     async def get_shot(self, shot_id: str) -> ShotRecord | None:
         return await self.session.get(ShotRecord, shot_id)
 
+    async def has_project_pipeline_records(self, project_id: str) -> bool:
+        """Return True if the project has any scenes, shots, or story bible entries."""
+        for model in (ShotRecord, SceneRecord, StoryBibleEntry):
+            res = await self.session.execute(
+                select(model.id).where(model.project_id == project_id).limit(1)
+            )
+            if res.scalar_one_or_none() is not None:
+                return True
+        return False
+
     async def delete_project_pipeline_records(self, project_id: str) -> None:
         # Preserve the original deletion order for child records and associated constraints.
         await self.session.execute(delete(ShotRecord).where(ShotRecord.project_id == project_id))
