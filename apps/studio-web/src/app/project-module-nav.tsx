@@ -1,9 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { LayoutGrid, ListChecks, type LucideIcon } from "lucide-react";
+import { BookOpenText, LayoutGrid, ListChecks, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** Project modules with a real product screen; other modules are still placeholders. */
 const NAV_ITEMS: ReadonlyArray<{ module: string; label: string; icon: LucideIcon }> = [
+  { module: "script-studio", label: "Script Studio", icon: BookOpenText },
   { module: "shot-board", label: "Shot Board", icon: LayoutGrid },
   { module: "queue-monitor", label: "Queue Monitor", icon: ListChecks },
 ];

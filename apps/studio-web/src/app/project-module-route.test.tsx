@@ -53,6 +53,12 @@ vi.mock("@/features/shot-board", () => ({
   },
 }));
 
+vi.mock("@/features/script-studio", () => ({
+  default: function ScriptStudioStub({ projectId }: { projectId: string }) {
+    return <div data-testid="script-studio-stub">{projectId}</div>;
+  },
+}));
+
 import ProjectModuleRoute from "@/app/project-module-route";
 
 beforeEach(() => {
@@ -90,6 +96,20 @@ describe("ProjectModuleRoute", () => {
     expect(shotBoard).toHaveAttribute("href", "/projects/project-a/shot-board");
     expect(queue).not.toHaveAttribute("aria-current");
     expect(queue).toHaveAttribute("href", "/projects/project-a/queue-monitor");
+  });
+
+  it("renders the Script Studio module with project navigation marking the active module", () => {
+    mocks.params = { projectId: "project-a", module: "script-studio" };
+    render(<ProjectModuleRoute />);
+
+    expect(screen.getByTestId("script-studio-stub").textContent).toBe("project-a");
+    expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Project modules" });
+    const scriptStudio = within(nav).getByRole("link", { name: "Script Studio" });
+    const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
+    expect(scriptStudio).toHaveAttribute("aria-current", "page");
+    expect(scriptStudio).toHaveAttribute("href", "/projects/project-a/script-studio");
+    expect(shotBoard).not.toHaveAttribute("aria-current");
   });
 
   it("shows a not-found page instead of an empty module for an unknown project", () => {

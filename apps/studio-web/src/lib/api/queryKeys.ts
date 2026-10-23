@@ -39,4 +39,10 @@ export const queryKeys = {
   /** Mutation key for take selection and continuity flags of a project. */
   shotTakeActions: (sessionVersion: number, projectId: string) =>
     ["shot-take-actions", sessionVersion, projectId] as const,
+  /** Story Bible entries of a project (`GET /api/v1/projects/{project_id}/story-bible`). */
+  storyBible: (sessionVersion: number, projectId: string) =>
+    ["story-bible", sessionVersion, projectId] as const,
+  /** Mutation key for Script Studio actions (Story Bible upsert, script import, reference upload). */
+  scriptStudioActions: (sessionVersion: number, projectId: string) =>
+    ["script-studio-actions", sessionVersion, projectId] as const,
 };
