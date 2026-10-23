@@ -279,6 +279,8 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
         projectId={projectId}
         existingEntriesCount={entries.length}
         existingShotsCount={shots.length}
+        isCheckingPipeline={bibleQuery.isPending || shotsQuery.isPending}
+        pipelineCheckError={Boolean(bibleQuery.isError || shotsQuery.isError)}
         isImporting={importInCurrentSession && importMutation.isPending}
         fieldErrors={importErrors ? importErrors.fieldErrors : NO_IMPORT_FIELD_ERRORS}
         formError={importErrors?.formError ?? null}

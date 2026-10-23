@@ -77,6 +77,8 @@ interface ScriptImportPanelProps {
   projectId: string;
   existingEntriesCount?: number;
   existingShotsCount?: number;
+  isCheckingPipeline?: boolean;
+  pipelineCheckError?: boolean;
   isImporting: boolean;
   fieldErrors: Partial<Record<ScriptImportField, string>>;
   formError: string | null;
@@ -90,6 +92,8 @@ export function ScriptImportPanel({
   projectId,
   existingEntriesCount = 0,
   existingShotsCount = 0,
+  isCheckingPipeline = false,
+  pipelineCheckError = false,
   isImporting,
   fieldErrors,
   formError,
@@ -341,8 +345,39 @@ export function ScriptImportPanel({
             </label>
 
             {(() => {
+              if (!autoApply) return null;
+              if (isCheckingPipeline) {
+                return (
+                  <div
+                    role="status"
+                    data-testid="pipeline-checking-status"
+                    className="flex items-center gap-2 rounded-md border border-muted bg-muted/30 p-2.5 text-xs text-muted-foreground"
+                  >
+                    <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+                    <span>Verifying existing scenes and shots before applying...</span>
+                  </div>
+                );
+              }
+              if (pipelineCheckError) {
+                return (
+                  <div
+                    role="note"
+                    data-testid="pipeline-check-unverified-warning"
+                    className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning"
+                  >
+                    <p className="flex items-center gap-1.5 font-medium">
+                      <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+                      Could not verify current pipeline status.
+                    </p>
+                    <p className="mt-1 text-foreground/80">
+                      Active scenes, Story Bible entries, or shots on the server will be replaced if
+                      applied. Confirm replacement below if this project was already populated.
+                    </p>
+                  </div>
+                );
+              }
               const hasExistingPipeline = existingEntriesCount > 0 || existingShotsCount > 0;
-              if (!hasExistingPipeline || !autoApply) return null;
+              if (!hasExistingPipeline) return null;
               const summary =
                 existingEntriesCount > 0 && existingShotsCount > 0
                   ? `Project already has ${existingEntriesCount} Story Bible ${
@@ -400,13 +435,19 @@ export function ScriptImportPanel({
         </div>
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={isImporting}>
+          <Button type="submit" disabled={isImporting || (autoApply && isCheckingPipeline)}>
             {isImporting ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            ) : isCheckingPipeline && autoApply ? (
               <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
             ) : (
               <FileUp className="size-4" aria-hidden="true" />
             )}
-            {autoApply ? "Import & apply script" : "Save draft revision & analyze"}
+            {isCheckingPipeline && autoApply
+              ? "Verifying pipeline..."
+              : autoApply
+                ? "Import & apply script"
+                : "Save draft revision & analyze"}
           </Button>
         </div>
       </form>

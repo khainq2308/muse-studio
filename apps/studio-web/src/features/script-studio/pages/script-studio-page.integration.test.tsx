@@ -461,4 +461,76 @@ describe("ScriptStudioPage", () => {
     expect(warning).toBeInTheDocument();
     expect(warning).toHaveTextContent(/Project already has 1 shot/);
   });
+
+  it("shows unverified pipeline status warning when pipeline query fails and Apply is checked", async () => {
+    const user = userEvent.setup();
+    stubApi(({ pathname }) => {
+      if (pathname === "/api/v1/projects/project-1/story-bible") {
+        return { status: 200, body: [] };
+      }
+      if (pathname === "/api/v1/projects/project-1/shots") {
+        return { status: 500, body: { detail: "Database error", category: "internal" } };
+      }
+      return undefined;
+    });
+
+    mount();
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(
+      within(importPanel).getByRole("checkbox", {
+        name: /Apply changes directly to Story Bible & shots/,
+      }),
+    );
+    const unverifiedWarning = await within(importPanel).findByTestId(
+      "pipeline-check-unverified-warning",
+    );
+    expect(unverifiedWarning).toBeInTheDocument();
+    expect(unverifiedWarning).toHaveTextContent(/Could not verify current pipeline status/);
+  });
+
+  it("shows checking status and disables submit button while verifying pipeline data", async () => {
+    const user = userEvent.setup();
+    let resolveShots!: () => void;
+    const shotsPromise = new Promise<void>((resolve) => {
+      resolveShots = resolve;
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/v1/projects/project-1/story-bible") {
+          return buildResponse(200, []);
+        }
+        if (url.pathname === "/api/v1/projects/project-1/shots") {
+          await shotsPromise;
+          return buildResponse(200, []);
+        }
+        return buildResponse(404, { detail: "Not mocked" });
+      }),
+    );
+
+    mount();
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    await user.click(
+      within(importPanel).getByRole("checkbox", {
+        name: /Apply changes directly to Story Bible & shots/,
+      }),
+    );
+
+    expect(within(importPanel).getByTestId("pipeline-checking-status")).toBeInTheDocument();
+    const submitBtn = within(importPanel).getByRole("button", { name: "Verifying pipeline..." });
+    expect(submitBtn).toBeDisabled();
+
+    resolveShots();
+    await waitFor(() => {
+      expect(within(importPanel).queryByTestId("pipeline-checking-status")).not.toBeInTheDocument();
+    });
+    expect(
+      within(importPanel).getByRole("button", { name: "Import & apply script" }),
+    ).not.toBeDisabled();
+  });
 });
