@@ -78,6 +78,9 @@ class QueueTaskState(str, enum.Enum):
     FAILED = "failed"
     POLL_TIMEOUT = "poll_timeout"
     CANCELED = "canceled"
+    # The provider (muse.ai via muse2api) asked the operator a question and waits for
+    # an answer. Still active: it holds the shot slot and a provider concurrency slot.
+    AWAITING_INPUT = "awaiting_input"
 
 
 class ExportJobState(str, enum.Enum):
@@ -341,14 +344,33 @@ class WorkflowCacheEntry(Base):
 # --- M4 & M5: ASYNC GENERATION QUEUE, TAKES & BATCH RENDER MODELS ---
 
 # sqlalchemy.Enum(QueueTaskState) persists enum *names* on SQLite and PostgreSQL,
-# so the partial-index predicate must use the upper-case names. Mirrors migration 0002.
-ACTIVE_GENERATION_TASK_PREDICATE = "state IN ('QUEUED', 'RUNNING', 'PAUSED')"
+# so the partial-index predicate must use the upper-case names. Mirrors migration 0003
+# (0002 created the index without AWAITING_INPUT).
+ACTIVE_GENERATION_TASK_PREDICATE = "state IN ('QUEUED', 'RUNNING', 'PAUSED', 'AWAITING_INPUT')"
+
+# Tasks in these states occupy the per-(shot, task_type) active slot (same set as the
+# partial unique index above).
+ACTIVE_GENERATION_TASK_STATES = (
+    QueueTaskState.QUEUED,
+    QueueTaskState.RUNNING,
+    QueueTaskState.PAUSED,
+    QueueTaskState.AWAITING_INPUT,
+)
+# Tasks with a live step chain: the worker keeps dispatching/polling them and the
+# recovery cron re-schedules them. PAUSED is active but deliberately not stepped.
+SCHEDULABLE_GENERATION_TASK_STATES = (
+    QueueTaskState.QUEUED,
+    QueueTaskState.RUNNING,
+    QueueTaskState.AWAITING_INPUT,
+)
+# Tasks that hold a provider-side job (and therefore a connection concurrency slot).
+PROVIDER_SLOT_TASK_STATES = (QueueTaskState.RUNNING, QueueTaskState.AWAITING_INPUT)
 
 
 class GenerationTaskRecord(Base):
     __tablename__ = "generation_tasks"
     __table_args__ = (
-        # At most one queued/running/paused task per shot and task type.
+        # At most one queued/running/paused/awaiting-input task per shot and task type.
         Index(
             "uq_generation_tasks_active_shot_type",
             "shot_id",
@@ -391,6 +413,9 @@ class GenerationTaskRecord(Base):
     retryable: Mapped[bool] = mapped_column(Boolean, default=False)
     error_message_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
     history_log: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # Bounded provider question while state == AWAITING_INPUT
+    # ({"kind", "text", "options", "asked_at"}); None otherwise.
+    pending_input_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     result_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     take_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
