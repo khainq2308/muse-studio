@@ -7,7 +7,7 @@ from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from muse_orchestrator.api.dependencies import get_studio_repository
+from muse_orchestrator.api.dependencies import get_pipeline_service, get_studio_repository
 from muse_orchestrator.application.pipeline_service import PipelineService
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.core.security import verify_single_admin
@@ -24,12 +24,6 @@ JsonValue = TypeAliasType(
 
 MAX_REFERENCE_ASSETS = 32
 MAX_MUTABLE_ATTRIBUTES_CHARS = 32_768
-
-
-def get_pipeline_service(
-    repository: StudioRepository = Depends(get_studio_repository),
-) -> PipelineService:
-    return PipelineService(repository)
 
 
 def _check_asset_ids(value: list[str] | None) -> list[str] | None:
@@ -205,14 +199,6 @@ async def _recompile_project_shots(project_id: str, repository: StudioRepository
     directly; calling this helper writes to the database.
     """
     return await PipelineService(repository).recompile_project_shots(project_id)
-
-
-async def _recompile_project_shots_with_prompt_hashes(
-    project_id: str, repository: StudioRepository
-) -> tuple[list[ShotRecord], dict[str, frozenset[str]]]:
-    """Like ``_recompile_project_shots`` and also return the prompt hashes per shot id
-    that a selected take may carry and still be current (new + computed legacy hash)."""
-    return await PipelineService(repository).recompile_project_shots_with_prompt_hashes(project_id)
 
 
 @router.post("/scripts/import", response_model=ScriptImportOut, status_code=status.HTTP_201_CREATED)

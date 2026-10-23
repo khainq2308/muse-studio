@@ -9,12 +9,15 @@ that change carry the legacy hash, which batch ``only_changed`` still accepts.
 from __future__ import annotations
 
 import hashlib
+import json
 
 from httpx import AsyncClient
 
 from muse_orchestrator.application.pipeline_service import PipelineService
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import GenerationTaskRecord, ShotRecord, ShotTakeRecord
+from muse_orchestrator.services.generation_guards import prompt_version_of
+from muse_orchestrator.services.prompt_compiler import PROMPT_COMPILER_VERSION
 from tests.test_queue_review2 import (  # noqa: F401 - `client` is a pytest fixture
     STATE,
     _setup,
@@ -23,6 +26,8 @@ from tests.test_queue_review2 import (  # noqa: F401 - `client` is a pytest fixt
     _ticks,
     client,
 )
+
+_SNAPSHOT_PREFIX = "request_snapshot="
 
 BOUNDARY_SCRIPT = """
 SCENE 1: Rooftop
@@ -34,14 +39,20 @@ SHOT 1: Hero waits
 """
 
 
-async def _render_first_shot(client: AsyncClient) -> tuple[str, str, str]:
-    pid, cid, s1, _ = await _setup(client)
-    # The imported defaults are generic (not in the prompt); give the shot real boundaries.
+async def _set_boundaries(shot_id: str, start: str, end: str) -> None:
+    # The shot PATCH API does not expose the boundaries; edit the row like a script re-import would.
     async with STATE["maker"]() as db:
-        shot = await db.get(ShotRecord, s1["id"])
-        shot.action_start = "Hero crouches at the gap edge"
-        shot.action_end = "Hero lands on the far roof"
+        shot = await db.get(ShotRecord, shot_id)
+        shot.action_start = start
+        shot.action_end = end
         await db.commit()
+
+
+async def _render_first_shot(client: AsyncClient, *, real_boundaries: bool = True) -> tuple[str, str, str]:
+    pid, cid, s1, _ = await _setup(client)
+    if real_boundaries:
+        # The imported defaults are generic (not in the prompt); give the shot real boundaries.
+        await _set_boundaries(s1["id"], "Hero crouches at the gap edge", "Hero lands on the far roof")
     await client.post(f"/api/v1/projects/{pid}/batch/launch", json={"connection_id": cid, "shot_ids": [s1["id"]]})
     await _ticks(client, pid)
     assert (await _shots(client, pid))[s1["id"]]["generation_state"] == "succeeded"
@@ -54,18 +65,21 @@ async def _legacy_hash(pid: str, shot_id: str) -> str:
             pid, commit=False
         )
         shot = await db.get(ShotRecord, shot_id)
-        legacy = hashes[shot_id] - {shot.prompt_hash}
+        current = shot.prompt_hash
+        assert hashes[shot_id].current == current
+        legacy = hashes[shot_id].legacy
         await db.rollback()
     # The shot has real boundaries, so the new and legacy hashes differ.
-    assert len(legacy) == 1
-    return next(iter(legacy))
+    assert legacy != current
+    return legacy
 
 
 async def _make_selected_take_legacy(pid: str, shot_id: str) -> str:
     """Simulate a take (and its task) rendered before boundaries entered the prompt.
 
-    The task's default idempotency key embeds the prompt hash, so it is rewritten with
-    the legacy hash too; otherwise the queue's idempotent replay would mask the batch rule.
+    Pre-upgrade tasks have no ``prompt_version`` in their request snapshot. The task's
+    default idempotency key embeds the prompt hash, so it is rewritten with the legacy
+    hash too; otherwise the queue's idempotent replay would mask the batch rule.
     """
     legacy = await _legacy_hash(pid, shot_id)
     async with STATE["maker"]() as db:
@@ -74,11 +88,22 @@ async def _make_selected_take_legacy(pid: str, shot_id: str) -> str:
         task = await db.get(GenerationTaskRecord, take.task_id)
         take.prompt_hash = legacy
         task.prompt_hash = legacy
+        assert prompt_version_of(task) == PROMPT_COMPILER_VERSION
+        task.history_log = [_without_prompt_version(entry) for entry in task.history_log]
+        assert prompt_version_of(task) is None
         task.idempotency_key = hashlib.sha256(
             f"{shot.id}:{task.task_type}:{task.model_id}:{task.connection_id}:{legacy}:no_first_frame".encode()
         ).hexdigest()[:32]
         await db.commit()
     return legacy
+
+
+def _without_prompt_version(entry: str) -> str:
+    if not entry.startswith(_SNAPSHOT_PREFIX):
+        return entry
+    snapshot = json.loads(entry[len(_SNAPSHOT_PREFIX):])
+    snapshot.pop("prompt_version", None)
+    return _SNAPSHOT_PREFIX + json.dumps(snapshot, sort_keys=True)
 
 
 async def _set_action_end(shot_id: str, value: str) -> None:
@@ -131,7 +156,7 @@ async def test_imported_generic_default_boundaries_keep_the_legacy_prompt(client
             pid, commit=False
         )
         await db.rollback()
-    assert hashes[s1["id"]] == frozenset({shot["prompt_hash"]})
+    assert hashes[s1["id"]].current == hashes[s1["id"]].legacy == shot["prompt_hash"]
 
 
 async def test_imported_generic_and_real_boundary_shows_only_the_real_one(client: AsyncClient):
@@ -197,3 +222,31 @@ async def test_legacy_take_does_not_detect_boundary_only_edit(client: AsyncClien
     assert again["enqueued_count"] == 0
     assert again["skipped_shot_ids"] == [shot_id]
     assert len(await _tasks_for_shot(shot_id)) == tasks_before
+
+
+async def test_new_task_snapshot_records_the_prompt_version(client: AsyncClient):
+    _pid, _cid, shot_id = await _render_first_shot(client)
+
+    (task,) = await _tasks_for_shot(shot_id)
+    assert prompt_version_of(task) == PROMPT_COMPILER_VERSION
+
+
+async def test_post_upgrade_generic_take_rerenders_when_boundaries_become_informative(client: AsyncClient):
+    # Rendered after the upgrade with only generic boundaries: the take's hash equals the
+    # shot's legacy hash, but its task carries the prompt version marker.
+    pid, cid, shot_id = await _render_first_shot(client, real_boundaries=False)
+    await _set_boundaries(shot_id, "Hero crouches at the gap edge", "Hero lands on the far roof")
+
+    again = await _relaunch(client, pid, cid, shot_id)
+
+    assert again["enqueued_count"] == 1
+    assert again["skipped_shot_ids"] == []
+
+
+async def test_post_upgrade_generic_take_is_skipped_while_unchanged(client: AsyncClient):
+    pid, cid, shot_id = await _render_first_shot(client, real_boundaries=False)
+
+    again = await _relaunch(client, pid, cid, shot_id)
+
+    assert again["enqueued_count"] == 0
+    assert again["skipped_shot_ids"] == [shot_id]

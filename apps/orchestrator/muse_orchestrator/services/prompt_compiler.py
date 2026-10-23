@@ -244,11 +244,19 @@ def _lint_inter_shot_continuity(
         )
 
 
+# Version of the compiled prompt format. 2 = informative action_start/action_end are part
+# of the ACTION section and the hash. Recorded in each new task's request snapshot so batch
+# ``only_changed`` can tell pre-upgrade takes (no marker) from current ones.
+PROMPT_COMPILER_VERSION = 2
+
+_SENTENCE_END = (".", "!", "?", "…")
+
+
 def _boundary_text(value: str) -> str:
     """Normalise one action boundary; empty and generic placeholders become ""."""
     if is_generic_handoff(value):
         return ""
-    return value.strip().rstrip(".").strip()
+    return value.strip().rstrip("".join(_SENTENCE_END)).strip()
 
 
 def _action_section(action: str, action_start: str, action_end: str) -> str:
@@ -259,20 +267,20 @@ def _action_section(action: str, action_start: str, action_end: str) -> str:
     Dialogue is deliberately never part of the video prompt: video models do not speak
     and tend to render quoted dialogue as on-screen text.
     """
-    text = f"Action: {action}"
     start = _boundary_text(action_start)
     end = _boundary_text(action_end)
     if not start and not end:
         # Byte-identical to the pre-boundary prompt so existing hashes stay valid.
-        return text
-    text = text.rstrip()
-    if not text.endswith((".", "!", "?")):
-        text += "."
+        return f"Action: {action}"
+    parts = ["Action:"]
+    action_text = action.strip()
+    if action_text:
+        parts.append(action_text if action_text.endswith(_SENTENCE_END) else f"{action_text}.")
     if start:
-        text += f" Starts: {start}."
+        parts.append(f"Starts: {start}.")
     if end:
-        text += f" Ends: {end}."
-    return text
+        parts.append(f"Ends: {end}.")
+    return " ".join(parts)
 
 
 def _prompt_hash(sections: dict[str, str], negative_prompt: str) -> str:

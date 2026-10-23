@@ -220,3 +220,24 @@ def test_dialogue_never_reaches_the_video_prompt() -> None:
     result = compile_shot(spec)
     assert "dialogue" not in result.prompt_final.casefold()
     assert "dialogue" not in {key.casefold() for key in result.sections}
+
+
+def _action_of(action: str, start: str, end: str) -> str:
+    spec = make_shot(action_start=start, action_end=end)
+    spec.action = action
+    return compile_shot(spec).sections["ACTION"]
+
+
+def test_empty_action_with_a_real_boundary_has_no_stray_period() -> None:
+    assert _action_of("", "Seated", "") == "Action: Starts: Seated."
+    assert _action_of("   ", "", "Stands up") == "Action: Ends: Stands up."
+
+
+def test_boundaries_ending_in_other_punctuation_get_a_single_period() -> None:
+    assert _action_of("He waits", "Seated!", "Stands up?") == "Action: He waits. Starts: Seated. Ends: Stands up."
+    assert _action_of("He waits", "Seated…", "Stands up...") == "Action: He waits. Starts: Seated. Ends: Stands up."
+
+
+def test_action_ending_in_sentence_punctuation_is_not_doubled() -> None:
+    for action in ("He waits!", "He waits?", "He waits…", "He waits."):
+        assert _action_of(action, "Seated", "") == f"Action: {action} Starts: Seated."

@@ -4,7 +4,8 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from muse_orchestrator.infrastructure.repositories import StudioRepository
-from muse_orchestrator.api.dependencies import get_studio_repository
+from muse_orchestrator.api.dependencies import get_pipeline_service, get_studio_repository
+from muse_orchestrator.application.pipeline_service import PipelineService, ShotPromptHashes
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
     ShotGenerationState,
@@ -15,7 +16,6 @@ from muse_orchestrator.models.domain import (
     ShotTakeRecord,
     BatchRenderJobRecord,
 )
-from muse_orchestrator.api.pipeline import _recompile_project_shots_with_prompt_hashes
 from muse_orchestrator.api.arq_dispatch import schedule_generation_task, schedule_generation_tasks
 from muse_orchestrator.services.generation_queue import (
     GenerationQueueService,
@@ -141,6 +141,7 @@ async def launch_batch_render(
     payload: BatchLaunchIn,
     request: Request,
     repository: StudioRepository = Depends(get_studio_repository),
+    pipeline: PipelineService = Depends(get_pipeline_service),
     actor: str = Depends(verify_single_admin),
 ) -> BatchLaunchOut:
     """
@@ -167,9 +168,7 @@ async def launch_batch_render(
         raise HTTPException(status_code=400, detail="Connection không tồn tại hoặc đang bị tắt.")
 
     # Biên dịch lại toàn bộ prompt_hash và lint_report_json mới nhất
-    all_shots, accepted_prompt_hashes = await _recompile_project_shots_with_prompt_hashes(
-        project_id, repository
-    )
+    all_shots, prompt_hashes = await pipeline.recompile_project_shots_with_prompt_hashes(project_id)
 
     target_shots = [
         s for s in all_shots
@@ -184,19 +183,22 @@ async def launch_batch_render(
 
     for s in target_shots:
         # 1. Smart cache: skip only when the selected take matches the current prompt_hash
-        #    (or the computed legacy hash from before action_start/action_end entered the
-        #    prompt), the requested model and the conditioning frame the resolver yields now.
+        #    (or, for a take enqueued before the prompt version marker, the computed legacy
+        #    hash), the requested model and the conditioning frame the resolver yields now.
         if payload.only_changed and s.generation_state == ShotGenerationState.SUCCEEDED and s.selected_take_id:
             sel_take = await repository.get_shot_take(s.selected_take_id)
+            sel_task = (
+                await repository.get_generation_task(sel_take.task_id) if sel_take is not None else None
+            )
+            hashes = prompt_hashes.get(s.id) or ShotPromptHashes(s.prompt_hash, s.prompt_hash)
             if (
                 sel_take is not None
-                and sel_take.prompt_hash in accepted_prompt_hashes.get(s.id, frozenset({s.prompt_hash}))
+                and hashes.take_is_current(sel_take.prompt_hash, sel_task)
                 and sel_take.model_id == payload.model_id
             ):
                 conditioning = await GenerationQueueService.resolve_conditioning_frame(
                     repository.session, s
                 )
-                sel_task = await repository.get_generation_task(sel_take.task_id)
                 if (
                     not conditioning.missing
                     and sel_task is not None
