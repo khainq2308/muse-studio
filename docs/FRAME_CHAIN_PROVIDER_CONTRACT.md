@@ -34,7 +34,15 @@ At enqueue the queue stores a **request snapshot** in the task history: `duratio
 | `conditioning_frame_invalid` | Operator-set first frame is missing or belongs to another project. | Set a valid frame or clear it. |
 | `stale_conditioning_frame` | Conditioning frame changed between enqueue and dispatch. | Re-enqueue explicitly. |
 | `input_timeout` | The provider asked the operator a question (task `AWAITING_INPUT`) and the gateway gave up after its 30-minute input timeout. Non-retryable; the shot is settled like any other failure. | Enqueue again (consider answering faster). |
-| `dispatch_outcome_unknown` | The worker step was cancelled (job timeout/shutdown) after the provider request may have been sent and before an external task id was stored. The task is FAILED and non-retryable; it is not re-sent automatically to avoid a duplicate paid generation. | Check the provider dashboard, then retry explicitly. |
+| `dispatch_outcome_unknown` | The worker step was cancelled (job timeout/shutdown), or the process died (hard kill) so that its dispatch lease expired, after the provider request may have been sent and before an external task id was stored. The task is FAILED and non-retryable; it is not re-sent automatically to avoid a duplicate paid generation. | Check the provider dashboard, then retry explicitly. |
+
+### Completion on a superseded frame
+
+Propagation skips shots with an active task, so the upstream selection can change while a downstream provider job is running. When such a job completes, the queue resolves the conditioning frame again: if it differs from the frame the task was rendered on (or is missing), the output is stored as a take but **not selected**, the shot becomes `NOT_STARTED` (or `BLOCKED_UPSTREAM_FRAME`) with `first_frame_asset_id` pointing at the current frame, and the history records `Stale continuity: ...`. A selected take that no longer resolves to one of the upstream shot's takes yields no frame (fail closed) instead of falling back to an older `last_frame_asset_id`.
+
+### Idempotency and reference images
+
+The default idempotency key covers shot, task type, model, **connection**, prompt hash and conditioning frame, and batch `only_changed` skips a selected take only when it was rendered on the requested connection. A client-supplied `idempotency_key` already used by another shot, task type or connection is rejected with 409 instead of returning that task. Shot `reference_asset_ids` (at most 4, 20 MiB in total, same validation as frames) are sent as data URIs in `reference_image_urls`; a provider payload without a video reference field (muse2api profile `www222fff`) records `Reference images not sent: ...` in the task history instead of implying they were applied.
 
 ### One active task per shot and task type
 
@@ -42,7 +50,7 @@ At most one `QUEUED`/`RUNNING`/`PAUSED`/`AWAITING_INPUT` task may exist per `(sh
 
 ## Operator questions (needs-input)
 
-Source: `providers/muse2api_adapter.py`, `services/generation_queue.py`, `application/queue_service.py`, `api/queue.py`. Status: **unverified** against a real muse.ai account (see the capability matrix); the gateway contract below is exercised only with offline `httpx.MockTransport` tests and a fake provider.
+Source: `providers/muse2api_adapter.py`, `services/generation_queue.py`, `application/queue_service.py`, `api/queue.py`. Status: kind `question` **verified** live on 2026-10-23 through the adapter and through the full stack with the Queue Monitor (docs/evidence/muse2api/2026-10-23-needs-input.md); kinds `approval` and `stalled` are **unverified** live and covered only by the gateway's mock driver, offline `httpx.MockTransport` tests and a fake provider.
 
 Gateway contract (muse2api fork with the needs-input driver):
 
