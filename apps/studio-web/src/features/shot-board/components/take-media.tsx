@@ -14,8 +14,11 @@ interface TakeMediaProps {
   /** Accessible name of the media, e.g. "Take 2 media" or "Take 2 first frame". */
   label: string;
   maxBytes: number;
-  /** `frame`: compact thumbnail; `preview`: full-width player. */
-  variant: "frame" | "preview";
+  /**
+   * `frame`: compact frame thumbnail; `thumb`: icon-sized frame for dense lists (no text, no
+   * retry button); `preview`: full-width player.
+   */
+  variant: "frame" | "thumb" | "preview";
   /** Placeholder text when there is no asset ID. */
   emptyText?: string;
 }
@@ -33,7 +36,9 @@ export function TakeMedia(props: TakeMediaProps) {
     <div
       ref={setElement}
       data-asset-id={props.assetId ?? undefined}
-      className={props.variant === "frame" ? "w-32" : "w-full"}
+      className={
+        props.variant === "frame" ? "w-28 sm:w-32" : props.variant === "thumb" ? "w-16" : "w-full"
+      }
     >
       <TakeMediaBody {...props} enabled={inView} />
     </div>
@@ -48,12 +53,15 @@ function TakeMediaBody({
   emptyText = "No asset",
   enabled,
 }: TakeMediaProps & { enabled: boolean }) {
-  const frame = variant === "frame";
+  const frame = variant !== "preview";
+  const thumb = variant === "thumb";
   // A closed video preview releases its Blob at once; small frames stay cached briefly.
   const query = useAssetMedia(assetId, maxBytes, { enabled, gcTime: frame ? 30_000 : 0 });
   const url = useObjectUrl(query.data);
-  const boxClass =
-    "flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border border-slate-800 bg-slate-950 text-xs text-slate-300 shadow-inner";
+  const boxClass = cn(
+    "flex aspect-video w-full items-center justify-center overflow-hidden border border-slate-800 bg-slate-950 text-xs text-slate-300 shadow-inner",
+    thumb ? "rounded-md" : "rounded-lg",
+  );
 
   if (!assetId) {
     return (
@@ -64,9 +72,18 @@ function TakeMediaBody({
         aria-label={`${label}: ${emptyText}`}
       >
         <span className="flex flex-col items-center gap-1 p-2 text-center" aria-hidden="true">
-          <ImageOff className="size-4" />
-          {emptyText}
+          <ImageOff className={thumb ? "size-3.5" : "size-4"} />
+          {!thumb && emptyText}
         </span>
+      </div>
+    );
+  }
+
+  if (query.isError && thumb) {
+    // Too small for an explanation: the full frame and its error show in the shot panel.
+    return (
+      <div className={boxClass} role="img" aria-label={`${label}: unavailable`}>
+        <ImageOff className="size-3.5" aria-hidden="true" />
       </div>
     );
   }
@@ -105,7 +122,10 @@ function TakeMediaBody({
   if (!query.data || !url) {
     return (
       <div className={boxClass} role="status" aria-label={`Loading ${label}`}>
-        <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+        <LoaderCircle
+          className={cn(thumb ? "size-3" : "size-4", "animate-spin")}
+          aria-hidden="true"
+        />
         {!frame && <span className="ml-2">Loading preview...</span>}
       </div>
     );
@@ -118,7 +138,10 @@ function TakeMediaBody({
         src={url}
         alt={label}
         data-testid="take-media-image"
-        className="aspect-video w-full rounded-md border border-border bg-black object-contain"
+        className={cn(
+          "aspect-video w-full border border-border bg-black object-contain",
+          thumb ? "rounded-sm" : "rounded-md",
+        )}
       />
     );
   }

@@ -1,4 +1,4 @@
-import { Columns2, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { Columns2, LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
@@ -37,12 +37,11 @@ interface ShotTakeReviewProps {
   connection: Connection | undefined;
   modelId: string;
   regenerateDisabledReason: string | null;
-  onClose: () => void;
 }
 
 /**
  * Take review for one shot: list takes with frames, preview on demand, A/B compare, select a
- * take and flag continuity (optionally regenerating). Requests start only while it is open.
+ * take and flag continuity (optionally regenerating). Requests start only while it is mounted.
  */
 export function ShotTakeReview({
   projectId,
@@ -51,7 +50,6 @@ export function ShotTakeReview({
   connection,
   modelId,
   regenerateDisabledReason,
-  onClose,
 }: ShotTakeReviewProps) {
   const headingId = useId();
   const activeAdminToken = useSessionStore((state) => state.adminToken);
@@ -197,7 +195,7 @@ export function ShotTakeReview({
       ref={panelRef}
       aria-labelledby={headingId}
       data-testid={`shot-take-review-${shot.id}`}
-      className="mt-4 space-y-4 rounded-lg border border-primary/40 bg-background/60 p-4"
+      className="space-y-4"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -220,16 +218,6 @@ export function ShotTakeReview({
           >
             <RefreshCw className={cn(takesQuery.isFetching && "animate-spin")} aria-hidden="true" />
             Refresh
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={onClose}
-            aria-label={`Close takes for ${shotLabel(shot)}`}
-          >
-            <X aria-hidden="true" />
-            Close
           </Button>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { deflateSync } from "node:zlib";
 
 /**
  * Populated API fixtures for browser evidence specs. Every response shape is derived from the
@@ -418,7 +419,11 @@ function makeShot(overrides: Record<string, unknown>) {
 }
 
 export const shots = [
-  makeShot({}),
+  makeShot({
+    selected_take_id: "take-1",
+    last_frame_asset_id: "frame-1-last",
+    generation_state: "succeeded",
+  }),
   makeShot({
     id: "shot-2",
     sequence_index: 2,
@@ -445,6 +450,87 @@ export const shots = [
     ],
   }),
 ];
+
+function makeTake(overrides: Record<string, unknown>) {
+  /** ShotTakeOut */
+  return {
+    id: "take-1",
+    shot_id: "shot-1",
+    take_number: 1,
+    task_id: "task-1",
+    asset_id: "video-1",
+    model_id: "muse-video-mock-v1",
+    prompt_hash: "hash-1",
+    account_used: null,
+    first_frame_asset_id: "frame-1-first",
+    last_frame_asset_id: "frame-1-last",
+    continuity_flagged: false,
+    director_notes: "",
+    is_selected: true,
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+/** ShotTakeOut[] for shot-1; the other shots have no takes. */
+export const shotOneTakes = [
+  makeTake({}),
+  makeTake({
+    id: "take-2",
+    take_number: 2,
+    task_id: "task-2",
+    asset_id: "video-2",
+    prompt_hash: "hash-2",
+    first_frame_asset_id: null,
+    last_frame_asset_id: "frame-2-last",
+    is_selected: false,
+    continuity_flagged: true,
+    director_notes: "Scarf switches shoulders.",
+  }),
+];
+
+/** CRC-32 for PNG chunks. */
+function crc32(bytes: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** A small 16:9 gradient PNG so frame thumbnails decode as real images in screenshots. */
+function gradientPng(width = 64, height = 36): Buffer {
+  const rows = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y += 1) {
+    const offset = y * (width * 3 + 1);
+    for (let x = 0; x < width; x += 1) {
+      rows[offset + 1 + x * 3] = Math.round(30 + (60 * x) / width);
+      rows[offset + 2 + x * 3] = Math.round(40 + (50 * y) / height);
+      rows[offset + 3 + x * 3] = Math.round(90 + (100 * (x + y)) / (width + height));
+    }
+  }
+  const chunk = (type: string, data: Buffer) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(rows)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+const FRAME_PNG = gradientPng();
 
 /** StoryBibleEntryOut[] (copied from e2e/script-studio.spec.ts) */
 export const storyBible = [
@@ -508,6 +594,9 @@ function defaultResponse({ method, pathname }: Recorded): MockResponse {
     "/api/v1/metrics/summary": metricsSummary,
     "/api/v1/system/logs": systemLogs,
     [`${P}/shots`]: shots,
+    "/api/v1/queue/shots/shot-1/takes": shotOneTakes,
+    "/api/v1/queue/shots/shot-2/takes": [],
+    "/api/v1/queue/shots/shot-3/takes": [],
     [`${P}/story-bible`]: storyBible,
     "/api/v1/queue/tasks": emptyQueue,
   };
@@ -545,6 +634,15 @@ export async function mockStudioApi(
       body: parsedBody,
     };
     requests.push(recorded);
+
+    // Frame assets (GET /api/v1/assets/{asset_id}/download) are served as real PNG bytes.
+    if (
+      recorded.method === "GET" &&
+      /^\/api\/v1\/assets\/frame-[^/]+\/download$/.test(recorded.pathname)
+    ) {
+      await route.fulfill({ status: 200, contentType: "image/png", body: FRAME_PNG });
+      return;
+    }
 
     const response = overrides(recorded) ?? defaultResponse(recorded);
     if (response && response.status === 204) {

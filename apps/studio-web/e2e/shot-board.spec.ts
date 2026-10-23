@@ -131,21 +131,23 @@ async function mockApi(page: Page, overrides: (request: Recorded) => unknown | u
           ? shots
           : recorded.pathname === "/api/v1/connections"
             ? [liveConnection]
-            : recorded.pathname === "/api/v1/queue/tasks"
-              ? {
-                  items: [],
-                  total: 0,
-                  limit: 50,
-                  offset: 0,
-                  has_more: false,
-                  summary: {
-                    total_tasks: 0,
-                    active_tasks: 0,
-                    failed_tasks: 0,
-                    awaiting_input_tasks: 0,
-                  },
-                }
-              : null;
+            : /^\/api\/v1\/queue\/shots\/[^/]+\/takes$/.test(recorded.pathname)
+              ? []
+              : recorded.pathname === "/api/v1/queue/tasks"
+                ? {
+                    items: [],
+                    total: 0,
+                    limit: 50,
+                    offset: 0,
+                    has_more: false,
+                    summary: {
+                      total_tasks: 0,
+                      active_tasks: 0,
+                      failed_tasks: 0,
+                      awaiting_input_tasks: 0,
+                    },
+                  }
+                : null;
     await route.fulfill({
       status: body === null ? 404 : 200,
       contentType: "application/json",
@@ -194,10 +196,19 @@ test("edits a shot, maps a 422 to the field and shows the recompiled prompt", as
     "aria-current",
     "page",
   );
-  await expect(page.getByTestId("shot-scene-scene-1").getByRole("article")).toHaveCount(2);
-  await expect(page.getByTestId("shot-scene-scene-2").getByRole("article")).toHaveCount(1);
+  const rail = page.getByRole("navigation", { name: "Shot navigator" });
+  await expect(rail.getByTestId("shot-scene-scene-1").getByRole("listitem")).toHaveCount(2);
+  await expect(rail.getByTestId("shot-scene-scene-2").getByRole("listitem")).toHaveCount(1);
+  await expect(rail.getByTestId("shot-card-shot-1")).toHaveAttribute("aria-current", "true");
 
-  await page.getByRole("button", { name: "Edit Shot 2 · Chase" }).click();
+  // Open Shot 2 from the navigator; the selection is kept in the URL.
+  await rail.getByRole("button", { name: "Shot 2 · Chase", exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/test-project\/shot-board\?shot=shot-2$/);
+  await expect(rail.getByTestId("shot-card-shot-2")).toHaveAttribute("aria-current", "true");
+  const workspace = page.getByTestId("shot-workspace-shot-2");
+  await expect(workspace.getByRole("heading", { name: "Shot 2 · Chase" })).toBeVisible();
+
+  await workspace.getByRole("button", { name: "Edit Shot 2 · Chase" }).click();
   const panel = page.getByTestId("shot-edit-panel-shot-2");
   await expect(panel.getByLabel("Action")).toBeFocused();
   await panel.getByLabel("Approval").selectOption("approved");
@@ -226,6 +237,13 @@ test("edits a shot, maps a 422 to the field and shows the recompiled prompt", as
   for (const request of requests) expect(request.pathname.startsWith("/api/")).toBe(true);
 
   await page.screenshot({ path: "test-results/shot-board-edit.png", fullPage: true });
+
+  // The selected shot survives a reload.
+  await page.reload();
+  await expect(page.getByTestId("shot-workspace-shot-2")).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Shot navigator" }).getByTestId("shot-card-shot-2"),
+  ).toHaveAttribute("aria-current", "true");
 });
 
 test("launches a batch after confirmation and lists frame-chain warnings and blocked shots", async ({
@@ -259,6 +277,12 @@ test("launches a batch after confirmation and lists frame-chain warnings and blo
 
   await page.goto("/projects/test-project/shot-board");
   await expect(page.getByTestId("shot-card-shot-1")).toBeVisible();
+
+  // Batch launch lives behind a toolbar toggle next to Generation settings.
+  const batchToggle = page.getByRole("button", { name: "Batch launch", exact: true });
+  await expect(batchToggle).toHaveAttribute("aria-expanded", "false");
+  await batchToggle.click();
+  await expect(batchToggle).toHaveAttribute("aria-expanded", "true");
 
   const launch = page.getByRole("button", { name: "Launch batch" });
   await expect(launch).toBeDisabled();

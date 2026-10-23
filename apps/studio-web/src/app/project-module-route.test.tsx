@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => mocks.params,
+  useSearch: () => ({}),
+  useNavigate: () => () => Promise.resolve(),
   Link: ({
     children,
     params,

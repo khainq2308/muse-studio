@@ -105,13 +105,17 @@ export function useEnqueueShotTask(projectId: string) {
   return { ...mutation, mutate };
 }
 
-/** Takes of one shot (`GET /api/v1/queue/shots/{shot_id}/takes`), loaded when review opens. */
-export function useShotTakes(projectId: string, shotId: string) {
+/**
+ * Takes of one shot (`GET /api/v1/queue/shots/{shot_id}/takes`). The Shot Board loads them for
+ * the selected shot only; the take review shares the same cache entry.
+ */
+export function useShotTakes(projectId: string, shotId: string, options?: { enabled?: boolean }) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   return useQuery({
     queryKey: queryKeys.shotTakes(sessionVersion, projectId, shotId),
     queryFn: ({ signal }) =>
       apiGet("/api/v1/queue/shots/{shot_id}/takes", { signal, pathParams: { shot_id: shotId } }),
+    enabled: (options?.enabled ?? true) && Boolean(shotId),
   });
 }
 
