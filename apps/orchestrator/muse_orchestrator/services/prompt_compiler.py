@@ -73,8 +73,9 @@ class CompiledPromptResult:
     sections: dict[str, str]
     lint_issues: list[LintIssue]
     # Hash the same shot produced before action_start/action_end entered the prompt.
-    # Equal to ``prompt_hash`` when the shot has no boundaries. Computed, never persisted:
-    # batch ``only_changed`` accepts it so takes rendered before the upgrade stay current.
+    # Equal to ``prompt_hash`` when the shot has no informative (non-generic) boundaries.
+    # Computed, never persisted: batch ``only_changed`` accepts it so takes rendered
+    # before the upgrade stay current.
     legacy_prompt_hash: str
 
     @property
@@ -125,6 +126,17 @@ _GENERIC_HANDOFF_VALUES = {
     "same as prior",
     "no specific state",
 }
+
+
+def is_generic_handoff(value: str) -> bool:
+    """True for empty or placeholder action boundaries such as "in position".
+
+    Shared by the continuity lint and the prompt compiler: a generic boundary carries no
+    information, so it is never placed in the prompt nor in its hash.
+    """
+    return re.sub(r"[\W_]+", " ", value.casefold()).strip() in _GENERIC_HANDOFF_VALUES
+
+
 _CONTINUITY_STOP_WORDS = {
     "a", "an", "and", "at", "by", "from", "in", "into", "is", "it", "of", "on",
     "or", "the", "to", "was", "were", "with", "đang", "được", "là", "một",
@@ -217,8 +229,7 @@ def _lint_inter_shot_continuity(
             )
         )
     elif (
-        re.sub(r"[\W_]+", " ", previous_end.casefold()).strip() in _GENERIC_HANDOFF_VALUES
-        or re.sub(r"[\W_]+", " ", current_start.casefold()).strip() in _GENERIC_HANDOFF_VALUES
+        is_generic_handoff(previous_end) or is_generic_handoff(current_start)
     ):
         issues.append(
             LintIssue(
@@ -233,15 +244,24 @@ def _lint_inter_shot_continuity(
         )
 
 
-def _action_section(action: str, action_start: str, action_end: str) -> str:
-    """Build the ACTION section; boundaries are appended only when non-empty.
+def _boundary_text(value: str) -> str:
+    """Normalise one action boundary; empty and generic placeholders become ""."""
+    if is_generic_handoff(value):
+        return ""
+    return value.strip().rstrip(".").strip()
 
+
+def _action_section(action: str, action_start: str, action_end: str) -> str:
+    """Build the ACTION section; boundaries are appended only when informative.
+
+    Empty and generic boundaries (``is_generic_handoff``, e.g. the script parser's
+    "in position" / "completes motion" defaults) are left out of the prompt and hash.
     Dialogue is deliberately never part of the video prompt: video models do not speak
     and tend to render quoted dialogue as on-screen text.
     """
     text = f"Action: {action}"
-    start = action_start.strip().rstrip(".").strip()
-    end = action_end.strip().rstrip(".").strip()
+    start = _boundary_text(action_start)
+    end = _boundary_text(action_end)
     if not start and not end:
         # Byte-identical to the pre-boundary prompt so existing hashes stay valid.
         return text

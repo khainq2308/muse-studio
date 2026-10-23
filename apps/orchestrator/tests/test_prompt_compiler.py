@@ -172,10 +172,36 @@ def test_prompt_and_hash_are_byte_identical_to_legacy_without_boundaries() -> No
 
 
 def test_legacy_hash_matches_pre_change_hash_of_a_shot_with_boundaries() -> None:
-    result = compile_shot(make_shot(action_start="in position", action_end="completes motion"))
+    result = compile_shot(make_shot(action_start="Seated", action_end="Stands up"))
 
     assert result.prompt_hash != _LEGACY_HASH
     assert result.legacy_prompt_hash == _LEGACY_HASH
+
+
+def test_generic_parser_default_boundaries_keep_the_legacy_prompt_and_hash() -> None:
+    # script_parser fills "in position" / "completes motion" (and "neutral pose") when
+    # the script gives no boundaries; they carry no information.
+    for start, end in [
+        ("in position", "completes motion"),
+        ("In position.", "Completes the motion!"),
+        ("neutral pose", "pose_completed"),
+    ]:
+        result = compile_shot(make_shot(action_start=start, action_end=end))
+        assert result.prompt_final == _LEGACY_PROMPT
+        assert result.prompt_hash == _LEGACY_HASH
+        assert result.legacy_prompt_hash == _LEGACY_HASH
+
+
+def test_generic_boundary_is_omitted_next_to_a_real_one() -> None:
+    real_end = compile_shot(make_shot(action_start="in position", action_end="Stands up"))
+    real_start = compile_shot(make_shot(action_start="Seated", action_end="completes motion"))
+
+    assert real_end.sections["ACTION"] == "Action: Character remains at the table. Ends: Stands up."
+    assert real_start.sections["ACTION"] == "Action: Character remains at the table. Starts: Seated."
+    assert "in position" not in real_end.prompt_final
+    assert "completes motion" not in real_start.prompt_final
+    # Hash equals the same shot with the generic boundary left empty.
+    assert real_end.prompt_hash == compile_shot(make_shot(action_start="", action_end="Stands up")).prompt_hash
 
 
 def test_hash_changes_when_only_action_end_changes() -> None:

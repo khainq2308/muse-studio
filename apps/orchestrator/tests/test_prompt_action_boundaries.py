@@ -1,6 +1,7 @@
 """Shot action boundaries (action_start/action_end) in the compiled video prompt.
 
-Boundaries entered the prompt and its hash; dialogue never does. Takes rendered before
+Informative boundaries entered the prompt and its hash; generic placeholders such as the
+script parser's "in position" / "completes motion" and dialogue never do. Takes rendered before
 that change carry the legacy hash, which batch ``only_changed`` still accepts.
 """
 # The `client` fixture is imported from test_queue_review2; test parameters reuse its name.
@@ -35,6 +36,12 @@ SHOT 1: Hero waits
 
 async def _render_first_shot(client: AsyncClient) -> tuple[str, str, str]:
     pid, cid, s1, _ = await _setup(client)
+    # The imported defaults are generic (not in the prompt); give the shot real boundaries.
+    async with STATE["maker"]() as db:
+        shot = await db.get(ShotRecord, s1["id"])
+        shot.action_start = "Hero crouches at the gap edge"
+        shot.action_end = "Hero lands on the far roof"
+        await db.commit()
     await client.post(f"/api/v1/projects/{pid}/batch/launch", json={"connection_id": cid, "shot_ids": [s1["id"]]})
     await _ticks(client, pid)
     assert (await _shots(client, pid))[s1["id"]]["generation_state"] == "succeeded"
@@ -49,7 +56,7 @@ async def _legacy_hash(pid: str, shot_id: str) -> str:
         shot = await db.get(ShotRecord, shot_id)
         legacy = hashes[shot_id] - {shot.prompt_hash}
         await db.rollback()
-    # The imported shot has the parser's default boundaries, so the hashes differ.
+    # The shot has real boundaries, so the new and legacy hashes differ.
     assert len(legacy) == 1
     return next(iter(legacy))
 
@@ -107,6 +114,38 @@ async def test_imported_prompt_contains_boundaries_but_never_dialogue(client: As
     ) in shot["prompt_final"]
     assert "midnight" not in shot["prompt_final"]
     assert "Dialogue" not in shot["prompt_final"]
+
+
+async def test_imported_generic_default_boundaries_keep_the_legacy_prompt(client: AsyncClient):
+    pid, _cid, s1, _ = await _setup(client)
+    shot = (await _shots(client, pid))[s1["id"]]
+
+    # script_parser defaults; they carry no information and stay out of prompt and hash.
+    async with STATE["maker"]() as db:
+        row = await db.get(ShotRecord, s1["id"])
+        assert (row.action_start, row.action_end) == ("in position", "completes motion")
+    assert "Action: Leaps across neon gap Continuity:" in shot["prompt_final"]
+    assert "Starts:" not in shot["prompt_final"] and "Ends:" not in shot["prompt_final"]
+    async with STATE["maker"]() as db:
+        _shots_list, hashes = await PipelineService(StudioRepository(db)).recompile_project_shots_with_prompt_hashes(
+            pid, commit=False
+        )
+        await db.rollback()
+    assert hashes[s1["id"]] == frozenset({shot["prompt_hash"]})
+
+
+async def test_imported_generic_and_real_boundary_shows_only_the_real_one(client: AsyncClient):
+    pid = (await client.post("/api/v1/projects", json={"name": "mixed-boundaries"})).json()["id"]
+    script = BOUNDARY_SCRIPT.replace("Hero crouches at the ledge", "in position")
+    imported = await client.post(
+        f"/api/v1/projects/{pid}/scripts/import", json={"raw_content": script, "auto_apply_proposal": True}
+    )
+    assert imported.status_code == 201, imported.text
+    (shot,) = (await client.get(f"/api/v1/projects/{pid}/shots")).json()
+
+    assert "Action: Hero watches the street below. Ends: Hero stands and turns away." in shot["prompt_final"]
+    assert "Starts:" not in shot["prompt_final"]
+    assert "in position" not in shot["prompt_final"]
 
 
 async def test_only_changed_skips_legacy_take_of_unchanged_shot(client: AsyncClient):
