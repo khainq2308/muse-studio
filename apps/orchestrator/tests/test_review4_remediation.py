@@ -101,11 +101,29 @@ def test_sensitive_keys_are_redacted_even_when_the_value_looks_like_a_url():
     assert redacted["max_tokens"] == 5 and redacted["token"] is None
 
 
+def test_only_proxy_url_keys_keep_their_host():
+    redacted = SecretRedactor.redact_dict({
+        "proxy_password": "http://gw.example/SECRET/",
+        "proxy_token": "x://y",
+        "proxy_pass": "hunter2",
+        "pwd": "hunter2",
+        "body": b"Authorization: Bearer abcdefghijklmnop",
+    })
+    assert redacted["proxy_password"] == redacted["proxy_token"] == "[REDACTED]"
+    assert redacted["proxy_pass"] == redacted["pwd"] == "[REDACTED]"
+    assert "abcdefghijklmnop" not in redacted["body"]
+
+
 @pytest.mark.parametrize("text", [
     "Authorization: sk-live-1234567890abcdef",
     "Authorization: ApiKey sk-live-1234567890abcdef",
     '{"Authorization": "sk-live-1234567890abcdef"}',
     "Proxy-Authorization: Basic sk-live-1234567890abcdef",
+    # The credential is followed by more text: it must not be mistaken for a scheme word.
+    "Authorization: sk-live-1234567890abcdef rejected by upstream",
+    "Authorization: sk-live-1234567890abcdef\r\nContent-Type: application/json",
+    "authorization=sk-live-1234567890abcdef user=bob",
+    '{"Authorization": "sk-live-1234567890abcdef def", "x": 1}',
 ])
 def test_authorization_headers_without_a_known_scheme_are_redacted(text):
     assert "sk-live-1234567890abcdef" not in SecretRedactor.redact_text(text)
@@ -162,6 +180,93 @@ async def test_successful_reply_releases_its_lease(client: AsyncClient, monkeypa
     assert gateway.replies == [{"text": "calm"}]
     async with STATE["maker"]() as db:
         assert await db.get(GenerationDispatchLeaseRecord, tid) is None
+
+
+class _FailingReplyGateway(_Gateway):
+    def __init__(self, script, error):
+        super().__init__(script)
+        self.error = error
+
+    async def reply(self, task_id, answer):
+        self.replies.append(answer)
+        raise self.error
+
+
+async def _lease_of(tid):
+    async with STATE["maker"]() as db:
+        return await db.get(GenerationDispatchLeaseRecord, tid)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
+    ProviderFailure(ErrorCategory.UPSTREAM_5XX, "gateway down token=abcdefghijklmnop", 503, True),
+    RuntimeError("unexpected"),
+])
+async def test_reply_failure_releases_the_lease_and_keeps_the_question(client: AsyncClient, monkeypatch, error):
+    _pid, cid, s1, _ = await _setup(client)
+    gateway = _FailingReplyGateway(["needs_input"], error)
+    monkeypatch.setattr(generation_queue, "build_provider", lambda conn, account=None: gateway)
+    tid = (await client.post("/api/v1/queue/tasks", json={"shot_id": s1["id"], "connection_id": cid})).json()["id"]
+    await _drive_until_dispatched(tid)
+    assert (await _step(tid)).state == QueueTaskState.AWAITING_INPUT
+
+    if isinstance(error, RuntimeError):
+        with pytest.raises(RuntimeError):
+            await client.post(f"/api/v1/queue/tasks/{tid}/reply", json={"text": "calm"})
+    else:
+        failed = await client.post(f"/api/v1/queue/tasks/{tid}/reply", json={"text": "calm"})
+        assert failed.status_code >= 500
+        assert "abcdefghijklmnop" not in failed.text
+
+    assert gateway.replies == [{"text": "calm"}]
+    assert await _lease_of(tid) is None
+    assert (await _tasks_for_shot(s1["id"]))[-1].state == QueueTaskState.AWAITING_INPUT
+
+
+@pytest.mark.asyncio
+async def test_rejected_reply_refreshes_the_task_after_releasing_the_lease(client: AsyncClient, monkeypatch):
+    _pid, cid, s1, _ = await _setup(client)
+    gateway = _FailingReplyGateway(
+        ["needs_input", "running"],
+        ProviderFailure(ErrorCategory.INPUT_NOT_PENDING, "not waiting", 409, False),
+    )
+    monkeypatch.setattr(generation_queue, "build_provider", lambda conn, account=None: gateway)
+    tid = (await client.post("/api/v1/queue/tasks", json={"shot_id": s1["id"], "connection_id": cid})).json()["id"]
+    await _drive_until_dispatched(tid)
+    assert (await _step(tid)).state == QueueTaskState.AWAITING_INPUT
+
+    rejected = await client.post(f"/api/v1/queue/tasks/{tid}/reply", json={"text": "calm"})
+
+    assert rejected.status_code == 409, rejected.text
+    # The refresh step polled the gateway (the lease was released first) and saw "running".
+    assert (await _tasks_for_shot(s1["id"]))[-1].state == QueueTaskState.RUNNING
+    assert await _lease_of(tid) is None
+
+
+@pytest.mark.asyncio
+async def test_worker_step_defers_while_a_reply_lease_is_live_and_polls_after_it_expires(client: AsyncClient, monkeypatch):
+    tid, cid, _s1, gateway = await _awaiting(client, monkeypatch, ["needs_input"])
+    polls_before = len(gateway.script)
+    async with STATE["maker"]() as db:
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=tid, connection_id=cid, expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        ))
+        await db.commit()
+
+    deferred = await _step(tid)
+    assert deferred.state == QueueTaskState.AWAITING_INPUT
+    assert await _lease_of(tid) is not None
+
+    async with STATE["maker"]() as db:
+        lease = await db.get(GenerationDispatchLeaseRecord, tid)
+        lease.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        await db.commit()
+    resumed = await _step(tid)
+
+    # A task with an external id is polled again; it is never failed as dispatch_outcome_unknown.
+    assert resumed.state == QueueTaskState.AWAITING_INPUT
+    assert resumed.error_category is None
+    assert len(gateway.script) <= polls_before
 
 
 # --- F-05: pause/resume/account deletion ------------------------------------------------------
