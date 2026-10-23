@@ -2,7 +2,9 @@ import { useParams } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import NotFoundPage from "@/app/not-found-page";
 import { useProjects } from "@/entities/project/api";
+import { ProjectModuleNav } from "@/app/project-module-nav";
 import QueueMonitorPage from "@/features/queue-monitor";
+import ShotBoardPage from "@/features/shot-board";
 
 export default function ProjectModuleRoute() {
   const { projectId, module } = useParams({ from: "/_shell/projects/$projectId/$module" });
@@ -39,31 +41,31 @@ export default function ProjectModuleRoute() {
     );
   }
 
-  if (module === "queue-monitor") {
-    return (
+  // Remount per project so no local UI state (filters, open editors) leaks across projects.
+  const content =
+    module === "queue-monitor" ? (
+      <QueueMonitorPage key={projectId} projectId={projectId} />
+    ) : module === "shot-board" ? (
+      <ShotBoardPage key={projectId} projectId={projectId} />
+    ) : (
+      <div data-testid="project-module-placeholder" className="space-y-2">
+        <h2 className="text-xl font-semibold">{heading}</h2>
+        <p className="text-sm text-muted-foreground">This module is a placeholder in Phase 0a.</p>
+        <p className="text-xs text-muted-foreground">Project: {projectId}</p>
+      </div>
+    );
+
+  return (
+    <>
+      <ProjectModuleNav projectId={projectId} activeModule={module} />
       <section
         data-testid="project-module-route"
         data-project-id={projectId}
         data-module={module}
         className="rounded-xl border border-border bg-card p-6"
       >
-        <QueueMonitorPage key={projectId} projectId={projectId} />
+        {content}
       </section>
-    );
-  }
-
-  return (
-    <section
-      data-testid="project-module-route"
-      data-project-id={projectId}
-      data-module={module}
-      className="rounded-xl border border-border bg-card p-6"
-    >
-      <div data-testid="project-module-placeholder" className="space-y-2">
-        <h2 className="text-xl font-semibold">{heading}</h2>
-        <p className="text-sm text-muted-foreground">This module is a placeholder in Phase 0a.</p>
-        <p className="text-xs text-muted-foreground">Project: {projectId}</p>
-      </div>
-    </section>
+    </>
   );
 }

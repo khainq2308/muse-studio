@@ -12,4 +12,10 @@ export const queryKeys = {
   /** Mutation key for operator replies to awaiting-input tasks. */
   queueTaskReplies: (sessionVersion: number, projectId: string) =>
     ["queue-task-replies", sessionVersion, projectId] as const,
+  /** Every shot of a project; a shot edit recompiles neighbours, so invalidate the whole list. */
+  projectShots: (sessionVersion: number, projectId: string) =>
+    ["project-shots", sessionVersion, projectId] as const,
+  /** Mutation key for shot board generation requests (single enqueue and batch launch). */
+  shotBoardGeneration: (sessionVersion: number, projectId: string) =>
+    ["shot-board-generation", sessionVersion, projectId] as const,
 };
