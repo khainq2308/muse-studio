@@ -517,3 +517,134 @@ async def test_prometheus_output_has_one_help_and_type_per_family(client: AsyncC
         assert len(names) == len(set(names)), prefix
     assert 'musestudio_generation_tasks_by_state{state="running"} 1' in response.text
     assert 'musestudio_generation_tasks_by_state{state="queued"} 1' in response.text
+
+
+# --- Follow-up review of PR #78 ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text, secret", [
+    ("passphrase=my-secret-value", "my-secret-value"),
+    ("pwd=my-secret-value", "my-secret-value"),
+    ("proxy_pass=my-secret-value", "my-secret-value"),
+    ("secret_pin=123456", "123456"),
+    ('{"pwd": "my secret value", "max_tokens": 5}', "my secret value"),
+    ("{'passphrase': 'abc def ghi'}", "abc def ghi"),
+    ('{"secret_pin": 987654}', "987654"),
+])
+def test_text_redaction_uses_the_same_key_rules_as_mappings(text, secret):
+    redacted = SecretRedactor.redact_text(text)
+    assert secret not in redacted
+    assert SecretRedactor.redact_dict({"payload": text})["payload"] == redacted
+
+
+def test_text_redaction_keeps_non_secret_pairs():
+    text = "idempotency_key=abc max_tokens=5 https://example.com/a?b=c at 12:30"
+    assert SecretRedactor.redact_text(text) == text
+
+
+class _BlockingGateway:
+    """generate_video waits until the test releases it; records provider cancels."""
+
+    def __init__(self):
+        import asyncio
+
+        self.sent = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled: list[str] = []
+
+    async def generate_video(self, request):
+        self.sent.set()
+        await self.release.wait()
+        return ProviderTask(external_task_id="ext_late", status="queued")
+
+    async def get_task(self, task_id):
+        return ProviderTaskStatus(external_task_id=task_id, status="running")
+
+    async def cancel(self, task_id):
+        from muse_orchestrator.providers.base import CancelOutcome
+
+        self.cancelled.append(task_id)
+        return CancelOutcome.CANCELLED
+
+
+async def _dispatch_with_operator_action(client, monkeypatch, action: str):
+    import asyncio
+
+    _pid, cid, s1, _ = await _setup(client)
+    gateway = _BlockingGateway()
+    monkeypatch.setattr(generation_queue, "build_provider", lambda conn, account=None: gateway)
+    tid = (await client.post("/api/v1/queue/tasks", json={"shot_id": s1["id"], "connection_id": cid})).json()["id"]
+    worker = asyncio.create_task(_step(tid))
+    await asyncio.wait_for(gateway.sent.wait(), 5)
+    acted = await client.post(f"/api/v1/queue/tasks/{tid}/{action}")
+    assert acted.status_code == 200, acted.text
+    gateway.release.set()
+    task = await asyncio.wait_for(worker, 5)
+    return task, gateway
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_dispatch_cancels_the_late_provider_job(client: AsyncClient, monkeypatch):
+    task, gateway = await _dispatch_with_operator_action(client, monkeypatch, "cancel")
+
+    assert task.state == QueueTaskState.CANCELED
+    assert task.external_task_id == "ext_late"
+    assert gateway.cancelled == ["ext_late"]
+    assert task.history_log[-1] == "Provider cancel: cancelled"
+
+
+@pytest.mark.asyncio
+async def test_pause_during_dispatch_is_preserved(client: AsyncClient, monkeypatch):
+    task, gateway = await _dispatch_with_operator_action(client, monkeypatch, "pause")
+
+    assert task.state == QueueTaskState.PAUSED
+    assert task.external_task_id == "ext_late"
+    assert gateway.cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_publishes_tasks_created_before_a_refusal(client: AsyncClient, monkeypatch):
+    pid, cid, s1, s2 = await _setup(client)
+    for shot in (s1, s2):
+        tid = (await client.post("/api/v1/queue/tasks", json={"shot_id": shot["id"], "connection_id": cid})).json()["id"]
+        async with STATE["maker"]() as db:
+            (await db.get(GenerationTaskRecord, tid)).state = QueueTaskState.FAILED
+            (await db.get(ShotRecord, shot["id"])).generation_state = ShotGenerationState.FAILED
+            await db.commit()
+    real_enqueue = generation_queue.GenerationQueueService.enqueue_shot_generation
+    calls = {"n": 0}
+
+    async def refuse_second(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("blocked by a concurrent change")
+        return await real_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(generation_queue.GenerationQueueService, "enqueue_shot_generation", refuse_second)
+    jobs_before = len(app.state.arq_pool.jobs)
+
+    retried = await client.post(f"/api/v1/projects/{pid}/batch/retry-failed")
+
+    assert retried.status_code == 422, retried.text
+    detail = retried.json()["detail"]
+    assert detail["code"] == "retry_partially_applied" and len(detail["new_task_ids"]) == 1
+    scheduled = [job for job in app.state.arq_pool.jobs[jobs_before:] if detail["new_task_ids"][0] in str(job)]
+    assert scheduled, "the task created before the refusal was not published"
+
+
+@pytest.mark.asyncio
+async def test_client_key_reused_with_another_prompt_is_a_conflict(client: AsyncClient):
+    pid, cid, s1, _ = await _setup(client)
+    body = {"shot_id": s1["id"], "connection_id": cid, "idempotency_key": "client-key-1"}
+    first = await client.post("/api/v1/queue/tasks", json=body)
+    assert first.status_code == 201, first.text
+    async with STATE["maker"]() as db:
+        (await db.get(GenerationTaskRecord, first.json()["id"])).state = QueueTaskState.SUCCEEDED
+        await db.commit()
+    replay = await client.post("/api/v1/queue/tasks", json=body)
+    assert replay.status_code == 201 and replay.json()["id"] == first.json()["id"]
+
+    await client.patch(f"/api/v1/projects/{pid}/shots/{s1['id']}", json={"action": "A completely different action"})
+    changed = await client.post("/api/v1/queue/tasks", json=body)
+
+    assert changed.status_code == 409, changed.text
