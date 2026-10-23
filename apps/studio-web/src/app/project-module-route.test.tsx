@@ -59,6 +59,36 @@ vi.mock("@/features/script-studio", () => ({
   },
 }));
 
+vi.mock("@/features/workflow-canvas", () => ({
+  default: function WorkflowCanvasStub({ projectId }: { projectId: string }) {
+    return <div data-testid="workflow-canvas-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/timeline-editor", () => ({
+  default: function TimelineEditorStub({ projectId }: { projectId: string }) {
+    return <div data-testid="timeline-editor-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/connections", () => ({
+  default: function ConnectionsStub({ projectId }: { projectId: string }) {
+    return <div data-testid="connections-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/projects", () => ({
+  default: function ProjectsStub({ projectId }: { projectId: string }) {
+    return <div data-testid="projects-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/system-ops", () => ({
+  default: function SystemOpsStub({ projectId }: { projectId: string }) {
+    return <div data-testid="system-ops-stub">{projectId}</div>;
+  },
+}));
+
 import ProjectModuleRoute from "@/app/project-module-route";
 
 beforeEach(() => {
@@ -90,8 +120,8 @@ describe("ProjectModuleRoute", () => {
     expect(screen.getByTestId("shot-board-stub").textContent).toBe("project-a");
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
-    const queue = within(nav).getByRole("link", { name: "Queue Monitor" });
+    const shotBoard = within(nav).getByRole("link", { name: /Shot Board/i });
+    const queue = within(nav).getByRole("link", { name: /Queue Monitor/i });
     expect(shotBoard).toHaveAttribute("aria-current", "page");
     expect(shotBoard).toHaveAttribute("href", "/projects/project-a/shot-board");
     expect(queue).not.toHaveAttribute("aria-current");
@@ -105,11 +135,26 @@ describe("ProjectModuleRoute", () => {
     expect(screen.getByTestId("script-studio-stub").textContent).toBe("project-a");
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const scriptStudio = within(nav).getByRole("link", { name: "Script Studio" });
-    const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
+    const scriptStudio = within(nav).getByRole("link", { name: /Script Studio/i });
+    const shotBoard = within(nav).getByRole("link", { name: /Shot Board/i });
     expect(scriptStudio).toHaveAttribute("aria-current", "page");
     expect(scriptStudio).toHaveAttribute("href", "/projects/project-a/script-studio");
     expect(shotBoard).not.toHaveAttribute("aria-current");
+  });
+
+  it("renders Workflow Canvas, Timeline Editor, Connections, Projects, and System Ops modules", () => {
+    for (const [module, testId] of [
+      ["workflow-canvas", "workflow-canvas-stub"],
+      ["timeline-editor", "timeline-editor-stub"],
+      ["connections", "connections-stub"],
+      ["projects", "projects-stub"],
+      ["system-ops", "system-ops-stub"],
+    ] as const) {
+      mocks.params = { projectId: "project-a", module };
+      const { unmount } = render(<ProjectModuleRoute />);
+      expect(screen.getByTestId(testId).textContent).toBe("project-a");
+      unmount();
+    }
   });
 
   it("shows a not-found page instead of an empty module for an unknown project", () => {

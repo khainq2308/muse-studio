@@ -1,9 +1,18 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "@/lib/api/schema";
 import { ConnectionList } from "@/features/workspace-overview/components/connection-list";
 
 afterEach(() => cleanup());
+
+function renderWithQueryClient(ui: ReactNode) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 type ConnectionOut = components["schemas"]["ConnectionOut"];
 
@@ -41,7 +50,7 @@ const connections: ConnectionOut[] = [
 
 describe("ConnectionList", () => {
   it("shows an em dash instead of inventing zero latency for null values", () => {
-    render(
+    renderWithQueryClient(
       <ConnectionList
         connections={connections}
         isLoading={false}
@@ -56,7 +65,7 @@ describe("ConnectionList", () => {
   });
 
   it("limits fractional latency to one decimal place without trailing zeroes", () => {
-    render(
+    renderWithQueryClient(
       <ConnectionList
         connections={connections.slice(1)}
         isLoading={false}

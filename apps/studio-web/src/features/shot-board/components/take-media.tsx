@@ -53,7 +53,7 @@ function TakeMediaBody({
   const query = useAssetMedia(assetId, maxBytes, { enabled, gcTime: frame ? 30_000 : 0 });
   const url = useObjectUrl(query.data);
   const boxClass =
-    "flex aspect-video w-full items-center justify-center overflow-hidden rounded-md border border-border bg-muted/40 text-xs text-muted-foreground";
+    "flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border border-slate-800 bg-slate-950 text-xs text-slate-300 shadow-inner";
 
   if (!assetId) {
     return (

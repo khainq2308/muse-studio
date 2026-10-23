@@ -61,6 +61,25 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
 
   const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
   const sceneIds = useMemo(() => groupShotsByScene(shots).map((group) => group.sceneId), [shots]);
+  const shotStats = useMemo(() => {
+    let approved = 0;
+    let succeeded = 0;
+    let frameChained = 0;
+    let blocked = 0;
+    for (const shot of shots) {
+      if (shot.approval_state === "approved") approved += 1;
+      if (shot.generation_state === "succeeded") succeeded += 1;
+      if (shot.continuity_mode === "frame_chain") frameChained += 1;
+      if (
+        shot.generation_state === "blocked_reference" ||
+        shot.generation_state === "blocked_upstream_frame" ||
+        shot.lint_report.some((issue) => issue.severity === "blocker")
+      ) {
+        blocked += 1;
+      }
+    }
+    return { total: shots.length, approved, succeeded, frameChained, blocked };
+  }, [shots]);
   const connection = (connectionsQuery.data ?? []).find(
     (item) => item.enabled && item.id === settings.connectionId,
   );
@@ -243,20 +262,51 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
       />
 
       {shots.length > 0 && (
-        <BatchLaunchPanel
-          projectId={projectId}
-          shots={shots}
-          sceneIds={sceneIds}
-          connection={connection}
-          modelId={settings.modelId}
-          taskType={settings.taskType}
-          isLaunching={batchMutation.isPending}
-          result={batchMutation.data ?? null}
-          errorMessage={
-            batchMutation.error ? generationErrorMessage(batchMutation.error, "batch") : null
-          }
-          onLaunch={(request) => batchMutation.mutate(request)}
-        />
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-muted-foreground">Total Shots</p>
+              <p className="mt-0.5 text-lg font-bold tabular-nums">{shotStats.total}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-muted-foreground">Scenes</p>
+              <p className="mt-0.5 text-lg font-bold tabular-nums">{sceneIds.length}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-muted-foreground">Rendered / Succeeded</p>
+              <p className="mt-0.5 text-lg font-bold tabular-nums text-success">
+                {shotStats.succeeded}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-muted-foreground">Frame-Chained</p>
+              <p className="mt-0.5 text-lg font-bold tabular-nums text-primary">
+                {shotStats.frameChained}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-muted-foreground">Blocked / Needs Lock</p>
+              <p className="mt-0.5 text-lg font-bold tabular-nums text-destructive">
+                {shotStats.blocked}
+              </p>
+            </div>
+          </div>
+
+          <BatchLaunchPanel
+            projectId={projectId}
+            shots={shots}
+            sceneIds={sceneIds}
+            connection={connection}
+            modelId={settings.modelId}
+            taskType={settings.taskType}
+            isLaunching={batchMutation.isPending}
+            result={batchMutation.data ?? null}
+            errorMessage={
+              batchMutation.error ? generationErrorMessage(batchMutation.error, "batch") : null
+            }
+            onLaunch={(request) => batchMutation.mutate(request)}
+          />
+        </>
       )}
 
       <section aria-label="Shots" className="space-y-3">

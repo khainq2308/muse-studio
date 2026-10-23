@@ -1,3 +1,4 @@
+import { KeyRound, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useSessionStore } from "@/lib/stores/session-store";
@@ -11,7 +12,7 @@ export function AdminTokenForm() {
 
   return (
     <form
-      className="flex flex-col gap-2 sm:flex-row"
+      className="flex flex-col gap-2 sm:flex-row sm:items-center"
       onSubmit={(event) => {
         event.preventDefault();
         // An empty submission must never silently disconnect; Disconnect is the explicit path.
@@ -20,30 +21,46 @@ export function AdminTokenForm() {
         setDraftAdminToken("");
       }}
     >
-      <input
-        aria-label="Studio admin token"
-        type="password"
-        autoComplete="off"
-        placeholder="Studio admin token"
-        value={draftAdminToken}
-        onChange={(event) => setDraftAdminToken(event.target.value)}
-        className="h-10 min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:w-64"
-      />
-      <Button type="submit" disabled={!canConnect}>
-        {activeAdminToken ? "Update token" : "Connect"}
-      </Button>
-      {activeAdminToken && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            setDraftAdminToken("");
-            clearAdminToken();
-          }}
-        >
-          Disconnect
+      <div className="relative flex items-center">
+        {activeAdminToken ? (
+          <ShieldCheck
+            className="pointer-events-none absolute left-2.5 size-3.5 text-success"
+            aria-hidden="true"
+          />
+        ) : (
+          <KeyRound
+            className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground"
+            aria-hidden="true"
+          />
+        )}
+        <input
+          aria-label="Studio admin token"
+          type="password"
+          autoComplete="off"
+          placeholder={activeAdminToken ? "Session active · update token" : "Studio admin token"}
+          value={draftAdminToken}
+          onChange={(event) => setDraftAdminToken(event.target.value)}
+          className="h-9 min-w-0 rounded-lg border border-input bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:w-52"
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Button type="submit" size="sm" disabled={!canConnect}>
+          {activeAdminToken ? "Update token" : "Connect"}
         </Button>
-      )}
+        {activeAdminToken && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setDraftAdminToken("");
+              clearAdminToken();
+            }}
+          >
+            Disconnect
+          </Button>
+        )}
+      </div>
     </form>
   );
 }
