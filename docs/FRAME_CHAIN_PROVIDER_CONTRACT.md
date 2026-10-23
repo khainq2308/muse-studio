@@ -66,7 +66,7 @@ The adapter supports an explicit `MUSE2API_VIDEO_PAYLOAD_PROFILE` setting:
 
 ### Detecting continuity support
 
-The patched gateway (khainq2308/muse2api `0f76005`) reports `driver.capabilities.video_first_frame` in `GET /readyz`. `POST /api/v1/connections/{id}/test` stores it as `capabilities_snapshot.video_first_frame`:
+The patched gateway (the private personal repository khainq2308/muse2api, from `0f76005`; CI cannot check it out and pins public upstream `949f326`) reports `driver.capabilities.video_first_frame` in `GET /readyz`. `POST /api/v1/connections/{id}/test` stores it as `capabilities_snapshot.video_first_frame`:
 
 - `supported`: the gateway advertises `true`.
 - `unsupported`: the gateway advertises `false`, or the connection uses the mock provider (placeholder frames).
