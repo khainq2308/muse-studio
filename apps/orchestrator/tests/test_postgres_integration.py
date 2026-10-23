@@ -319,7 +319,7 @@ async def test_pg_alembic_upgrade_head_matches_orm_metadata(pg_engine: AsyncEngi
             return compare_metadata(context, Base.metadata)
 
         diffs = await conn.run_sync(_diff)
-    assert version == ["0003_awaiting_input"]
+    assert version == ["0004_lease_owner_token"]
     assert diffs == []
 
 
@@ -339,7 +339,7 @@ async def test_pg_alembic_upgrade_head_is_idempotent(migrated_url: str) -> None:
             ).scalar_one()
     finally:
         await engine.dispose()
-    assert version == ["0003_awaiting_input"]
+    assert version == ["0004_lease_owner_token"]
     assert "UNIQUE" in index_def and "WHERE" in index_def
 
 
@@ -396,7 +396,7 @@ async def test_pg_migration_0002_repairs_duplicates_before_adding_constraints(pg
     finally:
         await engine.dispose()
 
-    assert head == "0003_awaiting_input"
+    assert head == "0004_lease_owner_token"
     assert versions == [1, 2]
     assert current == 2
     assert code_names == ["hero", "hero__dup1"]
@@ -471,6 +471,78 @@ async def test_pg_migration_0003_awaiting_input_round_trip(pg_database_url: str)
 
     # The enum value survives the downgrade (PostgreSQL cannot drop it); re-upgrade is safe.
     await asyncio.to_thread(_alembic_upgrade_to, pg_database_url, "head")
+
+
+async def _lease_columns(url: str) -> dict[str, str]:
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            rows = (await conn.execute(text(
+                "SELECT column_name, is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'generation_dispatch_leases'"
+            ))).all()
+    finally:
+        await engine.dispose()
+    return {name: nullable for name, nullable in rows}
+
+
+async def test_pg_migration_0004_lease_owner_token_round_trip(pg_database_url: str) -> None:
+    """The nullable owner token is added on top of 0003 and dropped again, keeping lease rows."""
+    await asyncio.to_thread(_alembic_upgrade_to, pg_database_url, "0003_awaiting_input")
+    assert "owner_token" not in await _lease_columns(pg_database_url)
+    engine = create_async_engine(pg_database_url)
+    try:
+        async with engine.begin() as conn:
+            tables = Base.metadata.tables
+            await conn.execute(sa_insert(tables["projects"]).values(id="prj_ls", name="L"))
+            await conn.execute(sa_insert(tables["provider_connections"]).values(
+                id="conn_ls", name="c", base_url="http://localhost:8080"
+            ))
+            await conn.execute(sa_insert(tables["scenes"]).values(
+                id="scn_ls", project_id="prj_ls", scene_index=0, title="S"
+            ))
+            await conn.execute(sa_insert(tables["shots"]).values(
+                id="sht_ls", project_id="prj_ls", scene_id="scn_ls", sequence_index=0,
+                title="Shot", location_code="loc",
+            ))
+            await conn.execute(sa_insert(tables["generation_tasks"]).values(
+                id="tsk_ls", project_id="prj_ls", shot_id="sht_ls", connection_id="conn_ls",
+                task_type="video", model_id="m", idempotency_key="idem_ls",
+                state=QueueTaskState.RUNNING,
+            ))
+            # Written the way pre-0004 code did: no owner token column exists yet.
+            await conn.execute(text(
+                "INSERT INTO generation_dispatch_leases (task_id, connection_id, expires_at, created_at) "
+                "VALUES ('tsk_ls', 'conn_ls', now(), now())"
+            ))
+    finally:
+        await engine.dispose()
+
+    await asyncio.to_thread(_alembic_upgrade_to, pg_database_url, "head")
+    columns = await _lease_columns(pg_database_url)
+    assert columns.get("owner_token") == "YES"
+    engine = create_async_engine(pg_database_url)
+    try:
+        async with engine.begin() as conn:
+            assert (await conn.execute(text(
+                "SELECT owner_token FROM generation_dispatch_leases WHERE task_id = 'tsk_ls'"
+            ))).scalar_one() is None
+    finally:
+        await engine.dispose()
+
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("sqlalchemy.url", pg_database_url.replace("%", "%%"))
+    await asyncio.to_thread(command.downgrade, config, "0003_awaiting_input")
+    assert "owner_token" not in await _lease_columns(pg_database_url)
+    engine = create_async_engine(pg_database_url)
+    try:
+        async with engine.connect() as conn:
+            count = (await conn.execute(text("SELECT count(*) FROM generation_dispatch_leases"))).scalar_one()
+    finally:
+        await engine.dispose()
+    assert count == 1
+    await asyncio.to_thread(_alembic_upgrade_to, pg_database_url, "head")
+    assert "owner_token" in await _lease_columns(pg_database_url)
 
 
 # --- queue concurrency ----------------------------------------------------------------

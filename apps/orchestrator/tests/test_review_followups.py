@@ -4,25 +4,40 @@ owner tokens, redaction of unquoted values with spaces and Shot Board take API g
 # ruff: noqa: F811
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
 
+from muse_orchestrator.application import queue_service
 from muse_orchestrator.core.config import settings
 from muse_orchestrator.models.domain import (
     Asset,
     ExportJobRecord,
     ExportJobState,
+    GenerationDispatchLeaseRecord,
+    GenerationTaskRecord,
     Project,
+    QueueTaskState,
     TimelineClipRecord,
     TimelineSequenceRecord,
     TimelineTrackRecord,
 )
+from muse_orchestrator.providers.base import (
+    ErrorCategory,
+    ProviderFailure,
+    ProviderTask,
+    ProviderTaskStatus,
+)
+from muse_orchestrator.services import generation_queue
 from muse_orchestrator.services.asset_storage import LocalAssetStorage
 from tests.test_queue_review2 import (  # noqa: F401 - `client` is a pytest fixture
     STATE,
+    _drive_until_dispatched,
     _setup,
+    _step,
     client,
 )
 
@@ -121,3 +136,184 @@ async def test_timeline_reference_search_is_scoped_to_the_assets_project(client:
     async with STATE["maker"]() as db:
         assert (await db.get(TimelineClipRecord, "clp_seq_own")).asset_id is None
         assert (await db.get(TimelineTrackRecord, "trk_seq_own")).clips_json[0]["asset_id"] is None
+
+
+# --- 2. Lease owner tokens: a stale holder never deletes a newer holder's lease ----------------
+
+NEWER = "newer-holder-token"
+QUESTION = {"kind": "question", "text": "Which mood?", "options": [], "asked_at": None}
+
+
+async def _take_over_lease(task_id: str) -> None:
+    """What a second worker/reply does once the first holder's lease expired mid-call."""
+    async with STATE["maker"]() as db:
+        task = await db.get(GenerationTaskRecord, task_id)
+        lease = await db.get(GenerationDispatchLeaseRecord, task_id)
+        assert lease is not None and lease.owner_token not in (None, NEWER)
+        await db.delete(lease)
+        await db.flush()
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=task_id, connection_id=task.connection_id,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5), owner_token=NEWER,
+        ))
+        await db.commit()
+
+
+async def _lease_token(task_id: str) -> str | None:
+    async with STATE["maker"]() as db:
+        lease = await db.get(GenerationDispatchLeaseRecord, task_id)
+        return None if lease is None else lease.owner_token
+
+
+class _TakeoverGateway:
+    """Provider whose next call outlives the caller's lease: another holder takes it over."""
+
+    def __init__(self, poll_statuses: list[str]) -> None:
+        self.poll_statuses = list(poll_statuses)
+        self.take_over_on: set[str] = set()
+        self.task_id: str | None = None
+        self.raise_on: dict[str, BaseException] = {}
+
+    async def _maybe_take_over(self, call: str) -> None:
+        if call in self.take_over_on:
+            self.take_over_on.discard(call)
+            await _take_over_lease(self.task_id)
+        if call in self.raise_on:
+            raise self.raise_on.pop(call)
+
+    async def generate_video(self, request):
+        await self._maybe_take_over("generate")
+        return ProviderTask(external_task_id="ext_stale", status="queued")
+
+    async def get_task(self, task_id):
+        await self._maybe_take_over("poll")
+        status = self.poll_statuses.pop(0) if len(self.poll_statuses) > 1 else self.poll_statuses[0]
+        return ProviderTaskStatus(
+            external_task_id=task_id, status=status,
+            question=QUESTION if status == "needs_input" else None,
+            error_message="upstream said no" if status == "failed" else None,
+        )
+
+    async def reply(self, task_id, answer):
+        await self._maybe_take_over("reply")
+        return ProviderTaskStatus(external_task_id=task_id, status="running")
+
+
+async def _task_with_gateway(client: AsyncClient, monkeypatch, poll_statuses: list[str]):
+    _pid, cid, s1, _ = await _setup(client)
+    gateway = _TakeoverGateway(poll_statuses)
+    monkeypatch.setattr(generation_queue, "build_provider", lambda conn, account=None: gateway)
+    created = await client.post("/api/v1/queue/tasks", json={"shot_id": s1["id"], "connection_id": cid})
+    gateway.task_id = created.json()["id"]
+    return gateway.task_id, gateway
+
+
+@pytest.mark.asyncio
+async def test_stale_dispatch_holder_keeps_the_newer_lease(client: AsyncClient, monkeypatch):
+    tid, gateway = await _task_with_gateway(client, monkeypatch, ["running"])
+    gateway.take_over_on.add("generate")
+    task = await _drive_until_dispatched(tid)
+    assert task.external_task_id == "ext_stale"
+    assert await _lease_token(tid) == NEWER
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["running", "failed", "needs_input"])
+async def test_stale_poll_holder_keeps_the_newer_lease(client: AsyncClient, monkeypatch, status):
+    tid, gateway = await _task_with_gateway(client, monkeypatch, [status])
+    await _drive_until_dispatched(tid)
+    assert await _lease_token(tid) is None  # the dispatch released its own lease
+    gateway.take_over_on.add("poll")
+    await _step(tid)
+    assert await _lease_token(tid) == NEWER
+
+
+@pytest.mark.asyncio
+async def test_stale_poll_failure_holder_keeps_the_newer_lease(client: AsyncClient, monkeypatch):
+    tid, gateway = await _task_with_gateway(client, monkeypatch, ["running"])
+    await _drive_until_dispatched(tid)
+    gateway.take_over_on.add("poll")
+    gateway.raise_on["poll"] = ProviderFailure(ErrorCategory.UPSTREAM_5XX, "gateway down", 503, True)
+    await _step(tid)
+    assert await _lease_token(tid) == NEWER
+
+
+@pytest.mark.asyncio
+async def test_cancelled_step_keeps_the_newer_lease(client: AsyncClient, monkeypatch):
+    tid, gateway = await _task_with_gateway(client, monkeypatch, ["running"])
+    await _drive_until_dispatched(tid)
+    gateway.take_over_on.add("poll")
+    gateway.raise_on["poll"] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await _step(tid)
+    assert await _lease_token(tid) == NEWER
+
+
+@pytest.mark.asyncio
+async def test_cancelled_step_still_releases_its_own_lease(client: AsyncClient, monkeypatch):
+    tid, gateway = await _task_with_gateway(client, monkeypatch, ["running"])
+    await _drive_until_dispatched(tid)
+    gateway.raise_on["poll"] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await _step(tid)
+    assert await _lease_token(tid) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "provider_failure", "unexpected"])
+async def test_stale_reply_holder_keeps_the_newer_lease(client: AsyncClient, monkeypatch, outcome):
+    tid, gateway = await _task_with_gateway(client, monkeypatch, ["needs_input"])
+    await _drive_until_dispatched(tid)
+    assert (await _step(tid)).state == QueueTaskState.AWAITING_INPUT
+    # The API retries a busy reply; keep it to one attempt so the newer lease is observable.
+    monkeypatch.setattr(queue_service, "_REPLY_BUSY_ATTEMPTS", 1)
+    gateway.take_over_on.add("reply")
+    if outcome == "provider_failure":
+        gateway.raise_on["reply"] = ProviderFailure(ErrorCategory.UPSTREAM_5XX, "gateway down", 503, True)
+    elif outcome == "unexpected":
+        gateway.raise_on["reply"] = RuntimeError("boom")
+
+    if outcome == "unexpected":
+        with pytest.raises(RuntimeError):
+            await client.post(f"/api/v1/queue/tasks/{tid}/reply", json={"text": "calm"})
+    else:
+        await client.post(f"/api/v1/queue/tasks/{tid}/reply", json={"text": "calm"})
+    assert await _lease_token(tid) == NEWER
+
+
+@pytest.mark.asyncio
+async def test_expired_lease_of_another_owner_is_still_taken_over(client: AsyncClient, monkeypatch):
+    tid, gateway = await _task_with_gateway(client, monkeypatch, ["running"])
+    await _drive_until_dispatched(tid)
+    async with STATE["maker"]() as db:
+        task = await db.get(GenerationTaskRecord, tid)
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=tid, connection_id=task.connection_id, owner_token="dead-worker",
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        ))
+        await db.commit()
+    polled = await _step(tid)
+    assert polled.state == QueueTaskState.RUNNING
+    assert any("Poll #" in line for line in polled.history_log)
+    assert await _lease_token(tid) is None
+
+
+@pytest.mark.asyncio
+async def test_release_owned_lease_only_matches_the_owner_token(client: AsyncClient, monkeypatch):
+    tid, _gateway = await _task_with_gateway(client, monkeypatch, ["running"])
+    async with STATE["maker"]() as db:
+        task = await db.get(GenerationTaskRecord, tid)
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=tid, connection_id=task.connection_id, owner_token="mine",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        ))
+        await db.commit()
+    for token in (None, "", "someone-else"):
+        async with STATE["maker"]() as db:
+            await generation_queue.release_owned_lease(db, tid, token)
+            await db.commit()
+        assert await _lease_token(tid) == "mine"
+    async with STATE["maker"]() as db:
+        await generation_queue.release_owned_lease(db, tid, "mine")
+        await db.commit()
+    assert await _lease_token(tid) is None

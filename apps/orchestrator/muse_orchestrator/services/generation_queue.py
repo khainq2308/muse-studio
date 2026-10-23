@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select, func
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,6 +107,33 @@ GENERATION_STEP_JOB_TIMEOUT_SECONDS = 360
 _CONDITIONING_MARKER = "conditioning_first_frame="
 _CONDITIONING_NONE = "none"
 _LEGACY_ENQUEUE_FRAME_PREFIX = "first_frame="
+
+
+def new_lease_owner_token() -> str:
+    """Random token identifying one lease holder (a worker step or an operator reply)."""
+    return uuid.uuid4().hex
+
+
+async def release_owned_lease(db: AsyncSession, task_id: str, owner_token: str | None) -> None:
+    """Delete the task's dispatch lease only while ``owner_token`` still holds it.
+
+    A holder that outlived its lease (slow provider call, long download) may find that a
+    newer holder took the expired lease over; deleting by task id alone would remove the
+    newer holder's lease and let a third actor interleave with it. Expired leases of other
+    owners are still taken over explicitly by the acquiring step/reply. No commit here:
+    the delete joins the caller's transaction.
+    """
+    if not owner_token:
+        return
+    await db.execute(
+        delete(GenerationDispatchLeaseRecord).where(
+            GenerationDispatchLeaseRecord.task_id == task_id,
+            GenerationDispatchLeaseRecord.owner_token == owner_token,
+        )
+        # "fetch" also evicts our own (possibly expired-after-rollback) lease object from
+        # the identity map, so a later get() in this session cannot see a deleted row.
+        .execution_options(synchronize_session="fetch")
+    )
 
 
 def dispatch_lease_seconds(conn: ProviderConnection) -> float:
@@ -1024,8 +1051,13 @@ class GenerationQueueService:
         category: str,
         message: str,
         ended_state: ShotGenerationState = ShotGenerationState.FAILED,
+        lease_token: str | None = None,
     ) -> GenerationTaskRecord:
-        """Terminal non-retryable failure decided locally (no provider outcome). Commits."""
+        """Terminal non-retryable failure decided locally (no provider outcome). Commits.
+
+        ``lease_token``: the caller's lease, released in the same transaction (None when
+        the caller has not taken one).
+        """
         task.state = QueueTaskState.FAILED
         task.error_category = category
         task.retryable = False
@@ -1033,20 +1065,16 @@ class GenerationQueueService:
         task.finished_at = datetime.now(timezone.utc)
         task.history_log = list(task.history_log or []) + [message]
         await GenerationQueueService.settle_shot_after_task_end(db, task, shot, ended_state)
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_token)
         await db.commit()
         await db.refresh(task)
         return task
 
     @staticmethod
     async def _release_lease_and_return(
-        db: AsyncSession, task: GenerationTaskRecord
+        db: AsyncSession, task: GenerationTaskRecord, lease_token: str | None
     ) -> GenerationTaskRecord:
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_token)
         await db.commit()
         await db.refresh(task)
         return task
@@ -1060,6 +1088,7 @@ class GenerationQueueService:
         exc: ProviderFailure,
         raw_secret: str,
         phase: str,
+        lease_token: str | None,
     ) -> GenerationTaskRecord:
         """A poll/download error must never leave the task RUNNING with no follow-up job.
 
@@ -1070,9 +1099,7 @@ class GenerationQueueService:
         # The network lease was committed before the call; clear it on every failure path.
         await db.refresh(task)
         await db.refresh(shot)
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_token)
         if task.state in _TERMINAL_TASK_STATES:
             await db.commit()
             await db.refresh(task)
@@ -1153,7 +1180,12 @@ class GenerationQueueService:
         instead of being re-sent, which could double-charge. Cancellation in any other
         phase only releases the lease so another worker can resume the task.
         """
-        lease_state: dict[str, bool] = {"owned": False, "dispatch_in_flight": False}
+        # "token" identifies this step's lease; only this step may release it.
+        lease_state: dict[str, Any] = {
+            "owned": False,
+            "dispatch_in_flight": False,
+            "token": new_lease_owner_token(),
+        }
         try:
             return await GenerationQueueService._step_task_impl(
                 db, task_id, lease_state, expected_schedule_token
@@ -1161,13 +1193,18 @@ class GenerationQueueService:
         except asyncio.CancelledError:
             if lease_state["owned"]:
                 await GenerationQueueService._handle_cancelled_step(
-                    db, task_id, outcome_unknown=lease_state["dispatch_in_flight"]
+                    db,
+                    task_id,
+                    outcome_unknown=lease_state["dispatch_in_flight"],
+                    lease_token=lease_state["token"],
                 )
             raise
 
     @staticmethod
-    async def _release_lease_after_cancel(db: AsyncSession, task_id: str) -> None:
-        await GenerationQueueService._handle_cancelled_step(db, task_id, outcome_unknown=False)
+    async def _release_lease_after_cancel(db: AsyncSession, task_id: str, lease_token: str) -> None:
+        await GenerationQueueService._handle_cancelled_step(
+            db, task_id, outcome_unknown=False, lease_token=lease_token
+        )
 
     @staticmethod
     async def _fail_dispatch_outcome_unknown(
@@ -1188,7 +1225,9 @@ class GenerationQueueService:
         return task
 
     @staticmethod
-    async def _handle_cancelled_step(db: AsyncSession, task_id: str, *, outcome_unknown: bool) -> None:
+    async def _handle_cancelled_step(
+        db: AsyncSession, task_id: str, *, outcome_unknown: bool, lease_token: str
+    ) -> None:
         try:
             try:
                 await db.rollback()
@@ -1215,9 +1254,7 @@ class GenerationQueueService:
                         await GenerationQueueService.settle_shot_after_task_end(
                             db, task, shot, ShotGenerationState.FAILED
                         )
-            lease = await db.get(GenerationDispatchLeaseRecord, task_id)
-            if lease is not None:
-                await db.delete(lease)
+            await release_owned_lease(db, task_id, lease_token)
             await db.commit()
         except Exception as exc:  # noqa: BLE001 - never mask the cancellation itself
             # If the outcome-unknown marker could not be written the lease is kept until it
@@ -1232,7 +1269,7 @@ class GenerationQueueService:
     async def _step_task_impl(
         db: AsyncSession,
         task_id: str,
-        lease_state: dict[str, bool],
+        lease_state: dict[str, Any],
         expected_schedule_token: str | None = None,
     ) -> GenerationTaskRecord:
         # Row lock (no-op on SQLite) so two workers cannot step/dispatch the same task at once.
@@ -1258,7 +1295,7 @@ class GenerationQueueService:
             raise StaleGenerationStepJob(task_id)
 
         # Claim any in-flight dispatch/poll/download before releasing the task row lock.
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id, populate_existing=True)
         now = datetime.now(timezone.utc)
         if lease is not None:
             expiry = lease.expires_at
@@ -1272,6 +1309,7 @@ class GenerationQueueService:
                 await db.commit()
                 await db.refresh(task)
                 return task
+            # Expired: take it over whoever owned it (its holder outlived the lease).
             await db.delete(lease)
             await db.flush()
             if not task.external_task_id:
@@ -1412,7 +1450,7 @@ class GenerationQueueService:
         provider: VideoProvider,
         raw_secret: str,
         planned_frame: str | None,
-        lease_state: dict[str, bool],
+        lease_state: dict[str, Any],
     ) -> GenerationTaskRecord:
         # Reserve the slot in a short transaction, then release DB locks before network I/O.
         now = datetime.now(timezone.utc)
@@ -1452,6 +1490,7 @@ class GenerationQueueService:
             task_id=task.id,
             connection_id=conn.id,
             expires_at=now + timedelta(seconds=dispatch_lease_seconds(conn)),
+            owner_token=lease_state["token"],
         ))
         # expire_on_commit=False keeps the claimed task snapshot available without opening a
         # new DB transaction while the provider request is in flight.
@@ -1510,7 +1549,7 @@ class GenerationQueueService:
             # (dispatch_outcome_unknown is a non-retryable category).
             lease_state["dispatch_in_flight"] = False
             return await GenerationQueueService._handle_dispatch_failure(
-                db, task, shot, conn, account, exc, raw_secret
+                db, task, shot, conn, account, exc, raw_secret, lease_state["token"]
             )
         except Exception as exc:
             lease_state["dispatch_in_flight"] = False
@@ -1518,19 +1557,20 @@ class GenerationQueueService:
             await db.refresh(task)
             await db.refresh(shot)
             if task.state in _TERMINAL_TASK_STATES:
-                return await GenerationQueueService._release_lease_and_return(db, task)
+                return await GenerationQueueService._release_lease_and_return(
+                    db, task, lease_state["token"]
+                )
             return await GenerationQueueService._fail_task(
                 db, task, shot,
                 category="provider_internal_error",
                 message=f"Unexpected provider adapter error ({type(exc).__name__}).",
+                lease_token=lease_state["token"],
             )
 
         # Another operator may have paused/canceled the task while the request was in flight.
         await db.refresh(task)
         await db.refresh(shot)
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_state["token"])
         task.external_task_id = p_task.external_task_id
         task.history_log = list(task.history_log or []) + dispatch_markers + [
             f"Dispatched to {conn.name} -> external_task_id={p_task.external_task_id}."
@@ -1561,12 +1601,11 @@ class GenerationQueueService:
         account: ConnectionAccount | None,
         exc: ProviderFailure,
         raw_secret: str,
+        lease_token: str,
     ) -> GenerationTaskRecord:
         await db.refresh(task)
         await db.refresh(shot)
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_token)
         if task.state in _TERMINAL_TASK_STATES:
             await db.commit()
             await db.refresh(task)
@@ -1621,7 +1660,7 @@ class GenerationQueueService:
         conn: ProviderConnection,
         provider: VideoProvider,
         raw_secret: str,
-        lease_state: dict[str, bool],
+        lease_state: dict[str, Any],
     ) -> GenerationTaskRecord:
         # Successful polls while waiting for the operator do not consume max_polls
         # (failed ones do, in _handle_poll_failure).
@@ -1647,31 +1686,34 @@ class GenerationQueueService:
             task_id=task.id,
             connection_id=conn.id,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=dispatch_lease_seconds(conn)),
+            owner_token=lease_state["token"],
         ))
         await db.commit()
         lease_state["owned"] = True
+        lease_token: str = lease_state["token"]
         try:
             p_status = await provider.get_task(task.external_task_id)
         except ProviderFailure as exc:
-            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "poll")
+            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "poll", lease_token)
         except Exception as exc:
             unexpected = ProviderFailure(
                 ErrorCategory.INVALID_REQUEST,
                 f"Unexpected provider poll error ({type(exc).__name__}).",
                 retryable=False,
             )
-            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, unexpected, raw_secret, "poll")
+            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, unexpected, raw_secret, "poll", lease_token)
         await db.refresh(task)
         await db.refresh(shot)
         if task.state in _TERMINAL_TASK_STATES:
-            return await GenerationQueueService._release_lease_and_return(db, task)
+            return await GenerationQueueService._release_lease_and_return(db, task, lease_token)
 
         if p_status.account_used and not task.account_used:
             task.account_used = p_status.account_used
 
         if p_status.status == "needs_input":
             return await GenerationQueueService._mark_awaiting_input(
-                db, task, shot, p_status, raw_secret, counted_poll=counted_poll
+                db, task, shot, p_status, raw_secret,
+                counted_poll=counted_poll, lease_token=lease_token,
             )
         if task.state == QueueTaskState.AWAITING_INPUT or task.pending_input_json is not None:
             # Answered elsewhere (or the provider moved on): the question is no longer open.
@@ -1686,9 +1728,7 @@ class GenerationQueueService:
                 await db.commit()
 
         if p_status.status in ("queued", "running"):
-            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-            if lease is not None:
-                await db.delete(lease)
+            await release_owned_lease(db, task.id, lease_token)
             delay = compute_backoff_seconds(task.poll_count)
             task.next_poll_delay_seconds = delay
             task.history_log = list(task.history_log or []) + [
@@ -1699,9 +1739,7 @@ class GenerationQueueService:
             return task
 
         if p_status.status == "failed":
-            lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-            if lease is not None:
-                await db.delete(lease)
+            await release_owned_lease(db, task.id, lease_token)
             task.state = QueueTaskState.FAILED
             task.error_category = _UPSTREAM_FAILURE_CATEGORIES.get(
                 p_status.error_code or "", "upstream_generation_failed"
@@ -1726,7 +1764,7 @@ class GenerationQueueService:
             )
         except ProviderFailure as exc:
             _unlink_quietly(stored.local_path if stored is not None else None)
-            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "download")
+            return await GenerationQueueService._handle_poll_failure(db, task, shot, conn, exc, raw_secret, "download", lease_token)
         except Exception as exc:
             # Any unexpected adapter/verification error is a classified terminal failure that
             # releases the lease (never a RUNNING task stuck behind its own lease).
@@ -1737,10 +1775,10 @@ class GenerationQueueService:
                 retryable=False,
             )
             return await GenerationQueueService._handle_poll_failure(
-                db, task, shot, conn, unexpected, raw_secret, "download"
+                db, task, shot, conn, unexpected, raw_secret, "download", lease_token
             )
         return await GenerationQueueService._finalize_media(
-            db, task, shot, conn, stored, dest_dir, raw_secret
+            db, task, shot, conn, stored, dest_dir, raw_secret, lease_token
         )
 
     @staticmethod
@@ -1752,6 +1790,7 @@ class GenerationQueueService:
         raw_secret: str,
         *,
         counted_poll: bool,
+        lease_token: str,
     ) -> GenerationTaskRecord:
         """The provider asked the operator a question: keep the slot, poll slowly.
 
@@ -1759,9 +1798,7 @@ class GenerationQueueService:
         the shot stays RUNNING. The poll that discovered the question is not counted
         against max_polls. A history entry is written only when the question changes.
         """
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_token)
         if counted_poll:
             task.poll_count = max(0, task.poll_count - 1)
         raw_question = p_status.question or {
@@ -1822,14 +1859,16 @@ class GenerationQueueService:
         return provider, raw_secret
 
     @staticmethod
-    async def _release_reply_lease(db: AsyncSession, task_id: str) -> None:
-        """Drop the lease taken for an answer that failed or was interrupted (best effort)."""
+    async def _release_reply_lease(db: AsyncSession, task_id: str, lease_token: str) -> None:
+        """Drop the lease taken for an answer that failed or was interrupted (best effort).
+
+        Only this reply's own lease is deleted: if it expired and a worker poll took the
+        task over meanwhile, the poll's lease is left alone.
+        """
         try:
             await db.rollback()
-            lease = await db.get(GenerationDispatchLeaseRecord, task_id)
-            if lease is not None:
-                await db.delete(lease)
-                await db.commit()
+            await release_owned_lease(db, task_id, lease_token)
+            await db.commit()
         except Exception:  # noqa: BLE001 - the lease expires on its own
             logger.warning("Could not release the reply lease of task %s", task_id)
 
@@ -1887,7 +1926,7 @@ class GenerationQueueService:
         # Claim the task with the same lease a worker poll takes, so neither a concurrent
         # answer nor a poll can interleave with this one while the row lock is released.
         now = datetime.now(timezone.utc)
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id, populate_existing=True)
         if lease is not None:
             expiry = lease.expires_at if lease.expires_at.tzinfo else lease.expires_at.replace(tzinfo=timezone.utc)
             if expiry > now:
@@ -1895,13 +1934,16 @@ class GenerationQueueService:
                 raise TaskStateConflictError(
                     "Another answer or a provider poll is in progress for this task; retry shortly."
                 )
+            # Expired: take it over whoever owned it (its holder outlived the lease).
             await db.delete(lease)
             await db.flush()
         conn = await db.get(ProviderConnection, task.connection_id)
+        lease_token = new_lease_owner_token()
         db.add(GenerationDispatchLeaseRecord(
             task_id=task.id,
             connection_id=task.connection_id,
             expires_at=now + timedelta(seconds=dispatch_lease_seconds(conn)),
+            owner_token=lease_token,
         ))
         # Release the row lock before network I/O.
         try:
@@ -1916,7 +1958,7 @@ class GenerationQueueService:
         try:
             p_status = await provider.reply(external_task_id, dict(answer))
         except ProviderFailure as exc:
-            await GenerationQueueService._release_reply_lease(db, task.id)
+            await GenerationQueueService._release_reply_lease(db, task.id, lease_token)
             raise ProviderFailure(
                 exc.category,
                 SecretRedactor.redact_text(exc.message, [raw_secret]),
@@ -1924,16 +1966,18 @@ class GenerationQueueService:
                 exc.retryable,
             ) from exc
         except BaseException:
-            await GenerationQueueService._release_reply_lease(db, task.id)
+            await GenerationQueueService._release_reply_lease(db, task.id, lease_token)
             raise
 
         try:
-            return await GenerationQueueService._record_reply(db, task_id, answer, p_status, raw_secret)
+            return await GenerationQueueService._record_reply(
+                db, task_id, answer, p_status, raw_secret, lease_token
+            )
         except BaseException:
             # The provider already has the answer; never leave the task locked for a whole
             # lease because recording it locally failed.
             logger.warning("Task %s: the answer was delivered but recording it failed", task_id)
-            await GenerationQueueService._release_reply_lease(db, task_id)
+            await GenerationQueueService._release_reply_lease(db, task_id, lease_token)
             raise
 
     @staticmethod
@@ -1943,6 +1987,7 @@ class GenerationQueueService:
         answer: dict[str, str],
         p_status: ProviderTaskStatus,
         raw_secret: str,
+        lease_token: str,
     ) -> GenerationTaskRecord:
         """Persist a delivered answer and drop the reply lease in the same transaction."""
         task = (
@@ -1953,9 +1998,7 @@ class GenerationQueueService:
                 .execution_options(populate_existing=True)
             )
         ).scalar_one()
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_token)
         kind, value = next(iter(answer.items()))
         answered = SecretRedactor.redact_text(value, [raw_secret])[:_HISTORY_TEXT_MAX_CHARS]
         entry = f"Operator answered ({kind}): {answered}"
@@ -2148,13 +2191,14 @@ class GenerationQueueService:
         stored: StoredMedia,
         dest_dir: str,
         raw_secret: str,
+        lease_token: str,
     ) -> GenerationTaskRecord:
         """Extract boundary frames and compute storage paths before persisting the take."""
         await db.refresh(task)
         await db.refresh(shot)
         if task.state in _TERMINAL_TASK_STATES:
             _unlink_quietly(stored.local_path)
-            return await GenerationQueueService._release_lease_and_return(db, task)
+            return await GenerationQueueService._release_lease_and_return(db, task, lease_token)
 
         existing_max_take_num = (
             await db.execute(select(func.max(ShotTakeRecord.take_number)).where(ShotTakeRecord.shot_id == shot.id))
@@ -2174,7 +2218,7 @@ class GenerationQueueService:
             except ProviderFailure as exc:
                 _unlink_quietly(stored.local_path)
                 return await GenerationQueueService._handle_poll_failure(
-                    db, task, shot, conn, exc, raw_secret, "boundary-frame extraction"
+                    db, task, shot, conn, exc, raw_secret, "boundary-frame extraction", lease_token
                 )
         all_paths = [stored.local_path, *(frame.path for frame in boundary_artifacts)]
 
@@ -2183,7 +2227,7 @@ class GenerationQueueService:
         await db.refresh(shot)
         if task.state in _TERMINAL_TASK_STATES:
             _unlink_quietly(*all_paths)
-            return await GenerationQueueService._release_lease_and_return(db, task)
+            return await GenerationQueueService._release_lease_and_return(db, task, lease_token)
 
         try:
             rel_path = media_rel_path(stored.local_path, settings.media_root)
@@ -2200,11 +2244,12 @@ class GenerationQueueService:
                     "Generated media path resolved outside MEDIA_ROOT; result rejected.",
                     retryable=False,
                 ),
-                raw_secret, "media persistence",
+                raw_secret, "media persistence", lease_token,
             )
 
         return await GenerationQueueService._persist_take(
-            db, task, shot, conn, stored, boundary_artifacts, rel_path, frame_rel_paths, raw_secret
+            db, task, shot, conn, stored, boundary_artifacts, rel_path, frame_rel_paths, raw_secret,
+            lease_token,
         )
 
     @staticmethod
@@ -2218,6 +2263,7 @@ class GenerationQueueService:
         rel_path: str,
         frame_rel_paths: dict[str, str],
         raw_secret: str,
+        lease_token: str,
     ) -> GenerationTaskRecord:
         """Allocate the take number, persist assets/take and complete the task."""
         # Serialize take-number selection per shot on databases that support row locks.
@@ -2318,7 +2364,7 @@ class GenerationQueueService:
                 retryable=True,
             )
             return await GenerationQueueService._handle_poll_failure(
-                db, task, shot, conn, conflict, raw_secret, "take persistence"
+                db, task, shot, conn, conflict, raw_secret, "take persistence", lease_token
             )
 
         if take.is_selected:
@@ -2349,9 +2395,7 @@ class GenerationQueueService:
                 "selected; re-enqueue to render on the current frame."
             ]
 
-        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
-        if lease is not None:
-            await db.delete(lease)
+        await release_owned_lease(db, task.id, lease_token)
         await db.commit()
         # Re-evaluate downstream frame-chain shots after every upstream success (not only the
         # first take): a forced re-render must still unblock shots waiting on this shot's

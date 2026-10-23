@@ -10,7 +10,7 @@ from muse_orchestrator.core.database import _run_alembic_upgrade
 from muse_orchestrator.models.domain import Base as CurrentBase
 from sqlalchemy import Column, String, Table, create_engine, inspect, text
 
-HEAD_REVISION = "0003_awaiting_input"
+HEAD_REVISION = "0004_lease_owner_token"
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
@@ -49,7 +49,7 @@ def test_revision_history_is_linear_and_ends_at_expected_head() -> None:
     script = ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
     assert script.get_heads() == [HEAD_REVISION]
     history = [revision.revision for revision in script.walk_revisions(base="base", head="heads")]
-    assert list(reversed(history)) == ["0001_bootstrap", "0002_uniqueness", HEAD_REVISION]
+    assert list(reversed(history)) == ["0001_bootstrap", "0002_uniqueness", "0003_awaiting_input", HEAD_REVISION]
 
 
 def test_migrated_schema_matches_orm_metadata_without_drift(tmp_path: Path, monkeypatch) -> None:
