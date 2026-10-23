@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPatch: vi.fn(),
   apiPost: vi.fn(),
+  apiGetBlob: vi.fn(),
 }));
 
 vi.mock("@/lib/api/client", async (importOriginal) => ({
@@ -14,20 +15,34 @@ vi.mock("@/lib/api/client", async (importOriginal) => ({
   apiGet: mocks.apiGet,
   apiPatch: mocks.apiPatch,
   apiPost: mocks.apiPost,
+  apiGetBlob: mocks.apiGetBlob,
 }));
 
 import {
+  useAssetMedia,
+  useCompareTakes,
   useEnqueueShotTask,
+  useFlagTakeContinuity,
   useLaunchBatch,
   useProjectShots,
+  useSelectTake,
+  useShotTakes,
   useUpdateShot,
 } from "@/features/shot-board/api";
+import {
+  REGENERATE_REQUEST_TIMEOUT_MS,
+  buildContinuityFlagRequest,
+} from "@/features/shot-board/takes";
 import { buildBatchLaunchRequest, buildEnqueueRequest } from "@/features/shot-board/state";
 import {
   makeBatchResult,
+  makeComparison,
   makeEnqueuedTask,
+  makeFlagResult,
   makeReview,
+  makeSelection,
   makeShot,
+  makeTake,
 } from "@/features/shot-board/test-fixtures";
 import { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
@@ -148,5 +163,233 @@ describe("Shot Board hooks", () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: queryKeys.queueTasksPrefix(sessionVersion, "project-1"),
     });
+  });
+});
+
+describe("Take review hooks", () => {
+  it("loads a shot's takes with the shot path parameter and abort signal", async () => {
+    mocks.apiGet.mockResolvedValue([makeTake()]);
+    const { wrapper } = setup();
+
+    const { result } = renderHook(() => useShotTakes("project-1", "shot-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mocks.apiGet).toHaveBeenCalledWith(
+      "/api/v1/queue/shots/{shot_id}/takes",
+      expect.objectContaining({
+        pathParams: { shot_id: "shot-1" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("compares two takes only once a pair is chosen", async () => {
+    const a = makeTake({ id: "take-a" });
+    const b = makeTake({ id: "take-b", take_number: 2 });
+    mocks.apiGet.mockResolvedValue(makeComparison(a, b));
+    const { wrapper } = setup();
+
+    const { result, rerender } = renderHook(
+      ({ pair }: { pair: readonly [string, string] | null }) =>
+        useCompareTakes("project-1", "shot-1", pair),
+      { wrapper, initialProps: { pair: null as readonly [string, string] | null } },
+    );
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(mocks.apiGet).not.toHaveBeenCalled();
+
+    rerender({ pair: ["take-a", "take-b"] });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mocks.apiGet).toHaveBeenCalledWith(
+      "/api/v1/projects/{project_id}/shots/{shot_id}/compare-takes",
+      expect.objectContaining({
+        pathParams: { project_id: "project-1", shot_id: "shot-1" },
+        query: { take_a_id: "take-a", take_b_id: "take-b" },
+      }),
+    );
+  });
+
+  it("downloads asset media through the shared client with a size bound", async () => {
+    mocks.apiGetBlob.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+    const { wrapper } = setup();
+
+    const { result, rerender } = renderHook(
+      ({ assetId }: { assetId: string | null }) => useAssetMedia(assetId, 1024),
+      { wrapper, initialProps: { assetId: null as string | null } },
+    );
+    expect(mocks.apiGetBlob).not.toHaveBeenCalled();
+
+    rerender({ assetId: "asset-1" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mocks.apiGetBlob).toHaveBeenCalledWith(
+      "/api/v1/assets/{asset_id}/download",
+      expect.objectContaining({
+        pathParams: { asset_id: "asset-1" },
+        maxBytes: 1024,
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("selects a take and invalidates the shot list and every take view, even on failure", async () => {
+    mocks.apiPost.mockResolvedValueOnce(
+      makeSelection({ selected_take_id: "take-2", propagated_downstream_shots: ["shot-2"] }),
+    );
+    const { invalidate, wrapper } = setup();
+    const { result } = renderHook(() => useSelectTake("project-1"), { wrapper });
+
+    act(() => result.current.mutate({ shotId: "shot-1", takeId: "take-2" }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mocks.apiPost).toHaveBeenCalledWith(
+      "/api/v1/queue/shots/{shot_id}/takes/{take_id}/select",
+      undefined,
+      { pathParams: { shot_id: "shot-1", take_id: "take-2" } },
+    );
+    expect(result.current.data?.propagated_downstream_shots).toEqual(["shot-2"]);
+    for (const queryKey of [
+      queryKeys.projectShots(sessionVersion, "project-1"),
+      queryKeys.shotTakesPrefix(sessionVersion, "project-1"),
+      queryKeys.shotTakeComparePrefix(sessionVersion, "project-1"),
+    ]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
+
+    invalidate.mockClear();
+    mocks.apiPost.mockRejectedValueOnce(new ApiError({ status: 404, detail: "Take missing" }));
+    act(() => result.current.mutate({ shotId: "shot-1", takeId: "take-9" }));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: queryKeys.projectShots(sessionVersion, "project-1"),
+    });
+  });
+
+  it("posts the continuity flag payload with project, shot and take path parameters", async () => {
+    mocks.apiPost.mockResolvedValueOnce(makeFlagResult({ regenerated_task_id: "task-regen" }));
+    const { invalidate, wrapper } = setup();
+    const { result } = renderHook(() => useFlagTakeContinuity("project-1"), { wrapper });
+    const request = buildContinuityFlagRequest({
+      take: makeTake(),
+      flagged: true,
+      directorNotes: "Hair flips.",
+      regenerate: { connectionId: "conn-live", modelId: "muse-video-v1" },
+    });
+
+    act(() => result.current.mutate({ shotId: "shot-1", takeId: "take-1", request }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mocks.apiPost).toHaveBeenCalledWith(
+      "/api/v1/projects/{project_id}/shots/{shot_id}/takes/{take_id}/flag-continuity",
+      {
+        continuity_flagged: true,
+        director_notes: "Hair flips.",
+        regenerate_now: true,
+        connection_id: "conn-live",
+        model_id: "muse-video-v1",
+      },
+      {
+        pathParams: { project_id: "project-1", shot_id: "shot-1", take_id: "take-1" },
+        timeoutMs: REGENERATE_REQUEST_TIMEOUT_MS,
+      },
+    );
+    expect(result.current.data?.regenerated_task_id).toBe("task-regen");
+    for (const queryKey of [
+      queryKeys.projectShots(sessionVersion, "project-1"),
+      queryKeys.shotTakesPrefix(sessionVersion, "project-1"),
+      queryKeys.queueTasksPrefix(sessionVersion, "project-1"),
+    ]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
+  });
+});
+
+describe("Take review hooks: failures and sessions", () => {
+  it("invalidates shots, takes, comparisons and queue after a failed flag and keeps the default timeout", async () => {
+    mocks.apiPost.mockRejectedValueOnce(new ApiError({ status: 422, detail: "Refused" }));
+    const { invalidate, wrapper } = setup();
+    const { result } = renderHook(() => useFlagTakeContinuity("project-1"), { wrapper });
+
+    act(() =>
+      result.current.mutate({
+        shotId: "shot-1",
+        takeId: "take-1",
+        request: buildContinuityFlagRequest({
+          take: makeTake(),
+          flagged: true,
+          directorNotes: "Wrong prop.",
+        }),
+      }),
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // Without regeneration the request keeps the client default timeout.
+    expect(mocks.apiPost.mock.calls[0]?.[2]).toEqual({
+      pathParams: { project_id: "project-1", shot_id: "shot-1", take_id: "take-1" },
+    });
+    for (const queryKey of [
+      queryKeys.projectShots(sessionVersion, "project-1"),
+      queryKeys.shotTakesPrefix(sessionVersion, "project-1"),
+      queryKeys.shotTakeComparePrefix(sessionVersion, "project-1"),
+      queryKeys.queueTasksPrefix(sessionVersion, "project-1"),
+    ]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
+  });
+
+  it("never exposes a blob still loading from a previous admin session", async () => {
+    let resolveOld: (blob: Blob) => void = () => undefined;
+    const oldBlob = new Blob(["old"], { type: "image/png" });
+    const newBlob = new Blob(["new"], { type: "image/png" });
+    // Hooks rendered by earlier tests in this file stay mounted and refetch on a session
+    // change, so answer by asset ID and count only this asset's requests.
+    let sessionAssetCalls = 0;
+    mocks.apiGetBlob.mockImplementation(
+      (_path: string, options: { pathParams: { asset_id: string } }) => {
+        if (options.pathParams.asset_id !== "asset-session") {
+          return Promise.resolve(new Blob(["other"], { type: "image/png" }));
+        }
+        sessionAssetCalls += 1;
+        if (sessionAssetCalls === 1) {
+          return new Promise<Blob>((resolve) => {
+            resolveOld = resolve;
+          });
+        }
+        return Promise.resolve(newBlob);
+      },
+    );
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useAssetMedia("asset-session", 1024), { wrapper });
+    await waitFor(() => expect(sessionAssetCalls).toBe(1));
+    expect(result.current.data).toBeUndefined();
+
+    act(() => useSessionStore.getState().setAdminToken("next-session-token"));
+    await waitFor(() => expect(result.current.data).toBe(newBlob));
+    act(() => resolveOld(oldBlob));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(result.current.data).toBe(newBlob);
+    expect(sessionAssetCalls).toBe(2);
+    useSessionStore.getState().clearAdminToken();
+    mocks.apiGetBlob.mockReset();
+  });
+
+  it("does not retry media timeouts, over-limit bodies or missing assets", async () => {
+    const queryClient = new QueryClient(); // default retry policy is replaced by the hook's
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    for (const error of [
+      new ApiError({ status: 0, detail: "slow", category: "timeout", retryable: true }),
+      new ApiError({ status: 200, detail: "big", category: "too_large", retryable: false }),
+      new ApiError({ status: 404, detail: "gone" }),
+    ]) {
+      mocks.apiGetBlob.mockReset();
+      mocks.apiGetBlob.mockRejectedValue(error);
+      const { result, unmount } = renderHook(
+        () => useAssetMedia(`asset-${error.status}-${error.category}`, 1024),
+        { wrapper },
+      );
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(mocks.apiGetBlob).toHaveBeenCalledTimes(1);
+      unmount();
+    }
   });
 });

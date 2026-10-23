@@ -1,4 +1,13 @@
-import { Clapperboard, ImageIcon, ImageOff, Link2, Pencil, Play } from "lucide-react";
+import {
+  Clapperboard,
+  Film,
+  ImageIcon,
+  ImageOff,
+  Link2,
+  Pencil,
+  Play,
+  TriangleAlert,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { StateBadge } from "@/features/shot-board/components/shot-badges";
@@ -15,6 +24,7 @@ import {
   shotLintWarnings,
   type ProjectShot,
 } from "@/features/shot-board/state";
+import { PREDECESSOR_ORDER_WARNING, isPredecessorOutOfOrder } from "@/features/shot-board/takes";
 import { cn } from "@/lib/utils";
 
 interface ShotListProps {
@@ -23,6 +33,9 @@ interface ShotListProps {
   editingShotId: string | null;
   onEdit: (shotId: string) => void;
   onGenerate: (shotId: string) => void;
+  /** Shot whose take review is open, if any. */
+  reviewingShotId: string | null;
+  onReviewTakes: (shotId: string) => void;
   /** Whether single-shot generation can be started (connection + model chosen). */
   canGenerate: boolean;
   generateDisabledReason: string | null;
@@ -35,6 +48,8 @@ export function ShotList({
   editingShotId,
   onEdit,
   onGenerate,
+  reviewingShotId,
+  onReviewTakes,
   canGenerate,
   generateDisabledReason,
   renderShotDetail,
@@ -68,6 +83,8 @@ export function ShotList({
               isEditing={editingShotId === shot.id}
               onEdit={() => onEdit(shot.id)}
               onGenerate={() => onGenerate(shot.id)}
+              isReviewing={reviewingShotId === shot.id}
+              onReviewTakes={() => onReviewTakes(shot.id)}
               canGenerate={canGenerate}
               generateDisabledReason={generateDisabledReason}
             >
@@ -86,6 +103,8 @@ interface ShotCardProps {
   isEditing: boolean;
   onEdit: () => void;
   onGenerate: () => void;
+  isReviewing: boolean;
+  onReviewTakes: () => void;
   canGenerate: boolean;
   generateDisabledReason: string | null;
   children: ReactNode;
@@ -97,6 +116,8 @@ function ShotCard({
   isEditing,
   onEdit,
   onGenerate,
+  isReviewing,
+  onReviewTakes,
   canGenerate,
   generateDisabledReason,
   children,
@@ -187,10 +208,17 @@ function ShotCard({
             <Play aria-hidden="true" />
             Generate
           </Button>
-          {/* Take review, A/B compare, select take and continuity flags ship in Shot Board part B. */}
-          <span data-testid="shot-takes-placeholder" className="text-xs text-muted-foreground">
-            Take review: coming soon
-          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onReviewTakes}
+            aria-expanded={isReviewing}
+            aria-label={`Review takes for ${label}`}
+          >
+            <Film aria-hidden="true" />
+            Review takes
+          </Button>
         </div>
       </div>
 
@@ -233,6 +261,20 @@ function ShotCard({
           </div>
         )}
       </dl>
+
+      {isPredecessorOutOfOrder(shot, previousShot) && previousShot && (
+        <p
+          role="note"
+          data-testid="shot-predecessor-warning"
+          className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-2 text-xs text-warning"
+        >
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            {PREDECESSOR_ORDER_WARNING}: {shotLabel(previousShot)} is #{previousShot.sequence_index}
+            ; this shot is #{shot.sequence_index}.
+          </span>
+        </p>
+      )}
 
       {shot.lint_report.length > 0 && (
         <div className="mt-4">

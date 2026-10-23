@@ -10,6 +10,7 @@ import {
   apiRequest,
   apiPut,
   apiGetText,
+  apiGetBlob,
   downloadFile,
   encodePathSegment,
   normalizeApiBaseUrl,
@@ -536,5 +537,95 @@ describe("API client", () => {
     await vi.runAllTimersAsync();
 
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:test-download");
+  });
+});
+
+describe("apiGetBlob (authenticated media)", () => {
+  function binaryResponse(bytes: number, headers: Record<string, string>): Response {
+    return new Response(new Uint8Array(bytes), { status: 200, headers });
+  }
+
+  it("sends the admin token and returns a Blob typed from the response media type", async () => {
+    useSessionStore.getState().setAdminToken("media-token");
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        binaryResponse(8, { "content-type": "image/png; charset=binary", "content-length": "8" }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const blob = await apiGetBlob("/api/v1/assets/{asset_id}/download", {
+      pathParams: { asset_id: "asset-1" },
+      maxBytes: 1024,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/v1\/assets\/asset-1\/download$/);
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("X-Studio-Admin-Token")).toBe("media-token");
+    expect(headers.get("Accept")).toBe("*/*");
+    expect(blob.size).toBe(8);
+    expect(blob.type).toBe("image/png");
+  });
+
+  it("rejects a declared Content-Length above the bound without buffering the body", async () => {
+    const response = binaryResponse(16, { "content-type": "video/mp4", "content-length": "4096" });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
+
+    const error = await apiGetBlob("/api/v1/assets/a/download", { maxBytes: 1024 }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ category: "too_large", retryable: false, status: 200 });
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("stops reading a stream once it exceeds the bound when no length is declared", async () => {
+    let pulls = 0;
+    const cancelled = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      cancel: cancelled,
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(512));
+        if (pulls > 50) controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(stream, { status: 200, headers: { "content-type": "video/mp4" } }),
+        ),
+    );
+
+    await expect(apiGetBlob("/api/v1/assets/a/download", { maxBytes: 1024 })).rejects.toMatchObject(
+      { category: "too_large" },
+    );
+    expect(pulls).toBeLessThan(10);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes JSON errors such as 404 into ApiError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ detail: "Asset not found" }, 404)),
+    );
+
+    await expect(apiGetBlob("/api/v1/assets/a/download", { maxBytes: 1024 })).rejects.toMatchObject(
+      { status: 404, message: "Asset not found" },
+    );
+  });
+
+  it("requires a positive size bound", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiGetBlob("/api/v1/assets/a/download", { maxBytes: 0 })).rejects.toThrow(
+      "positive maxBytes",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
