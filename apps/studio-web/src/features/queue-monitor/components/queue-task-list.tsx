@@ -54,6 +54,26 @@ export function QueueTaskList({
     if (taskId) cancelButtons.current.get(taskId)?.focus();
   }, [cancelConfirmationId]);
 
+  // A confirmation whose task left the visible list (filter, page, refresh) is dropped
+  // instead of silently reopening when the task comes back.
+  const confirmationTaskVisible =
+    cancelConfirmationId !== null && tasks.some((task) => task.id === cancelConfirmationId);
+  useEffect(() => {
+    if (cancelConfirmationId !== null && !confirmationTaskVisible) {
+      returnFocusTo.current = null;
+      setCancelConfirmationId(null);
+    }
+  }, [cancelConfirmationId, confirmationTaskVisible]);
+
+  const runAction = (taskId: string, action: "pause" | "resume") => {
+    // Another action on the task supersedes a pending cancel confirmation.
+    if (cancelConfirmationId === taskId) {
+      returnFocusTo.current = null;
+      setCancelConfirmationId(null);
+    }
+    onAction(taskId, action);
+  };
+
   const onConfirmationKeyDown = (event: KeyboardEvent<HTMLDivElement>, taskId: string) => {
     if (event.key !== "Escape") return;
     event.stopPropagation();
@@ -111,7 +131,7 @@ export function QueueTaskList({
                     size="sm"
                     aria-label={`Pause task ${task.id}`}
                     disabled={busy}
-                    onClick={() => onAction(task.id, "pause")}
+                    onClick={() => runAction(task.id, "pause")}
                   >
                     <Pause className="mr-1 size-4" aria-hidden="true" />
                     Pause
@@ -124,7 +144,7 @@ export function QueueTaskList({
                     size="sm"
                     aria-label={`Resume task ${task.id}`}
                     disabled={busy}
-                    onClick={() => onAction(task.id, "resume")}
+                    onClick={() => runAction(task.id, "resume")}
                   >
                     <Play className="mr-1 size-4" aria-hidden="true" />
                     Resume

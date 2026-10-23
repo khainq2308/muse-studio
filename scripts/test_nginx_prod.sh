@@ -57,6 +57,14 @@ if [ "$ready" -ne 1 ]; then
 fi
 echo "[PASS] /healthz reaches the upstream mock through Nginx"
 
+echo "==> Verify /readyz reaches the API instead of the SPA fallback"
+curl --silent --show-error --fail "$BASE_URL/readyz" -o "$TMP_DIR/ready.json"
+grep -Fq '"path":"/readyz"' "$TMP_DIR/ready.json" || {
+    echo "/readyz did not reach the upstream (SPA fallback would hide a down backend)." >&2
+    exit 1
+}
+echo "[PASS] /readyz reaches the upstream mock through Nginx"
+
 echo "==> Verify SPA fallback for a nested project/module route"
 root_status="$(curl --silent --show-error --output "$TMP_DIR/root.html" --write-out '%{http_code}' "$BASE_URL/")"
 route_status="$(curl --silent --show-error --output "$TMP_DIR/deep-link.html" --write-out '%{http_code}' "$BASE_URL/projects/test-project/queue-monitor")"

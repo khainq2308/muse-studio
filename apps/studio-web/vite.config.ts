@@ -27,6 +27,9 @@ export default defineConfig({
       "/healthz": {
         target: orchestratorTarget,
       },
+      "/readyz": {
+        target: orchestratorTarget,
+      },
     },
   },
   preview: {
