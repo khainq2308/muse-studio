@@ -23,8 +23,12 @@ from muse_orchestrator.models.domain import (
     ShotRecord,
     ShotTakeRecord,
     StoryBibleEntry,
+    ExportJobRecord,
+    TimelineClipRecord,
+    TimelineSequenceRecord,
+    TimelineTrackRecord,
 )
-from muse_orchestrator.providers.base import ProviderFailure
+from muse_orchestrator.providers.base import ErrorCategory, ProviderFailure
 from muse_orchestrator.providers.mock_provider import MockVideoProvider
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 from muse_orchestrator.services.asset_storage import (
@@ -261,6 +265,18 @@ class ConnectionService:
                 connection.last_error_redacted = SecretRedactor.redact_text(
                     str(exc), [raw_api_key or ""]
                 )
+                # Health probes are unauthenticated; the model listing is the first call that
+                # proves the key. A rejected key must not leave the connection "healthy".
+                connection.health_state = (
+                    ConnectionHealthState.AUTH_ERROR
+                    if exc.category == ErrorCategory.AUTH_FAILED
+                    else ConnectionHealthState.DEGRADED
+                )
+        else:
+            detail = health.details.get("error") or health.details.get("message") or (
+                f"Provider health check reported '{health.status_state}'."
+            )
+            connection.last_error_redacted = SecretRedactor.redact_text(str(detail), [raw_api_key or ""])
         accounts = await self.repository.list_accounts(connection_id)
         connection.capabilities_snapshot = {
             "probed_at": connection.last_checked_at.isoformat(),
@@ -365,12 +381,59 @@ class AssetService:
         ]
         return takes, shots, bible
 
+    async def _find_timeline_references(
+        self, asset: Asset
+    ) -> tuple[list[TimelineClipRecord], list[TimelineTrackRecord], list[ExportJobRecord]]:
+        """Timeline clips, legacy track clip lists and export outputs that use the asset.
+
+        These columns carry no FK, so a delete would otherwise leave dangling ids (an
+        export reported as succeeded with a download link that 404s).
+        """
+        session = self.repository.session
+        clips = list((await session.execute(
+            select(TimelineClipRecord).where(TimelineClipRecord.asset_id == asset.id)
+        )).scalars().all())
+        project_tracks = (await session.execute(
+            select(TimelineTrackRecord)
+            .join(TimelineSequenceRecord, TimelineSequenceRecord.id == TimelineTrackRecord.sequence_id)
+            .where(TimelineSequenceRecord.project_id == asset.project_id)
+        )).scalars().all()
+        tracks = [
+            track for track in project_tracks
+            if any(isinstance(c, dict) and c.get("asset_id") == asset.id for c in (track.clips_json or []))
+        ]
+        exports = list((await session.execute(
+            select(ExportJobRecord).where(ExportJobRecord.output_asset_id == asset.id)
+        )).scalars().all())
+        return clips, tracks, exports
+
+    @staticmethod
+    def _detach_timeline_references(
+        asset_id: str,
+        clips: list[TimelineClipRecord],
+        tracks: list[TimelineTrackRecord],
+        exports: list[ExportJobRecord],
+    ) -> None:
+        for clip in clips:
+            clip.asset_id = None
+        for track in tracks:
+            track.clips_json = [
+                {**c, "asset_id": None} if isinstance(c, dict) and c.get("asset_id") == asset_id else c
+                for c in (track.clips_json or [])
+            ]
+        for job in exports:
+            # The job stays as history; it no longer offers a download for a deleted file.
+            job.output_asset_id = None
+
     @staticmethod
     def _describe_references(
         asset_id: str,
         takes: list[ShotTakeRecord],
         shots: list[ShotRecord],
         bible: list[StoryBibleEntry],
+        clips: list[TimelineClipRecord] | None = None,
+        tracks: list[TimelineTrackRecord] | None = None,
+        exports: list[ExportJobRecord] | None = None,
     ) -> str:
         def ids(values: list[str]) -> str:
             shown = ", ".join(values[:20])
@@ -383,6 +446,10 @@ class AssetService:
             parts.append(f"shots [{ids([s.id for s in shots])}]")
         if bible:
             parts.append(f"story bible [{ids([b.code_name for b in bible])}]")
+        if clips or tracks:
+            parts.append(f"timeline clips [{ids([c.id for c in (clips or [])] + [t.id for t in (tracks or [])])}]")
+        if exports:
+            parts.append(f"export jobs [{ids([e.id for e in exports])}]")
         return (
             f"Asset '{asset_id}' is still referenced by " + "; ".join(parts)
             + ". Retry with force=true to detach these references and delete it."
@@ -401,8 +468,13 @@ class AssetService:
             raise ApplicationError(500, "Stored asset path escaped the media root.") from exc
 
         takes, shots, bible = await self._find_asset_references(asset)
-        if (takes or shots or bible) and not force:
-            raise ApplicationError(409, self._describe_references(asset.id, takes, shots, bible))
+        clips, tracks, exports = await self._find_timeline_references(asset)
+        if (takes or shots or bible or clips or tracks or exports) and not force:
+            raise ApplicationError(
+                409, self._describe_references(asset.id, takes, shots, bible, clips, tracks, exports)
+            )
+        if clips or tracks or exports:
+            self._detach_timeline_references(asset.id, clips, tracks, exports)
 
         shared_path = await self.repository.has_other_asset_with_storage_path(
             asset.storage_rel_path, asset.id
