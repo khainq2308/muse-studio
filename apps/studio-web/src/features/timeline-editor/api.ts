@@ -41,6 +41,24 @@ export function useAssembleTimeline(projectId: string) {
       apiPost("/api/v1/projects/{project_id}/timeline/assemble", request, {
         pathParams: { project_id: scopeProjectId },
       }),
+    onSuccess: (data, variables) => {
+      // The new sequence is the latest one; show it right away (the refetch below confirms it),
+      // so a saved clip draft is replaced by the server's result instead of lingering as dirty.
+      const latest: TimelineSequence = {
+        sequence_id: data.sequence_id,
+        name: data.name,
+        aspect_ratio: data.aspect_ratio,
+        fps: data.fps,
+        resolution: data.resolution,
+        total_duration_seconds: data.total_duration_seconds,
+        warnings: data.warnings,
+        manifest: data.manifest,
+      };
+      queryClient.setQueryData(
+        queryKeys.projectTimeline(variables.sessionVersion, variables.projectId),
+        latest,
+      );
+    },
     onSettled: (_data, _error, variables) =>
       queryClient.invalidateQueries({
         queryKey: queryKeys.projectTimeline(variables.sessionVersion, variables.projectId),

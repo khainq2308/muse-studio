@@ -269,6 +269,39 @@ def test_render_gap_before_a_cross_dissolve_matches_the_timeline_duration(tmp_pa
 
 
 @needs_ffmpeg
+@pytest.mark.parametrize(
+    ("second_start", "third_start", "expected_duration"),
+    [
+        # A, B hard cut, then C dissolves over B: xfade's first input is a concat output.
+        (3.0, 6.0, 10.0),
+        # A, black gap, B, then C dissolves over B: the concat also joins the black filler.
+        (6.0, 9.0, 13.0),
+    ],
+)
+def test_render_dissolve_after_a_concat_segment(
+    tmp_path: Path, second_start: float, third_start: float, expected_duration: float
+) -> None:
+    paths = [tmp_path / f"{name}.mp4" for name in ("a", "b", "c")]
+    for path in paths:
+        _make_video(path, "320x240", 24, 4)
+
+    _out, _size, _sha, _args, meta = TimelineValidationService.render_and_probe_mp4(
+        output_dir=str(tmp_path / "out"),
+        export_id="exp_concat_dissolve",
+        fps=24,
+        resolution="320x240",
+        clips=[
+            _clip(str(paths[0]), 3.0, start=0.0),
+            _clip(str(paths[1]), 4.0, start=second_start),
+            _clip(str(paths[2]), 4.0, kind="cross_dissolve", transition=1.0, start=third_start),
+        ],
+    )
+
+    assert meta["valid"] is True
+    assert abs(meta["duration_seconds"] - expected_duration) < 0.2
+
+
+@needs_ffmpeg
 def test_render_refuses_an_overlap_before_running_ffmpeg(tmp_path: Path) -> None:
     first, second = tmp_path / "a.mp4", tmp_path / "b.mp4"
     _make_video(first, "320x240", 24, 4)
