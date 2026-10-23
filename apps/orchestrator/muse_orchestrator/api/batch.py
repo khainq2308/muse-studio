@@ -16,7 +16,7 @@ from muse_orchestrator.models.domain import (
     BatchRenderJobRecord,
 )
 from muse_orchestrator.api.pipeline import _recompile_project_shots
-from muse_orchestrator.api.arq_dispatch import schedule_generation_task
+from muse_orchestrator.api.arq_dispatch import schedule_generation_task, schedule_generation_tasks
 from muse_orchestrator.services.generation_queue import (
     GenerationQueueService,
     conditioning_first_frame_of,
@@ -322,31 +322,37 @@ async def tick_project_batch_queue(
     queued_tasks = [t for t in active_tasks if t.state == QueueTaskState.QUEUED]
 
     stepped_results: list[dict[str, Any]] = []
-    for t in running_tasks + queued_tasks:
-        updated = await GenerationQueueService.step_task(repository.session, t.id)
-        await schedule_generation_task(request, updated)
-        stepped_results.append({
-            "task_id": updated.id,
-            "shot_id": updated.shot_id,
-            "state": updated.state.value,
-            "poll_count": updated.poll_count,
-        })
-
-    # Kiểm tra xem có shot nào vừa được mở khoá khỏi BLOCKED_UPSTREAM_FRAME nhờ Frame Chaining không
-    # Nếu có và vừa được chuyển về NOT_STARTED (có first_frame_asset_id), tự động enqueue vào cùng Connection!
-    # Shots without a valid config/enabled connection stay NOT_STARTED for a later tick.
-    auto_results = await GenerationQueueService.auto_enqueue_ready_frame_chain_shots(
-        repository, project_id, requested_connection_id=connection_id
-    )
-    for cs, new_t, created in auto_results:
-        await schedule_generation_task(request, new_t)
-        if created:
+    to_schedule: list[GenerationTaskRecord] = []
+    try:
+        for t in running_tasks + queued_tasks:
+            updated = await GenerationQueueService.step_task(repository.session, t.id)
+            to_schedule.append(updated)
             stepped_results.append({
-                "task_id": new_t.id,
-                "shot_id": cs.id,
-                "state": new_t.state.value,
-                "auto_enqueued_from_frame_chain": True,
+                "task_id": updated.id,
+                "shot_id": updated.shot_id,
+                "state": updated.state.value,
+                "poll_count": updated.poll_count,
             })
+
+        # Kiểm tra xem có shot nào vừa được mở khoá khỏi BLOCKED_UPSTREAM_FRAME nhờ Frame Chaining không
+        # Nếu có và vừa được chuyển về NOT_STARTED (có first_frame_asset_id), tự động enqueue vào cùng Connection!
+        # Shots without a valid config/enabled connection stay NOT_STARTED for a later tick.
+        auto_results = await GenerationQueueService.auto_enqueue_ready_frame_chain_shots(
+            repository, project_id, requested_connection_id=connection_id
+        )
+        for cs, new_t, created in auto_results:
+            to_schedule.append(new_t)
+            if created:
+                stepped_results.append({
+                    "task_id": new_t.id,
+                    "shot_id": cs.id,
+                    "state": new_t.state.value,
+                    "auto_enqueued_from_frame_chain": True,
+                })
+    finally:
+        # Publish whatever was committed even if a later step raised, so one bad task
+        # cannot strand the tasks stepped before it (they would wait for recovery).
+        await schedule_generation_tasks(request, to_schedule)
 
     all_project_tasks = await repository.list_project_generation_tasks(project_id)
     counts: dict[str, int] = {}
@@ -415,6 +421,8 @@ async def retry_failed_project_tasks(
         )
 
     new_task_ids: list[str] = []
+    created_tasks: list[GenerationTaskRecord] = []
+    refused: tuple[str, str] | None = None
     for s, conn, model_id in plan:
         try:
             t, _ = await GenerationQueueService.enqueue_shot_generation(
@@ -426,10 +434,25 @@ async def retry_failed_project_tasks(
                 force_retry=True,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            # The guard refused after the pre-check (state changed concurrently). Earlier
+            # tasks are already committed: stop here, but still publish them below.
+            refused = (s.id, str(exc))
+            break
         new_task_ids.append(t.id)
-        await schedule_generation_task(request, t)
+        created_tasks.append(t)
 
+    # Publish only after the loop, so a Redis failure cannot skip shots; tasks created
+    # before a refusal are published too instead of waiting for the recovery cron.
+    await schedule_generation_tasks(request, created_tasks)
+    if refused is not None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "retry_partially_applied",
+                "message": f"Shot {refused[0]} could not be re-enqueued: {refused[1]}",
+                "new_task_ids": new_task_ids,
+            },
+        )
     return {"retried_count": len(new_task_ids), "new_task_ids": new_task_ids}
 
 
@@ -465,6 +488,7 @@ async def flag_take_continuity_and_regenerate(
         if error is not None:
             raise HTTPException(status_code=422, detail=error)
 
+    previous_flag = (take.continuity_flagged, take.director_notes)
     take.continuity_flagged = payload.continuity_flagged
     take.director_notes = payload.director_notes
     await repository.save_take_continuity(take)
@@ -482,6 +506,12 @@ async def flag_take_continuity_and_regenerate(
                 force_retry=True,
             )
         except ValueError as exc:
+            # The guard refused after the pre-check (state changed meanwhile): undo the flag
+            # so a 422 never leaves half of the request applied.
+            take = await repository.get_shot_take(take_id)
+            if take is not None:
+                take.continuity_flagged, take.director_notes = previous_flag
+                await repository.save_take_continuity(take)
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         regen_task_id = new_task.id
         await schedule_generation_task(request, new_task)

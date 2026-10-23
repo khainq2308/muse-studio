@@ -19,7 +19,7 @@ from muse_orchestrator.models.domain import (
     ConnectionAccount,
     ConnectionHealthState,
     GenerationTaskRecord,
-    SCHEDULABLE_GENERATION_TASK_STATES,
+    ACTIVE_GENERATION_TASK_STATES,
 )
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 
@@ -164,14 +164,14 @@ class ConnectionAccountService:
             await self.repository.session.execute(
                 select(GenerationTaskRecord.id).where(
                     GenerationTaskRecord.account_id_used == account.id,
-                    GenerationTaskRecord.state.in_(SCHEDULABLE_GENERATION_TASK_STATES),
+                    GenerationTaskRecord.state.in_(ACTIVE_GENERATION_TASK_STATES),
                 ).limit(1)
             )
         ).first()
         if active_task is not None:
             raise ApplicationError(
                 409,
-                "Cannot delete an account pinned to a queued/running generation task. "
+                "Cannot delete an account pinned to a queued/running/paused generation task. "
                 "Disable it or wait for the task to finish first.",
             )
         label, connection_id = account.label, account.connection_id

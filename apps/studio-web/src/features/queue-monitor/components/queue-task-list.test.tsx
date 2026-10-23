@@ -106,6 +106,40 @@ describe("QueueTaskList", () => {
     expect(screen.getByRole("button", { name: `Cancel task ${task.id}` })).toHaveFocus();
   });
 
+  it("closes a pending cancel confirmation when the task is paused instead", () => {
+    const task = makeTask("running");
+    const onAction = vi.fn();
+    render(
+      <QueueTaskList
+        tasks={[task]}
+        busyTaskIds={new Set()}
+        onAction={onAction}
+        onReply={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: `Cancel task ${task.id}` }));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `Pause task ${task.id}` }));
+
+    expect(onAction).toHaveBeenCalledWith(task.id, "pause");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("does not reopen a cancel confirmation when its task leaves and returns to the list", () => {
+    const task = makeTask("running");
+    const other = makeTask("queued", { id: "task-other" });
+    const props = { busyTaskIds: new Set<string>(), onAction: vi.fn(), onReply: vi.fn() };
+    const { rerender } = render(<QueueTaskList tasks={[task, other]} {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: `Cancel task ${task.id}` }));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    rerender(<QueueTaskList tasks={[other]} {...props} />);
+    rerender(<QueueTaskList tasks={[task, other]} {...props} />);
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
   it("dismisses the cancel confirmation with Escape without cancelling", () => {
     const task = makeTask("queued");
     const onAction = vi.fn();

@@ -289,6 +289,8 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           onRetry={refreshQueue}
         >
           <QueueTaskList
+            // A new admin session or project starts without pending confirmations.
+            key={`${projectId}:${sessionVersion}`}
             tasks={tasks}
             busyTaskIds={pendingTaskIds}
             onAction={handleAction}

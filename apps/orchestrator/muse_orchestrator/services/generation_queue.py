@@ -69,8 +69,9 @@ _TERMINAL_TASK_STATES = (
 _ACTIVE_TASK_STATES = (QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.AWAITING_INPUT)
 
 # While the provider waits for an operator answer the task is polled at a fixed slow
-# cadence and those polls do not count against max_polls: the gateway enforces its own
-# input timeout (30 min) and then fails the task with error code "input_timeout".
+# cadence and successful polls do not count against max_polls (failed ones do, so an
+# unreachable gateway still ends the task): the gateway enforces its own input timeout
+# (30 min) and then fails the task with error code "input_timeout".
 AWAITING_INPUT_POLL_SECONDS = 15.0
 # After an answer the provider resumes quickly; poll soon to pick up the new status.
 AFTER_REPLY_POLL_SECONDS = 2.0
@@ -941,13 +942,18 @@ class GenerationQueueService:
             or existing.project_id != shot.project_id
             or existing.task_type != task_type
             or existing.connection_id != conn.id
+            # A client key names one request: the same key with another model or prompt
+            # is a different generation, not a replay of the stored one.
+            or (idempotency_key is not None and (
+                existing.model_id != model_id or existing.prompt_hash != shot.prompt_hash
+            ))
         ):
             # A client-supplied key is unique across the whole database; never hand back
             # (or sync this shot with) a task that belongs to a different request.
             await db.rollback()
             raise IdempotencyKeyConflictError(
                 "idempotency_key is already used by a different generation request "
-                "(another shot, task type or connection)."
+                "(another shot, task type, connection, model or prompt)."
             )
 
         if existing is not None and not force_retry:
@@ -1083,6 +1089,26 @@ class GenerationQueueService:
                 account.health_state = ConnectionHealthState.AUTH_ERROR
             elif exc.category == ErrorCategory.QUOTA_EXHAUSTED:
                 account.health_state = ConnectionHealthState.DEGRADED
+        if exc.retryable and task.state == QueueTaskState.AWAITING_INPUT:
+            # Successful polls while waiting for the operator are free, failed ones are not:
+            # an unreachable gateway must still end in POLL_TIMEOUT instead of looping forever.
+            task.poll_count += 1
+            if task.poll_count > task.max_polls:
+                task.state = QueueTaskState.POLL_TIMEOUT
+                task.pending_input_json = None
+                task.error_category = ErrorCategory.UPSTREAM_POLL_TIMEOUT.value
+                task.retryable = True
+                task.error_message_redacted = (
+                    f"Exceeded max_polls ({task.max_polls}) with failing polls while waiting for operator input: {safe_err}"
+                )
+                task.finished_at = datetime.now(timezone.utc)
+                await GenerationQueueService.settle_shot_after_task_end(
+                    db, task, shot, ShotGenerationState.FAILED
+                )
+                task.history_log = list(task.history_log or []) + [task.error_message_redacted]
+                await db.commit()
+                await db.refresh(task)
+                return task
         if exc.retryable:
             delay = compute_backoff_seconds(task.poll_count)
             task.next_poll_delay_seconds = delay
@@ -1519,6 +1545,11 @@ class GenerationQueueService:
         await db.commit()
         lease_state["dispatch_in_flight"] = False
         await db.refresh(task)
+        if task.state == QueueTaskState.CANCELED:
+            # The operator canceled while the request was in flight, before an external id
+            # existed to cancel: now that the provider job is known, stop it (best effort)
+            # instead of letting it render and consume quota for a task nobody polls.
+            await GenerationQueueService._propagate_cancel_to_provider(db, task)
         return task
 
     @staticmethod
@@ -1592,7 +1623,8 @@ class GenerationQueueService:
         raw_secret: str,
         lease_state: dict[str, bool],
     ) -> GenerationTaskRecord:
-        # Polls while waiting for the operator do not consume max_polls.
+        # Successful polls while waiting for the operator do not consume max_polls
+        # (failed ones do, in _handle_poll_failure).
         counted_poll = task.state != QueueTaskState.AWAITING_INPUT
         if counted_poll:
             task.poll_count += 1
@@ -1739,7 +1771,7 @@ class GenerationQueueService:
             "kind": raw_question.get("kind", "question"),
             "text": SecretRedactor.redact_text(str(raw_question.get("text") or ""), [raw_secret]),
             "options": [
-                SecretRedactor.redact_text(str(option), [raw_secret])
+                SecretRedactor.redact_credentials(str(option), [raw_secret])
                 for option in (raw_question.get("options") or [])
             ],
             "asked_at": raw_question.get("asked_at"),
@@ -1790,6 +1822,18 @@ class GenerationQueueService:
         return provider, raw_secret
 
     @staticmethod
+    async def _release_reply_lease(db: AsyncSession, task_id: str) -> None:
+        """Drop the lease taken for an answer that failed or was interrupted (best effort)."""
+        try:
+            await db.rollback()
+            lease = await db.get(GenerationDispatchLeaseRecord, task_id)
+            if lease is not None:
+                await db.delete(lease)
+                await db.commit()
+        except Exception:  # noqa: BLE001 - the lease expires on its own
+            logger.warning("Could not release the reply lease of task %s", task_id)
+
+    @staticmethod
     async def reply_to_task(
         db: AsyncSession, task_id: str, answer: dict[str, str]
     ) -> GenerationTaskRecord:
@@ -1832,27 +1876,86 @@ class GenerationQueueService:
             await db.rollback()
             raise TaskNotFoundError(task_id)
         provider, raw_secret = loaded
-        external_task_id = task.external_task_id
-        # Release the row lock before network I/O.
-        await db.commit()
-
         if not isinstance(provider, InteractiveProvider):
+            await db.rollback()
             raise ProviderFailure(
                 ErrorCategory.INVALID_REQUEST,
                 "This provider does not support answering operator questions.",
                 retryable=False,
             )
+        external_task_id = task.external_task_id
+        # Claim the task with the same lease a worker poll takes, so neither a concurrent
+        # answer nor a poll can interleave with this one while the row lock is released.
+        now = datetime.now(timezone.utc)
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            expiry = lease.expires_at if lease.expires_at.tzinfo else lease.expires_at.replace(tzinfo=timezone.utc)
+            if expiry > now:
+                await db.rollback()
+                raise TaskStateConflictError(
+                    "Another answer or a provider poll is in progress for this task; retry shortly."
+                )
+            await db.delete(lease)
+            await db.flush()
+        conn = await db.get(ProviderConnection, task.connection_id)
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=task.id,
+            connection_id=task.connection_id,
+            expires_at=now + timedelta(seconds=dispatch_lease_seconds(conn)),
+        ))
+        # Release the row lock before network I/O.
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            # SQLite has no row lock: a concurrent poll/answer inserted the lease first.
+            await db.rollback()
+            raise TaskStateConflictError(
+                "Another answer or a provider poll is in progress for this task; retry shortly."
+            ) from exc
+
         try:
             p_status = await provider.reply(external_task_id, dict(answer))
         except ProviderFailure as exc:
+            await GenerationQueueService._release_reply_lease(db, task.id)
             raise ProviderFailure(
                 exc.category,
                 SecretRedactor.redact_text(exc.message, [raw_secret]),
                 exc.http_status,
                 exc.retryable,
             ) from exc
+        except BaseException:
+            await GenerationQueueService._release_reply_lease(db, task.id)
+            raise
 
-        await db.refresh(task)
+        try:
+            return await GenerationQueueService._record_reply(db, task_id, answer, p_status, raw_secret)
+        except BaseException:
+            # The provider already has the answer; never leave the task locked for a whole
+            # lease because recording it locally failed.
+            logger.warning("Task %s: the answer was delivered but recording it failed", task_id)
+            await GenerationQueueService._release_reply_lease(db, task_id)
+            raise
+
+    @staticmethod
+    async def _record_reply(
+        db: AsyncSession,
+        task_id: str,
+        answer: dict[str, str],
+        p_status: ProviderTaskStatus,
+        raw_secret: str,
+    ) -> GenerationTaskRecord:
+        """Persist a delivered answer and drop the reply lease in the same transaction."""
+        task = (
+            await db.execute(
+                select(GenerationTaskRecord)
+                .where(GenerationTaskRecord.id == task_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
         kind, value = next(iter(answer.items()))
         answered = SecretRedactor.redact_text(value, [raw_secret])[:_HISTORY_TEXT_MAX_CHARS]
         entry = f"Operator answered ({kind}): {answered}"
@@ -1864,15 +1967,17 @@ class GenerationQueueService:
         else:
             task.history_log = list(task.history_log or []) + [entry]
             follow_up = p_status.question if p_status.status == "needs_input" else None
-            if follow_up is not None and follow_up != task.pending_input_json:
-                task.pending_input_json = {
-                    **follow_up,
-                    "text": SecretRedactor.redact_text(str(follow_up.get("text") or ""), [raw_secret]),
-                    "options": [
-                        SecretRedactor.redact_text(str(option), [raw_secret])
-                        for option in (follow_up.get("options") or [])
-                    ],
-                }
+            stored_follow_up = None if follow_up is None else {
+                **follow_up,
+                "text": SecretRedactor.redact_text(str(follow_up.get("text") or ""), [raw_secret]),
+                "options": [
+                    SecretRedactor.redact_credentials(str(option), [raw_secret])
+                    for option in (follow_up.get("options") or [])
+                ],
+            }
+            # Compare what would be stored with what is stored (both redacted).
+            if stored_follow_up is not None and stored_follow_up != task.pending_input_json:
+                task.pending_input_json = stored_follow_up
                 task.next_poll_delay_seconds = AWAITING_INPUT_POLL_SECONDS
                 task.history_log = list(task.history_log) + [
                     f"Provider asked a follow-up ({follow_up.get('kind')}): "
@@ -1888,6 +1993,62 @@ class GenerationQueueService:
         return task
 
     @staticmethod
+    async def _lock_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
+        """Re-read a task under its row lock (no-op lock on SQLite); raises TaskNotFoundError.
+
+        Operator state changes must not overwrite a state the worker committed meanwhile
+        (e.g. a pause after the result was persisted would re-poll and create a duplicate take).
+        """
+        task = (
+            await db.execute(
+                select(GenerationTaskRecord)
+                .where(GenerationTaskRecord.id == task_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if task is None:
+            await db.rollback()
+            raise TaskNotFoundError(task_id)
+        return task
+
+    @staticmethod
+    async def pause_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
+        """Pause a QUEUED/RUNNING task; TaskStateConflictError otherwise."""
+        task = await GenerationQueueService._lock_task(db, task_id)
+        if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
+            state = task.state.value
+            await db.rollback()
+            raise TaskStateConflictError(f"Cannot pause a task in state '{state}'.")
+        task.state = QueueTaskState.PAUSED
+        task.history_log = list(task.history_log or []) + ["Paused by operator."]
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def resume_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
+        """Resume a PAUSED task. A task that was never dispatched needs an enabled connection."""
+        task = await GenerationQueueService._lock_task(db, task_id)
+        if task.state != QueueTaskState.PAUSED:
+            state = task.state.value
+            await db.rollback()
+            raise TaskStateConflictError(f"Cannot resume a task in state '{state}'.")
+        if not task.external_task_id:
+            conn = await db.get(ProviderConnection, task.connection_id)
+            if conn is None or not conn.enabled:
+                await db.rollback()
+                raise TaskStateConflictError(
+                    "Cannot resume: the task was never dispatched and its connection is disabled "
+                    "or missing. Cancel it and enqueue on an enabled connection."
+                )
+        task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
+        task.history_log = list(task.history_log or []) + ["Resumed by operator."]
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
     async def cancel_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
         """Cancel a non-terminal task (QUEUED/RUNNING/PAUSED/AWAITING_INPUT).
 
@@ -1896,16 +2057,16 @@ class GenerationQueueService:
         job, the provider is asked to cancel it best effort (see
         ``_propagate_cancel_to_provider``), which never fails or undoes the local cancel.
         """
-        task = await db.get(GenerationTaskRecord, task_id)
-        if task is None:
-            raise TaskNotFoundError(task_id)
+        task = await GenerationQueueService._lock_task(db, task_id)
         if task.state in (
             QueueTaskState.SUCCEEDED,
             QueueTaskState.FAILED,
             QueueTaskState.CANCELED,
             QueueTaskState.POLL_TIMEOUT,
         ):
-            raise TaskStateConflictError(f"Cannot cancel a task in terminal state '{task.state.value}'.")
+            state = task.state.value
+            await db.rollback()
+            raise TaskStateConflictError(f"Cannot cancel a task in terminal state '{state}'.")
         previous_state = task.state
         task.state = QueueTaskState.CANCELED
         task.pending_input_json = None

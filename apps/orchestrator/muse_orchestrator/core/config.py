@@ -173,13 +173,19 @@ _SECRET_KEY_NAMES = (
     r"|secret[-_]?key|password|passwd|secret|token"
 )
 
+_KEY_NAME_PATTERN = re.compile(
+    r"(?i)([\"']?\b(?:" + _SECRET_KEY_NAMES + r")[\"']?\s*[:=]\s*[\"']?)[^\s,'\"}&]+"
+)
+
 # Every pattern below is anchored on a literal keyword and uses only non-overlapping
 # quantifiers, so each match attempt is linear in the length of the scanned token.
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Authorization / Proxy-Authorization headers, plain or as quoted JSON/dict keys.
     (
         re.compile(
-            r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic|token|digest)\s+)[^\s,'\"}]+"
+            # The whole header value up to the end of the line or field is the credential,
+            # whatever the scheme (Bearer, ApiKey, none, ...): never guess where it ends.
+            r"(?i)(authorization[\"']?[ \t]*[:=][ \t]*[\"']?)[^\r\n\"',}]+"
         ),
         r"\1[REDACTED]",
     ),
@@ -198,14 +204,21 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         r"\1[REDACTED]",
     ),
     # key: value / key=value, including quoted keys such as "api_key": "x" or 'password': 'x'.
-    (
-        re.compile(
-            r"(?i)([\"']?\b(?:" + _SECRET_KEY_NAMES + r")[\"']?\s*[:=]\s*[\"']?)[^\s,'\"}&]+"
-        ),
-        r"\1[REDACTED]",
-    ),
+    (_KEY_NAME_PATTERN, r"\1[REDACTED]"),
     (re.compile(r"(?i)((?:set-)?cookie\s*[:=]\s*['\"]?)[^\r\n\"']+"), r"\1[REDACTED_COOKIE]"),
 ]
+
+# Any key: value / key=value pair in free text. The key is judged by the same rule as
+# mapping keys (SecretRedactor.is_sensitive_key), so text and structured redaction agree
+# on aliases such as passphrase, pwd or secret_pin. Keys start with a letter and are at most
+# 64 characters, so a failed match backtracks over at most 64 characters (linear overall).
+_KEY_VALUE_PATTERN = re.compile(
+    r"([\"']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1[ \t]*([:=])[ \t]*"
+    # Value: a quoted string (backslash escapes allowed), a bare token, or an unterminated
+    # quote (e.g. cut by the input bound), which is redacted up to the end of the line.
+    r"(\"(?:[^\"\\\r\n]|\\.)*\"|'(?:[^'\\\r\n]|\\.)*'|[^\s,'\"}&;]+|[\"'][^\r\n]*)"
+)
+_REDACTION_MARKERS = frozenset({"[REDACTED]", "[REDACTED_COOKIE]", "[REDACTED_PROXY_CRED]"})
 
 # Proxy/provider URLs with userinfo. The scheme is located with a fixed alternation and
 # the rest of the whitespace-delimited token is parsed with str methods, so the work is
@@ -259,6 +272,15 @@ def _bound_redaction_input(text: str) -> str:
 
 _NON_SECRET_KEY_NAMES = frozenset(
     {
+        # Token counts of LLM usage/limits, not credentials.
+        "maxtokens",
+        "maxnewtokens",
+        "tokencount",
+        "totaltokens",
+        "prompttokens",
+        "completiontokens",
+        "inputtokens",
+        "outputtokens",
         "cachekey",
         "idempotencykey",
         "sortkey",
@@ -269,6 +291,7 @@ _NON_SECRET_KEY_NAMES = frozenset(
     }
 )
 _SENSITIVE_KEY_FRAGMENTS = (
+    "passphrase",
     "token",
     "secret",
     "password",
@@ -297,6 +320,41 @@ class SecretRedactor:
         sanitized = _redact_url_userinfo(sanitized)
         for pattern, replacement in _SENSITIVE_PATTERNS:
             sanitized = pattern.sub(replacement, sanitized)
+        return _KEY_VALUE_PATTERN.sub(SecretRedactor._redact_key_value_match, sanitized)
+
+    @staticmethod
+    def _redact_key_value_match(match: re.Match[str]) -> str:
+        key, value = match.group(2), match.group(4)
+        if not SecretRedactor.is_sensitive_key(key):
+            return match.group(0)
+        if SecretRedactor._is_proxy_key(key) and "://" in value:
+            return match.group(0)  # userinfo was already stripped by _redact_url_userinfo
+        if value.strip("\"'") in _REDACTION_MARKERS:
+            # Fully redacted by an earlier pattern. A partial "[REDACTED] rest" (an earlier
+            # pattern stopped at a space or delimiter) is redacted again as a whole.
+            return match.group(0)
+        quote = value[0] if value[:1] in ("\"", "'") else ""
+        return match.group(0)[: match.start(4) - match.start(0)] + f"{quote}[REDACTED]{quote}"
+
+    @staticmethod
+    def redact_credentials(text: str, explicit_secrets: list[str] | None = None) -> str:
+        """Remove credentials by value shape only (known secrets, URL userinfo, Authorization,
+        bearer tokens, credential query parameters, cookies), not by key names.
+
+        For text that must stay usable as-is, such as the options of a provider question
+        that are validated and sent back: key-name heuristics would turn "Key: C major"
+        into an option the provider no longer recognises.
+        """
+        if not text:
+            return text
+        sanitized = text
+        for secret in explicit_secrets or []:
+            if secret and len(secret) >= 4:
+                sanitized = sanitized.replace(secret, "[REDACTED]")
+        sanitized = _redact_url_userinfo(_bound_redaction_input(sanitized))
+        for pattern, replacement in _SENSITIVE_PATTERNS:
+            if pattern is not _KEY_NAME_PATTERN:
+                sanitized = pattern.sub(replacement, sanitized)
         return sanitized
 
     @classmethod
@@ -316,6 +374,9 @@ class SecretRedactor:
             "cookie",
             "cookies",
             "password",
+            "passphrase",
+            "pwd",
+            "proxy_pass",
             "proxy_url",
             "authorization",
             "secret",
@@ -348,7 +409,7 @@ class SecretRedactor:
         Display-only derivatives such as ``api_key_masked`` and well-known non-secret
         identifiers such as ``cache_key`` / ``idempotency_key`` are not treated as secrets.
         """
-        lowered = str(key).strip().lower()
+        lowered = cls._key_text(key).strip().lower()
         if lowered in cls._SENSITIVE_KEYS:
             return True
         normalized = re.sub(r"[-_\s.]", "", lowered)
@@ -365,19 +426,43 @@ class SecretRedactor:
         result: dict[str, Any] = {}
         for key, value in data.items():
             sensitive = inherited or cls.is_sensitive_key(key)
-            result[key] = cls._redact_value(value, explicit_secrets, sensitive)
+            result[key] = cls._redact_value(value, explicit_secrets, sensitive, key=key)
         return result
 
     @classmethod
-    def _redact_value(cls, value: Any, explicit_secrets: list[str] | None, sensitive: bool) -> Any:
+    def _redact_value(
+        cls, value: Any, explicit_secrets: list[str] | None, sensitive: bool, key: object = None
+    ) -> Any:
         if isinstance(value, str):
             if sensitive:
-                # Preserve a proxy URL’s diagnostic host, but never its credentials.
-                return cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
+                if cls._is_proxy_key(key) and "://" in value:
+                    # Preserve a proxy URL's diagnostic host, but never its credentials.
+                    return cls.redact_text(value, explicit_secrets)
+                return "[REDACTED]"
             return cls.redact_text(value, explicit_secrets)
         if isinstance(value, dict):
             return cls._redact_mapping(value, explicit_secrets, sensitive)
-        if isinstance(value, (list, tuple)):
-            items = [cls._redact_value(item, explicit_secrets, sensitive) for item in value]
+        if isinstance(value, (list, tuple, set, frozenset)):
+            items = [cls._redact_value(item, explicit_secrets, sensitive, key=key) for item in value]
             return tuple(items) if isinstance(value, tuple) else items
+        if isinstance(value, (bytes, bytearray)) and not sensitive:
+            return cls.redact_text(bytes(value).decode("utf-8", errors="replace"), explicit_secrets)
+        if sensitive and value is not None:
+            # Numbers, bytes, booleans ... under a secret key are secrets too.
+            return "[REDACTED]"
         return value
+
+    # Keys whose value is a proxy URL: its host is kept for diagnostics (credentials stripped).
+    _PROXY_URL_KEYS = frozenset(
+        {"proxy", "proxies", "proxyurl", "proxyuri", "httpproxy", "httpsproxy", "allproxy"}
+    )
+
+    @classmethod
+    def _is_proxy_key(cls, key: object) -> bool:
+        return re.sub(r"[-_\s.]", "", cls._key_text(key).lower()) in cls._PROXY_URL_KEYS
+
+    @staticmethod
+    def _key_text(key: object) -> str:
+        if isinstance(key, (bytes, bytearray)):
+            return bytes(key).decode("utf-8", errors="replace")
+        return str(key)

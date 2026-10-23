@@ -420,8 +420,10 @@ class WorkflowService:
 
         exec_by_nid = {ne.node_id: ne for ne in await self.repository.list_node_executions_for_run(run_id)}
         target = exec_by_nid.get(node_id)
-        if not target or target.state != NodeExecutionState.WAITING_APPROVAL:
-            raise ApplicationError(400, "Node này không ở trạng thái waiting_approval.")
+        if not target:
+            raise ApplicationError(404, "Node không tồn tại trong workflow run này.")
+        if target.state != NodeExecutionState.WAITING_APPROVAL:
+            raise ApplicationError(409, "Node này không ở trạng thái waiting_approval.")
 
         now = datetime.now(timezone.utc)
         target.state = NodeExecutionState.SUCCEEDED

@@ -52,6 +52,32 @@ async def schedule_generation_task(request: Request, task: GenerationTaskRecord)
         ) from exc
 
 
+async def schedule_generation_tasks(request: Request, tasks: list[GenerationTaskRecord]) -> None:
+    """Publish several persisted tasks; try all of them before reporting one safe 503.
+
+    Call only after every database change of the request is committed, so a Redis outage
+    never leaves the work half done: unscheduled tasks stay persisted and the worker's
+    recovery cron re-enqueues them.
+    """
+    unscheduled: list[str] = []
+    for task in tasks:
+        try:
+            await schedule_generation_task(request, task)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
+                raise
+            unscheduled.append(task.id)
+    if unscheduled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "queue_dispatch_unavailable",
+                "task_ids": unscheduled,
+                "message": "Tasks are saved, but Redis scheduling failed. Background recovery will retry after Redis is reachable; do not repeat the request just to reschedule.",
+            },
+        )
+
+
 async def schedule_export_job(request: Request, export_id: str) -> None:
     """Publish an already-persisted QUEUED export job; expose a safe 503 if Redis cannot schedule it.
 

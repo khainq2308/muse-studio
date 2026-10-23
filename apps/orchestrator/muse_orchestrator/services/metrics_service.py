@@ -105,10 +105,14 @@ async def collect_summary(db: AsyncSession) -> dict[str, Any]:
 def render_prometheus(summary: dict[str, Any]) -> str:
     """Render the summary in Prometheus text exposition format (no extra deps)."""
     lines: list[str] = []
+    described: set[str] = set()
 
     def gauge(name: str, help_text: str, value: float, labels: dict[str, str] | None = None) -> None:
-        lines.append(f"# HELP {name} {help_text}")
-        lines.append(f"# TYPE {name} gauge")
+        # The exposition format allows one HELP/TYPE pair per metric family.
+        if name not in described:
+            described.add(name)
+            lines.append(f"# HELP {name} {help_text}")
+            lines.append(f"# TYPE {name} gauge")
         if labels:
             label_str = ",".join(f'{key}="{val}"' for key, val in labels.items())
             lines.append(f"{name}{{{label_str}}} {value}")
