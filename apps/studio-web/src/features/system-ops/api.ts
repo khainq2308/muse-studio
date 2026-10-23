@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { apiDelete, apiGet, apiPost, apiRequest, downloadFile } from "@/lib/api/client";
+import {
+  LONG_REQUEST_TIMEOUT_MS,
+  apiDelete,
+  apiGet,
+  apiPost,
+  apiRequest,
+  downloadFile,
+} from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
 import type { components } from "@/lib/api/schema";
 import { useSessionStore } from "@/lib/stores/session-store";
@@ -10,6 +17,7 @@ export type BackupRestoreResult = components["schemas"]["BackupRestoreOut"];
 export type MetricsSummary = components["schemas"]["MetricsSummaryOut"];
 export type OrphanScanResult = components["schemas"]["OrphanScanOut"];
 export type OrphanCleanupResult = components["schemas"]["OrphanCleanupOut"];
+export type OrphanFile = components["schemas"]["OrphanFileOut"];
 export type StructuredLogItem = components["schemas"]["StructuredLogOut"];
 export type SystemDiagnostics = components["schemas"]["SystemDiagnosticsOut"];
 export type UploadedAssetItem = components["schemas"]["AssetOut"];
@@ -56,8 +64,10 @@ export function useCreateProjectBackup(projectId: string) {
   const mutation = useMutation({
     mutationKey: queryKeys.systemOpsActions(sessionVersion, projectId),
     mutationFn: ({ projectId: scopeProjectId }: { projectId: string; sessionVersion: number }) =>
+      // Snapshotting DB rows and media into a ZIP can far exceed the default JSON timeout.
       apiPost("/api/v1/projects/{project_id}/backup", undefined, {
         pathParams: { project_id: scopeProjectId },
+        timeoutMs: LONG_REQUEST_TIMEOUT_MS,
       }),
     onSettled: (_data, _error, variables) =>
       Promise.all([
@@ -119,7 +129,11 @@ export function useDeleteBackup(projectId: string) {
   });
   const { mutate: rawMutate } = mutation;
   const mutate = useCallback(
-    (backupId: string) => rawMutate({ backupId, projectId, sessionVersion }),
+    (backupId: string, callbacks?: { onSuccess?: () => void }) =>
+      rawMutate(
+        { backupId, projectId, sessionVersion },
+        { onSuccess: () => callbacks?.onSuccess?.() },
+      ),
     [projectId, rawMutate, sessionVersion],
   );
   return { ...mutation, mutate };
@@ -155,9 +169,11 @@ export function useScanOrphans(projectId: string) {
   return useMutation({
     mutationKey: queryKeys.systemOpsActions(sessionVersion, projectId),
     mutationFn: ({ retentionHours }: { retentionHours: number }) =>
-      apiPost("/api/v1/maintenance/orphans/scan", {
-        retention_hours: retentionHours,
-      }),
+      apiPost(
+        "/api/v1/maintenance/orphans/scan",
+        { retention_hours: retentionHours },
+        { timeoutMs: LONG_REQUEST_TIMEOUT_MS },
+      ),
   });
 }
 
@@ -167,10 +183,11 @@ export function useCleanupOrphans(projectId: string) {
   return useMutation({
     mutationKey: queryKeys.systemOpsActions(sessionVersion, projectId),
     mutationFn: ({ dryRun, retentionHours }: { dryRun: boolean; retentionHours: number }) =>
-      apiPost("/api/v1/maintenance/orphans/cleanup", {
-        dry_run: dryRun,
-        retention_hours: retentionHours,
-      }),
+      apiPost(
+        "/api/v1/maintenance/orphans/cleanup",
+        { dry_run: dryRun, retention_hours: retentionHours },
+        { timeoutMs: LONG_REQUEST_TIMEOUT_MS },
+      ),
     onSettled: () =>
       queryClient.invalidateQueries({
         queryKey: queryKeys.metricsSummary(sessionVersion),
@@ -224,13 +241,31 @@ export function useDeleteProjectAsset(projectId: string) {
         pathParams: { asset_id: assetId },
         query: { force },
       }),
+    // A (forced) delete can detach the asset from shots, takes, Story Bible entries and timeline
+    // clips; refresh every project view that may still reference it.
     onSettled: () =>
       Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects(sessionVersion) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.metricsSummary(sessionVersion) }),
         queryClient.invalidateQueries({
-          queryKey: queryKeys.projects(sessionVersion),
+          queryKey: queryKeys.projectShots(sessionVersion, projectId),
         }),
         queryClient.invalidateQueries({
-          queryKey: queryKeys.metricsSummary(sessionVersion),
+          queryKey: queryKeys.shotTakesPrefix(sessionVersion, projectId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.shotTakeComparePrefix(sessionVersion, projectId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.storyBible(sessionVersion, projectId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.projectTimeline(sessionVersion, projectId),
+        }),
+        // queryKeys has no asset-media prefix helper; match its ["asset-media", sessionVersion] head.
+        queryClient.invalidateQueries({
+          predicate: (query) =>
+            query.queryKey[0] === "asset-media" && query.queryKey[1] === sessionVersion,
         }),
       ]),
   });

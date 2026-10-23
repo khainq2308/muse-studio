@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,12 +25,28 @@ import {
   useUpdateAccount,
   type Connection,
 } from "@/entities/connection/api";
-import { authErrorMessage } from "@/lib/api/errors";
+import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
 
 interface ConnectionsPageProps {
   projectId: string;
+}
+
+/** Limits mirrored from the OpenAPI ConnectionCreateIn / AccountCreateIn schemas. */
+const MAX_CONCURRENCY_LIMITS = { min: 1, max: 20 } as const;
+const TIMEOUT_SECONDS_LIMITS = { min: 5, max: 120 } as const;
+const PRIORITY_LIMITS = { min: 0, max: 10000 } as const;
+
+interface RowError {
+  id: string;
+  action: string;
+  error: unknown;
+}
+
+function clampNumber(value: number, limits: { min: number; max: number }): number {
+  if (!Number.isFinite(value)) return limits.min;
+  return Math.min(limits.max, Math.max(limits.min, Math.round(value)));
 }
 
 function formatLatency(latencyMs: number | null): string {
@@ -66,6 +83,15 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
   const [priority, setPriority] = useState(100);
   const [testingAccountId, setTestingAccountId] = useState<string | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
+  const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState<RowError | null>(null);
+
+  function closeAddAccount() {
+    setShowAddAccount(false);
+    setApiKey("");
+    setProxyUrl("");
+    createAccount.reset();
+  }
 
   const accounts = accountsQuery.data ?? [];
   const capabilitiesEntries = Object.entries(connection.capabilities_snapshot ?? {});
@@ -89,8 +115,12 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
           size="sm"
           variant={showAddAccount ? "outline" : "default"}
           onClick={() => {
+            if (showAddAccount) {
+              closeAddAccount();
+              return;
+            }
             createAccount.reset();
-            setShowAddAccount((current) => !current);
+            setShowAddAccount(true);
           }}
         >
           {showAddAccount ? (
@@ -170,10 +200,12 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
               <span>Priority (lower = preferred)</span>
               <input
                 type="number"
-                min={1}
-                max={1000}
+                min={PRIORITY_LIMITS.min}
+                max={PRIORITY_LIMITS.max}
                 value={priority}
-                onChange={(event) => setPriority(Number(event.target.value))}
+                onChange={(event) =>
+                  setPriority(clampNumber(Number(event.target.value), PRIORITY_LIMITS))
+                }
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
@@ -202,17 +234,12 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
 
           {createAccount.isError && (
             <p role="alert" className="text-xs text-destructive">
-              {authErrorMessage(createAccount.error, activeAdminToken, "create account")}
+              {actionErrorMessage(createAccount.error, activeAdminToken, "create account")}
             </p>
           )}
 
           <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowAddAccount(false)}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={closeAddAccount}>
               Cancel
             </Button>
             <Button
@@ -245,80 +272,139 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
           {accounts.map((account) => (
             <li
               key={account.id}
-              className="flex flex-col justify-between gap-3 rounded-xl border border-border bg-card p-3.5 sm:flex-row sm:items-center"
+              className="space-y-3 rounded-xl border border-border bg-card p-3.5"
             >
-              <div className="min-w-0 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <KeyRound className="size-3.5 text-primary" aria-hidden="true" />
-                  <span className="text-sm font-semibold">{account.label}</span>
-                  <span
-                    className={cn(
-                      "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                      healthBadgeClass(account.health_state),
-                    )}
-                  >
-                    {account.health_state}
-                  </span>
-                  <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                    priority {account.priority}
-                  </span>
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <KeyRound className="size-3.5 text-primary" aria-hidden="true" />
+                    <span className="text-sm font-semibold">{account.label}</span>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                        healthBadgeClass(account.health_state),
+                      )}
+                    >
+                      {account.health_state}
+                    </span>
+                    <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                      priority {account.priority}
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs text-muted-foreground">
+                    key: {account.api_key_masked} · latency: {formatLatency(account.latency_ms)}
+                    {account.proxy_display_host ? ` · proxy: ${account.proxy_display_host}` : ""}
+                  </p>
+                  {account.last_error_redacted && (
+                    <p className="text-xs text-destructive">{account.last_error_redacted}</p>
+                  )}
                 </div>
-                <p className="font-mono text-xs text-muted-foreground">
-                  key: {account.api_key_masked} · latency: {formatLatency(account.latency_ms)}
-                  {account.proxy_display_host ? ` · proxy: ${account.proxy_display_host}` : ""}
-                </p>
-                {account.last_error_redacted && (
-                  <p className="text-xs text-destructive">{account.last_error_redacted}</p>
-                )}
+
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={updateAccount.isPending}
+                    onClick={() => {
+                      setAccountError(null);
+                      updateAccount.mutate(
+                        account.id,
+                        { enabled: !account.enabled },
+                        {
+                          onError: (error) =>
+                            setAccountError({
+                              id: account.id,
+                              action: account.enabled ? "disable account" : "enable account",
+                              error,
+                            }),
+                        },
+                      );
+                    }}
+                  >
+                    {account.enabled ? "Disable" : "Enable"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={testAccount.isPending && testingAccountId === account.id}
+                    onClick={() => {
+                      setTestingAccountId(account.id);
+                      setAccountError(null);
+                      testAccount.mutate(account.id, {
+                        onSuccess: () => setTestingAccountId(null),
+                        onError: (error) => {
+                          setTestingAccountId(null);
+                          setAccountError({ id: account.id, action: "test account", error });
+                        },
+                      });
+                    }}
+                  >
+                    {testAccount.isPending && testingAccountId === account.id ? (
+                      <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Activity className="size-3.5" aria-hidden="true" />
+                    )}
+                    Test
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={
+                      confirmDeleteAccountId === account.id ||
+                      (deleteAccount.isPending && deletingAccountId === account.id)
+                    }
+                    onClick={() => {
+                      setAccountError(null);
+                      setConfirmDeleteAccountId(account.id);
+                    }}
+                  >
+                    <Trash2 className="size-3.5 text-destructive" aria-hidden="true" />
+                    Remove
+                  </Button>
+                </div>
               </div>
 
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={updateAccount.isPending}
-                  onClick={() => updateAccount.mutate(account.id, { enabled: !account.enabled })}
-                >
-                  {account.enabled ? "Disable" : "Enable"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={testAccount.isPending && testingAccountId === account.id}
-                  onClick={() => {
-                    setTestingAccountId(account.id);
-                    testAccount.mutate(account.id, {
-                      onSuccess: () => setTestingAccountId(null),
-                      onError: () => setTestingAccountId(null),
-                    });
-                  }}
-                >
-                  {testAccount.isPending && testingAccountId === account.id ? (
-                    <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Activity className="size-3.5" aria-hidden="true" />
-                  )}
-                  Test
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={deleteAccount.isPending && deletingAccountId === account.id}
-                  onClick={() => {
+              {confirmDeleteAccountId === account.id && (
+                <ConfirmActionDialog
+                  title={`Remove pool account "${account.label}"?`}
+                  confirmLabel={
+                    deleteAccount.isPending && deletingAccountId === account.id
+                      ? "Removing..."
+                      : "Remove account"
+                  }
+                  destructive
+                  isSubmitting={deleteAccount.isPending && deletingAccountId === account.id}
+                  onCancel={() => setConfirmDeleteAccountId(null)}
+                  onConfirm={() => {
                     setDeletingAccountId(account.id);
                     deleteAccount.mutate(account.id, {
-                      onSuccess: () => setDeletingAccountId(null),
-                      onError: () => setDeletingAccountId(null),
+                      onSuccess: () => {
+                        setDeletingAccountId(null);
+                        setConfirmDeleteAccountId(null);
+                      },
+                      onError: (error) => {
+                        setDeletingAccountId(null);
+                        setConfirmDeleteAccountId(null);
+                        setAccountError({ id: account.id, action: "remove account", error });
+                      },
                     });
                   }}
                 >
-                  <Trash2 className="size-3.5 text-destructive" aria-hidden="true" />
-                  Remove
-                </Button>
-              </div>
+                  <p>
+                    The stored API key for this account is deleted permanently. To use this account
+                    again you must add it back and re-enter its API key.
+                  </p>
+                </ConfirmActionDialog>
+              )}
+
+              {accountError?.id === account.id && (
+                <p role="alert" className="text-xs text-destructive">
+                  {actionErrorMessage(accountError.error, activeAdminToken, accountError.action)}
+                </p>
+              )}
             </li>
           ))}
         </ul>
@@ -337,11 +423,18 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [name, setName] = useState("");
   const [providerType, setProviderType] = useState("muse2api");
-  const [baseUrl, setBaseUrl] = useState("https://api.muse2api.example.com");
+  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [maxConcurrency, setMaxConcurrency] = useState(2);
   const [timeoutSeconds, setTimeoutSeconds] = useState(30);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState<RowError | null>(null);
+
+  function closeCreateForm() {
+    setShowCreateForm(false);
+    setApiKey("");
+    createConnection.reset();
+  }
 
   const connections = connectionsQuery.data ?? [];
   const activeConnection =
@@ -368,8 +461,12 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
           size="sm"
           variant={showCreateForm ? "outline" : "default"}
           onClick={() => {
+            if (showCreateForm) {
+              closeCreateForm();
+              return;
+            }
             createConnection.reset();
-            setShowCreateForm((current) => !current);
+            setShowCreateForm(true);
           }}
         >
           {showCreateForm ? (
@@ -443,6 +540,7 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
                 type="url"
                 value={baseUrl}
                 onChange={(event) => setBaseUrl(event.target.value)}
+                placeholder="https://api.muse2api.example.com"
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
@@ -461,10 +559,12 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
               <span>Max concurrency</span>
               <input
                 type="number"
-                min={1}
-                max={32}
+                min={MAX_CONCURRENCY_LIMITS.min}
+                max={MAX_CONCURRENCY_LIMITS.max}
                 value={maxConcurrency}
-                onChange={(event) => setMaxConcurrency(Math.max(1, Number(event.target.value)))}
+                onChange={(event) =>
+                  setMaxConcurrency(clampNumber(Number(event.target.value), MAX_CONCURRENCY_LIMITS))
+                }
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
@@ -472,10 +572,12 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
               <span>Timeout (s)</span>
               <input
                 type="number"
-                min={5}
-                max={300}
+                min={TIMEOUT_SECONDS_LIMITS.min}
+                max={TIMEOUT_SECONDS_LIMITS.max}
                 value={timeoutSeconds}
-                onChange={(event) => setTimeoutSeconds(Math.max(5, Number(event.target.value)))}
+                onChange={(event) =>
+                  setTimeoutSeconds(clampNumber(Number(event.target.value), TIMEOUT_SECONDS_LIMITS))
+                }
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
@@ -483,17 +585,12 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
 
           {createConnection.isError && (
             <p role="alert" className="text-xs text-destructive">
-              {authErrorMessage(createConnection.error, activeAdminToken, "create connection")}
+              {actionErrorMessage(createConnection.error, activeAdminToken, "create connection")}
             </p>
           )}
 
           <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowCreateForm(false)}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={closeCreateForm}>
               Cancel
             </Button>
             <Button
@@ -593,9 +690,13 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
                       onClick={(event) => {
                         event.stopPropagation();
                         setTestingId(conn.id);
+                        setConnectionError(null);
                         testConnection.mutate(conn.id, {
                           onSuccess: () => setTestingId(null),
-                          onError: () => setTestingId(null),
+                          onError: (error) => {
+                            setTestingId(null);
+                            setConnectionError({ id: conn.id, action: "test connection", error });
+                          },
                         });
                       }}
                     >
@@ -607,6 +708,16 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
                       Test & probe
                     </Button>
                   </div>
+
+                  {connectionError?.id === conn.id && (
+                    <p role="alert" className="mt-2 text-xs text-destructive">
+                      {actionErrorMessage(
+                        connectionError.error,
+                        activeAdminToken,
+                        connectionError.action,
+                      )}
+                    </p>
+                  )}
                 </div>
               );
             })}

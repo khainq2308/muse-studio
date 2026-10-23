@@ -4,7 +4,7 @@ import { QueryState } from "@/components/shared/query-state";
 import { ResourceCard } from "@/components/shared/resource-card";
 import { Button } from "@/components/ui/button";
 import { useCreateConnection, useTestConnection } from "@/entities/connection/api";
-import { authErrorMessage } from "@/lib/api/errors";
+import { actionErrorMessage } from "@/lib/api/errors";
 import type { components } from "@/lib/api/schema";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,15 @@ interface ConnectionListProps {
   isError: boolean;
   errorMessage: string;
   onRetry: () => void;
+}
+
+/** Limits mirrored from the OpenAPI ConnectionCreateIn schema. */
+const MAX_CONCURRENCY_LIMITS = { min: 1, max: 20 } as const;
+const TIMEOUT_SECONDS_LIMITS = { min: 5, max: 120 } as const;
+
+function clampNumber(value: number, limits: { min: number; max: number }): number {
+  if (!Number.isFinite(value)) return limits.min;
+  return Math.min(limits.max, Math.max(limits.min, Math.round(value)));
 }
 
 function formatLatency(latencyMs: number | null): string {
@@ -50,11 +59,17 @@ export function ConnectionList({
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [name, setName] = useState("");
   const [providerType, setProviderType] = useState("muse2api");
-  const [baseUrl, setBaseUrl] = useState("https://api.muse2api.example.com");
+  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [maxConcurrency, setMaxConcurrency] = useState(2);
   const [timeoutSeconds, setTimeoutSeconds] = useState(30);
   const [testingId, setTestingId] = useState<string | null>(null);
+
+  function closeCreateForm() {
+    setShowCreateForm(false);
+    setApiKey("");
+    createMutation.reset();
+  }
 
   const canSubmit =
     name.trim().length > 0 && baseUrl.trim().length > 0 && !createMutation.isPending;
@@ -71,8 +86,12 @@ export function ConnectionList({
           size="sm"
           variant={showCreateForm ? "outline" : "secondary"}
           onClick={() => {
+            if (showCreateForm) {
+              closeCreateForm();
+              return;
+            }
             createMutation.reset();
-            setShowCreateForm((current) => !current);
+            setShowCreateForm(true);
           }}
         >
           {showCreateForm ? (
@@ -173,10 +192,12 @@ export function ConnectionList({
               <span>Max concurrency</span>
               <input
                 type="number"
-                min={1}
-                max={32}
+                min={MAX_CONCURRENCY_LIMITS.min}
+                max={MAX_CONCURRENCY_LIMITS.max}
                 value={maxConcurrency}
-                onChange={(event) => setMaxConcurrency(Math.max(1, Number(event.target.value)))}
+                onChange={(event) =>
+                  setMaxConcurrency(clampNumber(Number(event.target.value), MAX_CONCURRENCY_LIMITS))
+                }
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
@@ -185,10 +206,12 @@ export function ConnectionList({
               <span>Timeout (seconds)</span>
               <input
                 type="number"
-                min={5}
-                max={300}
+                min={TIMEOUT_SECONDS_LIMITS.min}
+                max={TIMEOUT_SECONDS_LIMITS.max}
                 value={timeoutSeconds}
-                onChange={(event) => setTimeoutSeconds(Math.max(5, Number(event.target.value)))}
+                onChange={(event) =>
+                  setTimeoutSeconds(clampNumber(Number(event.target.value), TIMEOUT_SECONDS_LIMITS))
+                }
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
@@ -196,17 +219,12 @@ export function ConnectionList({
 
           {createMutation.isError && (
             <p role="alert" className="text-xs text-destructive">
-              {authErrorMessage(createMutation.error, activeAdminToken, "create connection")}
+              {actionErrorMessage(createMutation.error, activeAdminToken, "create connection")}
             </p>
           )}
 
           <div className="flex items-center justify-end gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowCreateForm(false)}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={closeCreateForm}>
               Cancel
             </Button>
             <Button type="submit" size="sm" disabled={!canSubmit}>
@@ -225,7 +243,7 @@ export function ConnectionList({
 
       {testMutation.isError && (
         <p role="alert" className="mb-3 text-xs text-destructive">
-          {authErrorMessage(testMutation.error, activeAdminToken, "test connection")}
+          {actionErrorMessage(testMutation.error, activeAdminToken, "test connection")}
         </p>
       )}
 

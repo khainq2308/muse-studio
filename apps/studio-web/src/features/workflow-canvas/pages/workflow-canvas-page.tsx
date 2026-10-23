@@ -1,30 +1,45 @@
+import { useNodesState, type OnNodeDrag, type XYPosition } from "@xyflow/react";
 import {
   AlertTriangle,
   CheckCircle2,
-  Cpu,
   GitBranch,
-  Layers,
+  Info,
   LoaderCircle,
   Play,
   Plus,
   Save,
   ShieldCheck,
   Sparkles,
+  XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { Button } from "@/components/ui/button";
 import {
   useApproveWorkflowGate,
   useCreateWorkflow,
   useExecuteWorkflow,
   useSaveWorkflowLayout,
+  type WorkflowApprovalResponse,
   type WorkflowCreateResponse,
   type WorkflowExecutionResponse,
   type WorkflowRunRequest,
   type WorkflowRunResponse,
 } from "@/features/workflow-canvas/api";
-import { authErrorMessage } from "@/lib/api/errors";
-import type { components } from "@/lib/api/schema";
+import {
+  buildFlowEdges,
+  buildFlowNodes,
+  layoutFromNodes,
+  type NodeExecutionSummary,
+  type WorkflowFlowNode,
+  type WorkflowRunStatus,
+} from "@/features/workflow-canvas/components/flow-model";
+import {
+  nodeStateBadgeClass,
+  nodeStateLabel,
+} from "@/features/workflow-canvas/components/node-state";
+import { WorkflowFlowCanvas } from "@/features/workflow-canvas/components/workflow-flow-canvas";
+import { actionErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
 
@@ -32,27 +47,54 @@ interface WorkflowCanvasPageProps {
   projectId: string;
 }
 
-type NodeExecutionState = components["schemas"]["NodeExecutionState"];
-
 function isExecutionResponse(run: WorkflowRunResponse): run is WorkflowExecutionResponse {
   return "node_executions" in run;
 }
 
-function stateBadgeClass(state: NodeExecutionState | undefined): string {
-  switch (state) {
+function RunStatusIcon({ status }: { status: WorkflowRunStatus }) {
+  switch (status) {
     case "succeeded":
-      return "border-success/30 bg-success/10 text-success";
+      return <CheckCircle2 className="size-4 text-success" aria-hidden="true" />;
     case "waiting_approval":
-      return "border-warning/40 bg-warning/15 text-warning";
+      return <AlertTriangle className="size-4 text-warning" aria-hidden="true" />;
     case "running":
-    case "queued":
-      return "border-primary/30 bg-primary/10 text-primary";
+      return <LoaderCircle className="size-4 animate-spin text-primary" aria-hidden="true" />;
     case "failed":
-    case "blocked":
-      return "border-destructive/30 bg-destructive/10 text-destructive";
-    default:
-      return "border-border bg-secondary text-muted-foreground";
+      return <XCircle className="size-4 text-destructive" aria-hidden="true" />;
   }
+}
+
+/**
+ * Applies an approval response onto the previous run: keeps its plan order and logs, and only
+ * replaces state/cache_hit/output_refs for nodes the server reported.
+ */
+function mergeApproval(
+  previous: WorkflowExecutionResponse,
+  approved: WorkflowApprovalResponse,
+): WorkflowExecutionResponse {
+  const updates = new Map(approved.node_executions.map((item) => [item.node_id, item]));
+  return {
+    ...previous,
+    run_id: approved.run_id,
+    status: approved.status,
+    execution_mode: approved.execution_mode,
+    node_executions: previous.node_executions.map((item) => {
+      const update = updates.get(item.node_id);
+      return update
+        ? {
+            ...item,
+            state: update.state,
+            cache_hit: update.cache_hit,
+            output_refs: update.output_refs,
+          }
+        : item;
+    }),
+  };
+}
+
+interface QueuedLayout {
+  workflowId: string;
+  layout: Record<string, XYPosition>;
 }
 
 export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
@@ -63,6 +105,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
   const approveGate = useApproveWorkflowGate(projectId);
 
   const [workflow, setWorkflow] = useState<WorkflowCreateResponse | null>(null);
+  const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState<WorkflowFlowNode>([]);
   const [workflowName, setWorkflowName] = useState("Script to Batch Film Pipeline");
   const [workflowDesc, setWorkflowDesc] = useState(
     "Typed DAG pipeline with Merkle cache keys and human-in-the-loop approval gates",
@@ -72,40 +115,57 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
   const [forceRerun, setForceRerun] = useState(false);
   const [confirmFullRun, setConfirmFullRun] = useState(false);
   const [lastRun, setLastRun] = useState<WorkflowRunResponse | null>(null);
-  const [layoutPositions, setLayoutPositions] = useState<Record<string, { x: number; y: number }>>(
-    {},
-  );
   const [layoutSavedMessage, setLayoutSavedMessage] = useState<string | null>(null);
+  const [confirmingReplace, setConfirmingReplace] = useState(false);
+  const [pendingApprovalNodeId, setPendingApprovalNodeId] = useState<string | null>(null);
+
+  // Layout saves are serialized: a drop during an in-flight PATCH queues only the latest layout,
+  // so an older request can never overwrite a newer position on the server.
+  const layoutInFlight = useRef(false);
+  const queuedLayout = useRef<QueuedLayout | null>(null);
 
   const nodes = useMemo(() => workflow?.nodes ?? [], [workflow]);
-  const edges = useMemo(() => workflow?.edges ?? [], [workflow]);
+  const flowEdges = useMemo(() => buildFlowEdges(workflow?.edges ?? []), [workflow]);
   const selectedNode = useMemo(
     () => nodes.find((node) => node.node_id === selectedNodeId) ?? nodes[0] ?? null,
     [nodes, selectedNodeId],
   );
+  const executionRun = lastRun && isExecutionResponse(lastRun) ? lastRun : null;
 
   const nodeExecutionById = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        state: NodeExecutionState;
-        cache_hit: boolean;
-        logs?: string[];
-        output_refs?: Record<string, unknown>;
-      }
-    >();
-    if (lastRun && isExecutionResponse(lastRun)) {
-      for (const item of lastRun.node_executions) {
-        map.set(item.node_id, {
-          state: item.state,
-          cache_hit: item.cache_hit,
-          logs: item.logs,
-          output_refs: item.output_refs,
-        });
-      }
+    const map = new Map<string, NodeExecutionSummary>();
+    for (const item of executionRun?.node_executions ?? []) {
+      map.set(item.node_id, { state: item.state, cacheHit: item.cache_hit });
     }
     return map;
-  }, [lastRun]);
+  }, [executionRun]);
+
+  const displayNodes = useMemo(
+    () =>
+      flowNodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          execution: nodeExecutionById.get(node.id) ?? null,
+          isSelected: node.id === selectedNode?.node_id,
+        },
+      })),
+    [flowNodes, nodeExecutionById, selectedNode],
+  );
+
+  const waitingGateIds = useMemo(
+    () =>
+      (executionRun?.node_executions ?? [])
+        .filter((item) => item.state === "waiting_approval")
+        .map((item) => item.node_id),
+    [executionRun],
+  );
+  const failedExecutions = useMemo(
+    () => (executionRun?.node_executions ?? []).filter((item) => item.state === "failed"),
+    [executionRun],
+  );
+  const selectedExecution =
+    executionRun?.node_executions.find((item) => item.node_id === selectedNode?.node_id) ?? null;
 
   const needsStartNode = runMode === "from_here" || runMode === "downstream";
   const effectiveStartNodeId = selectedNode?.node_id ?? null;
@@ -114,6 +174,93 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
     !executeWorkflow.isPending &&
     (!needsStartNode || Boolean(effectiveStartNodeId)) &&
     (runMode !== "full" || confirmFullRun);
+
+  function submitCreate() {
+    setLayoutSavedMessage(null);
+    createWorkflow.mutate(
+      {
+        name: workflowName.trim() || "Script to Batch Film Pipeline",
+        description: workflowDesc.trim() || "M3 Default Typed DAG Workflow",
+        use_default_m3_template: true,
+      },
+      {
+        onSuccess: (created) => {
+          setConfirmingReplace(false);
+          setPendingApprovalNodeId(null);
+          executeWorkflow.reset();
+          approveGate.reset();
+          saveLayout.reset();
+          setWorkflow(created);
+          setFlowNodes(buildFlowNodes(created));
+          setSelectedNodeId(created.nodes[0]?.node_id ?? null);
+          setLastRun(null);
+        },
+      },
+    );
+  }
+
+  function sendLayout(next: QueuedLayout) {
+    if (layoutInFlight.current) {
+      queuedLayout.current = next;
+      return;
+    }
+    layoutInFlight.current = true;
+    setLayoutSavedMessage(null);
+    const settle = () => {
+      layoutInFlight.current = false;
+      const queued = queuedLayout.current;
+      queuedLayout.current = null;
+      if (queued) sendLayout(queued);
+    };
+    saveLayout.mutate(next.workflowId, next.layout, {
+      onSuccess: (saved) => {
+        setLayoutSavedMessage(
+          `Canvas layout saved (v${saved.version_number}); Merkle cache keys are unchanged.`,
+        );
+        settle();
+      },
+      onError: settle,
+    });
+  }
+
+  const handleNodeDragStop: OnNodeDrag<WorkflowFlowNode> = (_event, _node, draggedNodes) => {
+    if (!workflow) return;
+    const dropped = new Map(draggedNodes.map((node) => [node.id, node.position]));
+    const layout = layoutFromNodes(
+      flowNodes.map((node) => ({ id: node.id, position: dropped.get(node.id) ?? node.position })),
+    );
+    sendLayout({ workflowId: workflow.id, layout });
+  };
+
+  function runWorkflow(request: WorkflowRunRequest) {
+    if (!workflow) return;
+    executeWorkflow.mutate(workflow.id, request, {
+      onSuccess: (result) => {
+        setPendingApprovalNodeId(null);
+        approveGate.reset();
+        setLastRun(result);
+      },
+    });
+  }
+
+  function requestApproval(nodeId: string) {
+    approveGate.reset();
+    setSelectedNodeId(nodeId);
+    setPendingApprovalNodeId(nodeId);
+  }
+
+  function confirmApproval() {
+    if (!workflow || !executionRun || !pendingApprovalNodeId) return;
+    approveGate.mutate(workflow.id, executionRun.run_id, pendingApprovalNodeId, {
+      onSuccess: (approved) => {
+        setPendingApprovalNodeId(null);
+        setLastRun((previous) =>
+          previous && isExecutionResponse(previous) ? mergeApproval(previous, approved) : previous,
+        );
+      },
+      onError: () => setPendingApprovalNodeId(null),
+    });
+  }
 
   return (
     <div data-testid="workflow-canvas-page" data-project-id={projectId} className="space-y-6">
@@ -140,31 +287,13 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
             type="button"
             variant={workflow ? "outline" : "default"}
             size="sm"
-            disabled={createWorkflow.isPending}
+            disabled={createWorkflow.isPending || confirmingReplace}
             onClick={() => {
-              setLayoutSavedMessage(null);
-              createWorkflow.mutate(
-                {
-                  name: workflowName.trim() || "Script to Batch Film Pipeline",
-                  description: workflowDesc.trim() || "M3 Default Typed DAG Workflow",
-                  use_default_m3_template: true,
-                },
-                {
-                  onSuccess: (created) => {
-                    setWorkflow(created);
-                    setSelectedNodeId(created.nodes[0]?.node_id ?? null);
-                    setLastRun(null);
-                    const initialPositions: Record<string, { x: number; y: number }> = {};
-                    created.nodes.forEach((node, index) => {
-                      initialPositions[node.node_id] = {
-                        x: 60 + (index % 3) * 260,
-                        y: 60 + Math.floor(index / 3) * 140,
-                      };
-                    });
-                    setLayoutPositions(initialPositions);
-                  },
-                },
-              );
+              if (workflow) {
+                setConfirmingReplace(true);
+                return;
+              }
+              submitCreate();
             }}
           >
             {createWorkflow.isPending ? (
@@ -186,16 +315,9 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
               variant="outline"
               size="sm"
               disabled={saveLayout.isPending}
-              onClick={() => {
-                setLayoutSavedMessage(null);
-                saveLayout.mutate(workflow.id, layoutPositions, {
-                  onSuccess: (saved) => {
-                    setLayoutSavedMessage(
-                      `Canvas layout autosaved (v${saved.version_number}) — Merkle cache keys preserved.`,
-                    );
-                  },
-                });
-              }}
+              onClick={() =>
+                sendLayout({ workflowId: workflow.id, layout: layoutFromNodes(flowNodes) })
+              }
             >
               {saveLayout.isPending ? (
                 <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
@@ -208,15 +330,43 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
         </div>
       </div>
 
+      <p
+        role="note"
+        className="flex items-start gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground"
+      >
+        <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        <span>
+          The Orchestrator does not yet expose an endpoint to read a workflow back, so this canvas
+          only keeps the workflow created in this tab. Reloading or leaving the page loses access to
+          it; the workflow itself remains stored on the server.
+        </span>
+      </p>
+
+      {confirmingReplace && workflow && (
+        <ConfirmActionDialog
+          title="Create a new workflow and leave the current one?"
+          confirmLabel="Create new DAG"
+          isSubmitting={createWorkflow.isPending}
+          onConfirm={submitCreate}
+          onCancel={() => setConfirmingReplace(false)}
+        >
+          <p>
+            <span className="font-mono">{workflow.name}</span> (
+            <span className="font-mono">{workflow.id}</span>) stays on the server, but this page
+            cannot reopen it afterwards. Its latest run result will also be cleared from view.
+          </p>
+        </ConfirmActionDialog>
+      )}
+
       {createWorkflow.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {authErrorMessage(createWorkflow.error, activeAdminToken, "create workflow")}
+          {actionErrorMessage(createWorkflow.error, activeAdminToken, "create the workflow")}
         </p>
       )}
 
       {saveLayout.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {authErrorMessage(saveLayout.error, activeAdminToken, "save workflow layout")}
+          {actionErrorMessage(saveLayout.error, activeAdminToken, "save the canvas layout")}
         </p>
       )}
 
@@ -239,12 +389,8 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
               Initialize the M3 Typed DAG Workflow Template
             </h3>
             <p className="text-sm text-muted-foreground">
-              Create a project workflow instance via{" "}
-              <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">
-                POST /api/v1/projects/{projectId}/workflows
-              </code>{" "}
-              to inspect topological execution order, node port contracts, Merkle cache keys, and
-              interactive approval gates.
+              Create a project workflow instance to inspect topological execution order, node port
+              contracts, Merkle cache keys, and interactive approval gates.
             </p>
 
             <div className="grid gap-3 text-left sm:grid-cols-2">
@@ -277,158 +423,69 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
                   v{workflow.current_version}
                 </span>
                 <span className="font-mono text-xs text-muted-foreground">
-                  {nodes.length} nodes · {edges.length} edges
+                  {nodes.length} nodes · {flowEdges.length} edges
                 </span>
               </div>
               <span className="font-mono text-xs text-muted-foreground">ID: {workflow.id}</span>
             </div>
 
-            <div
-              aria-label="Workflow DAG nodes"
-              className="rounded-2xl border border-border bg-secondary/20 p-4"
-            >
-              <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  Topological DAG Pipeline (Click any node to inspect ports, cache key, or run from
-                  node)
-                </span>
-                <span>Layout coordinates tracked independently of Merkle hashes</span>
-              </div>
+            <WorkflowFlowCanvas
+              nodes={displayNodes}
+              edges={flowEdges}
+              onNodesChange={onFlowNodesChange}
+              onNodeSelect={setSelectedNodeId}
+              onNodeDragStop={handleNodeDragStop}
+            />
+            <p className="text-xs text-muted-foreground">
+              Drag a node to move it; the new layout is saved when you drop it and never changes
+              Merkle cache keys. Use the node list for keyboard selection and node actions.
+            </p>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <section
+              aria-label="Workflow nodes"
+              className="rounded-xl border border-border bg-card p-4"
+            >
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Nodes in execution order
+              </h3>
+              <ul className="mt-2.5 grid gap-1.5 sm:grid-cols-2">
                 {workflow.execution_order.map((nodeId, orderIndex) => {
                   const node = nodes.find((item) => item.node_id === nodeId);
                   if (!node) return null;
-                  const isSelected = selectedNode?.node_id === node.node_id;
-                  const execState = nodeExecutionById.get(node.node_id);
-                  const cacheKey = workflow.cache_keys[node.node_id] ?? "—";
-                  const incomingEdges = edges.filter(
-                    (edge) => edge.target_node_id === node.node_id,
-                  );
-                  const outgoingEdges = edges.filter(
-                    (edge) => edge.source_node_id === node.node_id,
-                  );
-                  const coords = layoutPositions[node.node_id] ?? { x: 0, y: 0 };
-
+                  const state = nodeExecutionById.get(nodeId)?.state;
+                  const isSelected = selectedNode?.node_id === nodeId;
                   return (
-                    <div
-                      key={node.node_id}
-                      onClick={() => setSelectedNodeId(node.node_id)}
-                      className={cn(
-                        "cursor-pointer rounded-xl border p-3.5 transition-all",
-                        isSelected
-                          ? "border-primary bg-card ring-2 ring-primary/20 shadow-sm"
-                          : "border-border bg-card hover:border-primary/40",
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] font-bold text-muted-foreground">
-                            #{orderIndex + 1}
-                          </span>
-                          <span className="font-mono text-xs font-semibold text-foreground">
-                            {node.node_id}
-                          </span>
-                        </div>
+                    <li key={nodeId}>
+                      <button
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => setSelectedNodeId(nodeId)}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          isSelected
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-primary/40",
+                        )}
+                      >
+                        <span className="min-w-0 truncate">
+                          <span className="font-mono text-muted-foreground">{orderIndex + 1}.</span>{" "}
+                          <span className="font-mono font-semibold">{nodeId}</span>{" "}
+                          <span className="text-muted-foreground">{node.node_type}</span>
+                        </span>
                         <span
                           className={cn(
-                            "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-                            stateBadgeClass(execState?.state),
+                            "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                            nodeStateBadgeClass(state),
                           )}
                         >
-                          {execState?.state ?? "ready"}
+                          {nodeStateLabel(state)}
                         </span>
-                      </div>
-
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-primary">
-                        <Cpu className="size-3.5" aria-hidden="true" />
-                        {node.node_type}
-                      </p>
-
-                      <div className="mt-2.5 space-y-1 border-t border-border pt-2 text-[11px] text-muted-foreground">
-                        <p className="truncate font-mono">Merkle: {cacheKey.slice(0, 14)}...</p>
-                        <p>
-                          In: {incomingEdges.length} · Out: {outgoingEdges.length} · Pos ({coords.x}
-                          , {coords.y})
-                        </p>
-                        {execState?.cache_hit && (
-                          <p className="font-medium text-success">Merkle Cache Hit</p>
-                        )}
-                      </div>
-
-                      {execState?.state === "waiting_approval" &&
-                        lastRun &&
-                        isExecutionResponse(lastRun) && (
-                          <div className="mt-3 border-t border-warning/30 pt-2.5">
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="w-full"
-                              disabled={approveGate.isPending}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                approveGate.mutate(workflow.id, lastRun.run_id, node.node_id, {
-                                  onSuccess: (approved) => {
-                                    setLastRun({
-                                      run_id: approved.run_id,
-                                      status: approved.status,
-                                      execution_mode: approved.execution_mode,
-                                      execution_plan_order: workflow.execution_order,
-                                      node_executions: approved.node_executions.map((item) => ({
-                                        node_id: item.node_id,
-                                        node_type:
-                                          nodes.find((n) => n.node_id === item.node_id)
-                                            ?.node_type ?? "Node",
-                                        state: item.state,
-                                        cache_hit: item.cache_hit,
-                                        cache_key: workflow.cache_keys[item.node_id] ?? "",
-                                        logs: [],
-                                        output_refs: item.output_refs,
-                                      })),
-                                    });
-                                  },
-                                });
-                              }}
-                            >
-                              {approveGate.isPending ? (
-                                <LoaderCircle
-                                  className="size-3.5 animate-spin"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <ShieldCheck className="size-3.5" aria-hidden="true" />
-                              )}
-                              Approve Manual Gate & Resume
-                            </Button>
-                          </div>
-                        )}
-                    </div>
+                      </button>
+                    </li>
                   );
                 })}
-              </div>
-            </div>
-
-            {edges.length > 0 && (
-              <div className="rounded-xl border border-border bg-card p-4">
-                <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  <Layers className="size-3.5 text-primary" aria-hidden="true" />
-                  Typed Port Connections ({edges.length})
-                </h3>
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {edges.map((edge) => (
-                    <span
-                      key={edge.edge_id}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-2.5 py-1 font-mono text-xs"
-                    >
-                      <span className="font-semibold text-foreground">{edge.source_node_id}</span>
-                      <span className="text-muted-foreground">.{edge.source_port} →</span>
-                      <span className="font-semibold text-primary">{edge.target_node_id}</span>
-                      <span className="text-muted-foreground">.{edge.target_port}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+              </ul>
+            </section>
           </div>
 
           <div className="space-y-4 lg:col-span-4">
@@ -499,7 +556,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
 
               {executeWorkflow.isError && (
                 <p role="alert" className="text-xs text-destructive">
-                  {authErrorMessage(executeWorkflow.error, activeAdminToken, "execute workflow")}
+                  {actionErrorMessage(executeWorkflow.error, activeAdminToken, "run the workflow")}
                 </p>
               )}
 
@@ -507,20 +564,13 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
                 type="button"
                 className="w-full"
                 disabled={!canExecute}
-                onClick={() => {
-                  if (!workflow) return;
-                  executeWorkflow.mutate(
-                    workflow.id,
-                    {
-                      run_mode: runMode,
-                      force_rerun: forceRerun,
-                      start_node_id: needsStartNode ? effectiveStartNodeId : null,
-                    },
-                    {
-                      onSuccess: (result) => setLastRun(result),
-                    },
-                  );
-                }}
+                onClick={() =>
+                  runWorkflow({
+                    run_mode: runMode,
+                    force_rerun: forceRerun,
+                    start_node_id: needsStartNode ? effectiveStartNodeId : null,
+                  })
+                }
               >
                 {executeWorkflow.isPending ? (
                   <>
@@ -541,7 +591,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
                 aria-label="Node inspector"
                 className="space-y-3 rounded-xl border border-border bg-card p-4"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">
                     Node Inspector: <span className="font-mono">{selectedNode.node_id}</span>
                   </h3>
@@ -557,44 +607,83 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
                       {workflow.cache_keys[selectedNode.node_id] ?? "—"}
                     </p>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="space-y-1">
-                      <span className="text-muted-foreground">Canvas X</span>
-                      <input
-                        type="number"
-                        value={layoutPositions[selectedNode.node_id]?.x ?? 0}
-                        onChange={(event) =>
-                          setLayoutPositions((current) => ({
-                            ...current,
-                            [selectedNode.node_id]: {
-                              x: Number(event.target.value),
-                              y: current[selectedNode.node_id]?.y ?? 0,
-                            },
-                          }))
-                        }
-                        className="h-8 w-full rounded border border-input bg-background px-2 font-mono text-xs"
-                      />
-                    </label>
-                    <label className="space-y-1">
-                      <span className="text-muted-foreground">Canvas Y</span>
-                      <input
-                        type="number"
-                        value={layoutPositions[selectedNode.node_id]?.y ?? 0}
-                        onChange={(event) =>
-                          setLayoutPositions((current) => ({
-                            ...current,
-                            [selectedNode.node_id]: {
-                              x: current[selectedNode.node_id]?.x ?? 0,
-                              y: Number(event.target.value),
-                            },
-                          }))
-                        }
-                        className="h-8 w-full rounded border border-input bg-background px-2 font-mono text-xs"
-                      />
-                    </label>
-                  </div>
+                  <p>
+                    <span className="text-muted-foreground">State: </span>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                        nodeStateBadgeClass(selectedExecution?.state),
+                      )}
+                    >
+                      {nodeStateLabel(selectedExecution?.state)}
+                    </span>
+                  </p>
+                  {selectedExecution && selectedExecution.logs.length > 0 && (
+                    <div>
+                      <p className="font-medium text-muted-foreground">Logs</p>
+                      <ul className="mt-0.5 space-y-0.5 rounded bg-secondary px-2 py-1 text-[11px]">
+                        {selectedExecution.logs.map((line, index) => (
+                          <li key={`${index}-${line}`}>{line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={executeWorkflow.isPending}
+                    onClick={() =>
+                      runWorkflow({
+                        run_mode: "from_here",
+                        force_rerun: forceRerun,
+                        start_node_id: selectedNode.node_id,
+                      })
+                    }
+                  >
+                    <Play className="size-3.5" aria-hidden="true" />
+                    Run from this node
+                  </Button>
+                  {selectedExecution?.state === "waiting_approval" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={approveGate.isPending || pendingApprovalNodeId !== null}
+                      onClick={() => requestApproval(selectedNode.node_id)}
+                    >
+                      <ShieldCheck className="size-3.5" aria-hidden="true" />
+                      Approve gate
+                    </Button>
+                  )}
+                </div>
+
+                {pendingApprovalNodeId && executionRun && (
+                  <ConfirmActionDialog
+                    title={`Approve manual gate ${pendingApprovalNodeId}?`}
+                    confirmLabel={approveGate.isPending ? "Approving..." : "Approve & resume"}
+                    isSubmitting={approveGate.isPending}
+                    onConfirm={confirmApproval}
+                    onCancel={() => setPendingApprovalNodeId(null)}
+                  >
+                    <p>
+                      Approval cannot be undone. The run resumes until the next ManualApproval gate.
+                      Approvals are not cached, so a later run stops at this gate again.
+                    </p>
+                  </ConfirmActionDialog>
+                )}
+
+                {approveGate.isError && (
+                  <p role="alert" className="text-xs text-destructive">
+                    {actionErrorMessage(
+                      approveGate.error,
+                      activeAdminToken,
+                      "approve the manual gate",
+                    )}
+                  </p>
+                )}
               </section>
             )}
 
@@ -605,11 +694,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
               >
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="flex items-center gap-1.5 text-sm font-semibold">
-                    {lastRun.status === "waiting_approval" ? (
-                      <AlertTriangle className="size-4 text-warning" aria-hidden="true" />
-                    ) : (
-                      <CheckCircle2 className="size-4 text-success" aria-hidden="true" />
-                    )}
+                    <RunStatusIcon status={lastRun.status} />
                     Latest Run Result
                   </h3>
                   <span className="rounded-full border border-warning/35 bg-warning/10 px-2 py-0.5 font-mono text-[11px] font-medium text-warning">
@@ -624,22 +709,62 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Status</dt>
-                    <dd className="font-semibold">{lastRun.status}</dd>
+                    <dd className="font-semibold">{lastRun.status.replace("_", " ")}</dd>
                   </div>
                 </dl>
 
+                {lastRun.status === "failed" && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                  >
+                    <p className="font-semibold">Run failed</p>
+                    {failedExecutions.length > 0 ? (
+                      <ul className="mt-1 space-y-0.5">
+                        {failedExecutions.map((item) => (
+                          <li key={item.node_id}>
+                            <span className="font-mono">{item.node_id}</span>
+                            {item.logs.length > 0 && `: ${item.logs[item.logs.length - 1]}`}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1">The server did not report which node failed.</p>
+                    )}
+                  </div>
+                )}
+
+                {waitingGateIds.length > 0 && (
+                  <div className="space-y-1.5 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+                    <p className="font-medium">Waiting for operator approval:</p>
+                    {waitingGateIds.map((nodeId) => (
+                      <Button
+                        key={nodeId}
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={approveGate.isPending || pendingApprovalNodeId !== null}
+                        onClick={() => requestApproval(nodeId)}
+                      >
+                        <ShieldCheck className="size-3.5" aria-hidden="true" />
+                        Review gate {nodeId}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+
                 <div>
                   <p className="text-xs font-medium text-muted-foreground">Execution Plan Order</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <ol className="mt-1.5 flex flex-wrap gap-1.5">
                     {lastRun.execution_plan_order.map((nodeId, idx) => (
-                      <span
+                      <li
                         key={nodeId}
                         className="rounded border border-border bg-secondary px-2 py-0.5 font-mono text-[11px]"
                       >
                         {idx + 1}. {nodeId}
-                      </span>
+                      </li>
                     ))}
-                  </div>
+                  </ol>
                 </div>
               </section>
             )}

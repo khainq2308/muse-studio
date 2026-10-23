@@ -17,7 +17,16 @@ import { QueryState } from "@/components/shared/query-state";
 import { ResourceCard } from "@/components/shared/resource-card";
 import { Button } from "@/components/ui/button";
 import { useCreateProject, useDuplicateProject } from "@/entities/project/api";
-import { authErrorMessage } from "@/lib/api/errors";
+import {
+  PROJECT_ASPECT_RATIO_OPTIONS,
+  PROJECT_CREATE_DEFAULTS,
+  PROJECT_DUPLICATE_SCOPE_NOTE,
+  PROJECT_FPS_OPTIONS,
+  PROJECT_LANGUAGE_OPTIONS,
+  PROJECT_OUTPUT_PROFILE_HINT,
+  PROJECT_STYLE_PRESET_OPTIONS,
+} from "@/entities/project/options";
+import { actionErrorMessage } from "@/lib/api/errors";
 import type { components } from "@/lib/api/schema";
 import { useSessionStore } from "@/lib/stores/session-store";
 
@@ -28,17 +37,6 @@ interface ProjectListProps {
   errorMessage: string;
   onRetry: () => void;
 }
-
-const ASPECT_RATIO_OPTIONS = ["16:9", "9:16", "1:1", "21:9", "4:3"] as const;
-const FPS_OPTIONS = [24, 25, 30, 60] as const;
-const STYLE_PRESET_OPTIONS = [
-  "2d_anime_cinematic",
-  "3d_pixar_stylized",
-  "photoreal_film_noir",
-  "cyberpunk_neon_anime",
-  "watercolor_storybook",
-] as const;
-const OUTPUT_PROFILE_OPTIONS = ["1080p_h264", "720p_h264", "4k_h264"] as const;
 
 export function ProjectList({
   projects,
@@ -54,12 +52,16 @@ export function ProjectList({
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [aspectRatio, setAspectRatio] = useState("16:9");
-  const [fps, setFps] = useState(24);
-  const [language, setLanguage] = useState("vi");
-  const [stylePreset, setStylePreset] = useState("2d_anime_cinematic");
-  const [outputProfile, setOutputProfile] = useState("1080p_h264");
+  const [aspectRatio, setAspectRatio] = useState<string>(PROJECT_CREATE_DEFAULTS.aspect_ratio);
+  const [fps, setFps] = useState<number>(PROJECT_CREATE_DEFAULTS.fps);
+  const [language, setLanguage] = useState<string>(PROJECT_CREATE_DEFAULTS.language);
+  const [stylePreset, setStylePreset] = useState<string>(PROJECT_CREATE_DEFAULTS.style_preset);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<{
+    kind: "created" | "duplicated";
+    projectId: string;
+    name: string;
+  } | null>(null);
 
   const canSubmit = name.trim().length > 0 && !createMutation.isPending;
 
@@ -100,6 +102,7 @@ export function ProjectList({
           onSubmit={(event) => {
             event.preventDefault();
             if (!canSubmit) return;
+            setLastResult(null);
             createMutation.mutate(
               {
                 name: name.trim(),
@@ -108,13 +111,14 @@ export function ProjectList({
                 fps,
                 language,
                 style_preset: stylePreset,
-                output_profile: outputProfile,
+                output_profile: PROJECT_CREATE_DEFAULTS.output_profile,
               },
               {
-                onSuccess: () => {
+                onSuccess: (created) => {
                   setName("");
                   setDescription("");
                   setShowCreateForm(false);
+                  setLastResult({ kind: "created", projectId: created.id, name: created.name });
                 },
               },
             );
@@ -157,7 +161,7 @@ export function ProjectList({
                 onChange={(event) => setAspectRatio(event.target.value)}
                 className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {ASPECT_RATIO_OPTIONS.map((ratio) => (
+                {PROJECT_ASPECT_RATIO_OPTIONS.map((ratio) => (
                   <option key={ratio} value={ratio}>
                     {ratio}
                   </option>
@@ -172,7 +176,7 @@ export function ProjectList({
                 onChange={(event) => setFps(Number(event.target.value))}
                 className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {FPS_OPTIONS.map((value) => (
+                {PROJECT_FPS_OPTIONS.map((value) => (
                   <option key={value} value={value}>
                     {value} fps
                   </option>
@@ -187,7 +191,7 @@ export function ProjectList({
                 onChange={(event) => setStylePreset(event.target.value)}
                 className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {STYLE_PRESET_OPTIONS.map((preset) => (
+                {PROJECT_STYLE_PRESET_OPTIONS.map((preset) => (
                   <option key={preset} value={preset}>
                     {preset}
                   </option>
@@ -195,40 +199,35 @@ export function ProjectList({
               </select>
             </label>
 
-            <div className="grid grid-cols-2 gap-2">
-              <label className="space-y-1 text-xs font-medium">
-                <span>Output profile</span>
-                <select
-                  value={outputProfile}
-                  onChange={(event) => setOutputProfile(event.target.value)}
-                  className="h-9 w-full rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {OUTPUT_PROFILE_OPTIONS.map((profile) => (
-                    <option key={profile} value={profile}>
-                      {profile}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <label className="space-y-1 text-xs font-medium">
+              <span>Language</span>
+              <select
+                value={language}
+                onChange={(event) => setLanguage(event.target.value)}
+                className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {PROJECT_LANGUAGE_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-              <label className="space-y-1 text-xs font-medium">
-                <span>Language</span>
-                <select
-                  value={language}
-                  onChange={(event) => setLanguage(event.target.value)}
-                  className="h-9 w-full rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <option value="vi">vi</option>
-                  <option value="en">en</option>
-                  <option value="ja">ja</option>
-                </select>
-              </label>
+            <div className="space-y-1 text-xs font-medium sm:col-span-2">
+              <span>Output profile</span>
+              <p className="text-xs font-normal text-muted-foreground">
+                <span className="font-mono text-foreground">
+                  {PROJECT_CREATE_DEFAULTS.output_profile}
+                </span>{" "}
+                — {PROJECT_OUTPUT_PROFILE_HINT}
+              </p>
             </div>
           </div>
 
           {createMutation.isError && (
             <p role="alert" className="text-xs text-destructive">
-              {authErrorMessage(createMutation.error, activeAdminToken, "create project")}
+              {actionErrorMessage(createMutation.error, activeAdminToken, "create project")}
             </p>
           )}
 
@@ -255,9 +254,29 @@ export function ProjectList({
         </form>
       )}
 
+      {lastResult && (
+        <p
+          role="status"
+          className="mb-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-foreground"
+        >
+          {lastResult.kind === "duplicated" ? (
+            <>
+              Duplicated project settings as <strong>{lastResult.name}</strong>{" "}
+              <span className="font-mono">({lastResult.projectId})</span>.{" "}
+              {PROJECT_DUPLICATE_SCOPE_NOTE}
+            </>
+          ) : (
+            <>
+              Created project <strong>{lastResult.name}</strong>{" "}
+              <span className="font-mono">({lastResult.projectId})</span>.
+            </>
+          )}
+        </p>
+      )}
+
       {duplicateMutation.isError && (
         <p role="alert" className="mb-3 text-xs text-destructive">
-          {authErrorMessage(duplicateMutation.error, activeAdminToken, "duplicate project")}
+          {actionErrorMessage(duplicateMutation.error, activeAdminToken, "duplicate project")}
         </p>
       )}
 
@@ -347,11 +366,20 @@ export function ProjectList({
                   type="button"
                   variant="ghost"
                   size="sm"
+                  aria-label={`Duplicate settings of ${project.name}`}
                   disabled={duplicateMutation.isPending && duplicatingId === project.id}
                   onClick={() => {
                     setDuplicatingId(project.id);
+                    setLastResult(null);
                     duplicateMutation.mutate(project.id, {
-                      onSuccess: () => setDuplicatingId(null),
+                      onSuccess: (created) => {
+                        setDuplicatingId(null);
+                        setLastResult({
+                          kind: "duplicated",
+                          projectId: created.id,
+                          name: created.name,
+                        });
+                      },
                       onError: () => setDuplicatingId(null),
                     });
                   }}
@@ -361,7 +389,7 @@ export function ProjectList({
                   ) : (
                     <Copy className="size-3.5" aria-hidden="true" />
                   )}
-                  Duplicate
+                  Duplicate settings
                 </Button>
               </div>
             </li>

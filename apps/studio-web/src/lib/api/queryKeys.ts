@@ -1,6 +1,9 @@
 export const queryKeys = {
   health: ["system", "health"] as const,
   projects: (sessionVersion: number) => ["projects", sessionVersion] as const,
+  /** Every project's revision history (prefix; create/duplicate write a new revision). */
+  projectRevisionsPrefix: (sessionVersion: number) =>
+    ["project-revisions", sessionVersion] as const,
   projectRevisions: (sessionVersion: number, projectId: string) =>
     ["project-revisions", sessionVersion, projectId] as const,
   projectActions: (sessionVersion: number) => ["project-actions", sessionVersion] as const,

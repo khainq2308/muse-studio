@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import {
+  actionErrorMessage,
   apiRetryDelay,
   authErrorMessage,
   isAuthError,
@@ -86,5 +87,25 @@ describe("shared API error classification", () => {
     ).toBe(30_000);
     expect(apiRetryDelay(0, new Error("network"))).toBe(1_000);
     expect(apiRetryDelay(1, new Error("network"))).toBe(2_000);
+  });
+
+  it("surfaces validation detail for failed write actions", () => {
+    const invalid = new ApiError({
+      status: 422,
+      detail: [
+        { loc: ["body", "max_concurrency"], msg: "Input should be less than or equal to 20" },
+      ],
+    });
+    expect(actionErrorMessage(invalid, "token", "create connection")).toContain(
+      "less than or equal to 20",
+    );
+    const timeout = new ApiError({ status: 0, detail: "timed out", category: "timeout" });
+    expect(actionErrorMessage(timeout, "token", "create backup")).toContain(
+      "Refresh before retrying",
+    );
+    const unauthorized = new ApiError({ status: 401, detail: "Unauthorized" });
+    expect(actionErrorMessage(unauthorized, "", "delete backup")).toBe(
+      "Admin token required to delete backup.",
+    );
   });
 });

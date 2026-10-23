@@ -21,9 +21,21 @@ import {
   useTimelineExportStatus,
 } from "@/features/timeline-editor/api";
 import { ApiError } from "@/lib/api/client";
-import { authErrorMessage } from "@/lib/api/errors";
+import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
+
+/** Mirrors TimelineAssembleIn.transition_duration_seconds bounds (0.0 – 3.0) in openapi.json. */
+const MAX_TRANSITION_DURATION_SECONDS = 3;
+const MIN_CROSS_DISSOLVE_DURATION_SECONDS = 0.2;
+
+function clampCrossDissolveDuration(value: number): number {
+  if (!Number.isFinite(value)) return MIN_CROSS_DISSOLVE_DURATION_SECONDS;
+  return Math.min(
+    MAX_TRANSITION_DURATION_SECONDS,
+    Math.max(MIN_CROSS_DISSOLVE_DURATION_SECONDS, value),
+  );
+}
 
 interface TimelineEditorPageProps {
   projectId: string;
@@ -89,7 +101,9 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                 name: sequenceName.trim() || "Master Cut v1",
                 default_transition: defaultTransition,
                 transition_duration_seconds:
-                  defaultTransition === "cross_dissolve" ? Math.max(0.2, transitionDuration) : 0,
+                  defaultTransition === "cross_dissolve"
+                    ? clampCrossDissolveDuration(transitionDuration)
+                    : 0,
                 allow_missing_shots: allowMissingShots,
                 subtitle_format: subtitleFormat,
                 subtitle_content: subtitleContent,
@@ -126,7 +140,7 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
 
       {assembleMutation.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {authErrorMessage(assembleMutation.error, activeAdminToken, "assemble timeline")}
+          {actionErrorMessage(assembleMutation.error, activeAdminToken, "assemble the timeline")}
         </p>
       )}
 
@@ -170,7 +184,7 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                   type="number"
                   step="0.1"
                   min={0}
-                  max={5}
+                  max={MAX_TRANSITION_DURATION_SECONDS}
                   disabled={defaultTransition === "hard_cut"}
                   value={transitionDuration}
                   onChange={(event) => setTransitionDuration(Number(event.target.value))}
@@ -286,7 +300,11 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                 <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
                 Loading project timeline...
               </p>
-            ) : isNoTimelineYet || !timeline ? (
+            ) : timelineQuery.isError && !isNoTimelineYet ? (
+              <p role="alert" className="text-xs text-destructive">
+                {authErrorMessage(timelineQuery.error, activeAdminToken, "project timeline")}
+              </p>
+            ) : !timeline ? (
               <div className="rounded-xl border border-dashed border-border bg-secondary/20 px-4 py-8 text-center">
                 <p className="text-sm font-semibold">No timeline assembled for this project yet</p>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -294,10 +312,6 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                   shots and selected takes.
                 </p>
               </div>
-            ) : timelineQuery.isError ? (
-              <p role="alert" className="text-xs text-destructive">
-                {authErrorMessage(timelineQuery.error, activeAdminToken, "project timeline")}
-              </p>
             ) : (
               <div className="space-y-3">
                 {warnings.length > 0 && (
@@ -454,10 +468,10 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
 
             {launchExportMutation.isError && (
               <p role="alert" className="text-xs text-destructive">
-                {authErrorMessage(
+                {actionErrorMessage(
                   launchExportMutation.error,
                   activeAdminToken,
-                  "launch timeline export",
+                  "launch the timeline export",
                 )}
               </p>
             )}
@@ -493,6 +507,34 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
               )}
             </Button>
           </section>
+
+          {activeExportId && exportStatusQuery.isPending && (
+            <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+              Loading export job status...
+            </p>
+          )}
+
+          {activeExportId && exportStatusQuery.isError && (
+            <div
+              role="alert"
+              className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive"
+            >
+              <p>
+                {authErrorMessage(exportStatusQuery.error, activeAdminToken, "export job status")}
+                {exportStatus ? " Status shown below may be out of date." : ""}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={exportStatusQuery.isFetching}
+                onClick={() => void exportStatusQuery.refetch()}
+              >
+                Retry status check
+              </Button>
+            </div>
+          )}
 
           {exportStatus && (
             <section
@@ -562,6 +604,16 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                   <Download className="size-4" aria-hidden="true" />
                   Download Verified MP4 ({exportStatus.output_asset_id})
                 </Button>
+              )}
+
+              {downloadAssetMutation.isError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {actionErrorMessage(
+                    downloadAssetMutation.error,
+                    activeAdminToken,
+                    "download the exported MP4",
+                  )}
+                </p>
               )}
 
               {exportStatus.ffprobe_verification && (

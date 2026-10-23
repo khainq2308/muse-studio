@@ -18,13 +18,18 @@ import {
 import { useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
+import { useCreateProject, useDuplicateProject, useProjects } from "@/entities/project/api";
 import {
-  useCreateProject,
-  useDuplicateProject,
-  useProjectRevisions,
-  useProjects,
-} from "@/entities/project/api";
-import { authErrorMessage } from "@/lib/api/errors";
+  PROJECT_ASPECT_RATIO_OPTIONS,
+  PROJECT_CREATE_DEFAULTS,
+  PROJECT_DUPLICATE_SCOPE_NOTE,
+  PROJECT_FPS_OPTIONS,
+  PROJECT_LANGUAGE_OPTIONS,
+  PROJECT_OUTPUT_PROFILE_HINT,
+  PROJECT_STYLE_PRESET_OPTIONS,
+} from "@/entities/project/options";
+import { useProjectRevisions } from "@/features/projects/api";
+import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 interface ProjectsPageProps {
@@ -38,14 +43,22 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
   const duplicateMutation = useDuplicateProject();
   const createMutation = useCreateProject();
 
-  const [duplicatedProjectId, setDuplicatedProjectId] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<{
+    kind: "created" | "duplicated";
+    projectId: string;
+    name: string;
+  } | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
-  const [newAspectRatio, setNewAspectRatio] = useState("16:9");
-  const [newFps, setNewFps] = useState(24);
-  const [newStylePreset, setNewStylePreset] = useState("2d_anime_cinematic");
-  const [newOutputProfile, setNewOutputProfile] = useState("1080p_h264");
+  const [newAspectRatio, setNewAspectRatio] = useState<string>(
+    PROJECT_CREATE_DEFAULTS.aspect_ratio,
+  );
+  const [newFps, setNewFps] = useState<number>(PROJECT_CREATE_DEFAULTS.fps);
+  const [newStylePreset, setNewStylePreset] = useState<string>(
+    PROJECT_CREATE_DEFAULTS.style_preset,
+  );
+  const [newLanguage, setNewLanguage] = useState<string>(PROJECT_CREATE_DEFAULTS.language);
 
   const currentProject = projectsQuery.data?.find((item) => item.id === projectId);
   const revisions = revisionsQuery.data ?? [];
@@ -61,8 +74,8 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
             </h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Inspect active workspace configuration, immutable script/pipeline revision history, or
-            clone this workspace into an isolated branch.
+            Inspect the active project configuration and its revision history, or duplicate the
+            project settings into a new, empty project.
           </p>
         </div>
 
@@ -73,9 +86,10 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
             size="sm"
             disabled={duplicateMutation.isPending}
             onClick={() => {
-              setDuplicatedProjectId(null);
+              setLastResult(null);
               duplicateMutation.mutate(projectId, {
-                onSuccess: (created) => setDuplicatedProjectId(created.id),
+                onSuccess: (created) =>
+                  setLastResult({ kind: "duplicated", projectId: created.id, name: created.name }),
               });
             }}
           >
@@ -87,7 +101,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
             ) : (
               <>
                 <Copy className="size-4" aria-hidden="true" />
-                Duplicate project
+                Duplicate settings
               </>
             )}
           </Button>
@@ -106,28 +120,36 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
         </div>
       </div>
 
-      {duplicatedProjectId && (
+      {lastResult && (
         <div
           role="status"
           className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-xs text-foreground"
         >
-          <span>
-            Created duplicate project <strong className="font-mono">{duplicatedProjectId}</strong>{" "}
-            with cloned Story Bible and shot list.
-          </span>
+          {lastResult.kind === "duplicated" ? (
+            <span>
+              Duplicated project settings as <strong>{lastResult.name}</strong>{" "}
+              <span className="font-mono">({lastResult.projectId})</span>.{" "}
+              {PROJECT_DUPLICATE_SCOPE_NOTE}
+            </span>
+          ) : (
+            <span>
+              Created project <strong>{lastResult.name}</strong>{" "}
+              <span className="font-mono">({lastResult.projectId})</span>.
+            </span>
+          )}
           <Link
             to="/projects/$projectId/$module"
-            params={{ projectId: duplicatedProjectId, module: "shot-board" }}
+            params={{ projectId: lastResult.projectId, module: "script-studio" }}
             className="font-semibold text-primary underline underline-offset-4"
           >
-            Switch to duplicated project →
+            Open new project in Script Studio →
           </Link>
         </div>
       )}
 
       {duplicateMutation.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {authErrorMessage(duplicateMutation.error, activeAdminToken, "duplicate project")}
+          {actionErrorMessage(duplicateMutation.error, activeAdminToken, "duplicate project")}
         </p>
       )}
 
@@ -144,16 +166,16 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
                 description: newDescription.trim(),
                 aspect_ratio: newAspectRatio,
                 fps: newFps,
-                language: "vi",
+                language: newLanguage,
                 style_preset: newStylePreset,
-                output_profile: newOutputProfile,
+                output_profile: PROJECT_CREATE_DEFAULTS.output_profile,
               },
               {
                 onSuccess: (created) => {
                   setNewName("");
                   setNewDescription("");
                   setShowNewForm(false);
-                  setDuplicatedProjectId(created.id);
+                  setLastResult({ kind: "created", projectId: created.id, name: created.name });
                 },
               },
             );
@@ -185,10 +207,11 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
                 onChange={(event) => setNewStylePreset(event.target.value)}
                 className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="2d_anime_cinematic">2d_anime_cinematic</option>
-                <option value="3d_pixar_stylized">3d_pixar_stylized</option>
-                <option value="photoreal_film_noir">photoreal_film_noir</option>
-                <option value="cyberpunk_neon_anime">cyberpunk_neon_anime</option>
+                {PROJECT_STYLE_PRESET_OPTIONS.map((preset) => (
+                  <option key={preset} value={preset}>
+                    {preset}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="space-y-1 text-xs font-medium sm:col-span-3">
@@ -207,10 +230,11 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
                 onChange={(event) => setNewAspectRatio(event.target.value)}
                 className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="16:9">16:9</option>
-                <option value="9:16">9:16</option>
-                <option value="1:1">1:1</option>
-                <option value="21:9">21:9</option>
+                {PROJECT_ASPECT_RATIO_OPTIONS.map((ratio) => (
+                  <option key={ratio} value={ratio}>
+                    {ratio}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="space-y-1 text-xs font-medium">
@@ -220,29 +244,41 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
                 onChange={(event) => setNewFps(Number(event.target.value))}
                 className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value={24}>24 fps</option>
-                <option value={25}>25 fps</option>
-                <option value={30}>30 fps</option>
-                <option value={60}>60 fps</option>
+                {PROJECT_FPS_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value} fps
+                  </option>
+                ))}
               </select>
             </label>
             <label className="space-y-1 text-xs font-medium">
-              <span>Output profile</span>
+              <span>Language</span>
               <select
-                value={newOutputProfile}
-                onChange={(event) => setNewOutputProfile(event.target.value)}
+                value={newLanguage}
+                onChange={(event) => setNewLanguage(event.target.value)}
                 className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="1080p_h264">1080p_h264</option>
-                <option value="720p_h264">720p_h264</option>
-                <option value="4k_h264">4k_h264</option>
+                {PROJECT_LANGUAGE_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
               </select>
             </label>
+            <div className="space-y-1 text-xs font-medium sm:col-span-3">
+              <span>Output profile</span>
+              <p className="text-xs font-normal text-muted-foreground">
+                <span className="font-mono text-foreground">
+                  {PROJECT_CREATE_DEFAULTS.output_profile}
+                </span>{" "}
+                — {PROJECT_OUTPUT_PROFILE_HINT}
+              </p>
+            </div>
           </div>
 
           {createMutation.isError && (
             <p role="alert" className="text-xs text-destructive">
-              {authErrorMessage(createMutation.error, activeAdminToken, "create project")}
+              {actionErrorMessage(createMutation.error, activeAdminToken, "create project")}
             </p>
           )}
 
@@ -300,7 +336,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
           <div className="flex items-center justify-between">
             <h3 className="flex items-center gap-2 text-base font-semibold">
               <History className="size-4 text-primary" aria-hidden="true" />
-              Pipeline Revision History ({revisions.length})
+              Project Revision History ({revisions.length})
             </h3>
             <span className="text-xs text-muted-foreground">
               GET /api/v1/projects/{projectId}/revisions
@@ -319,7 +355,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
               "project revisions",
             )}
             emptyTitle="No revisions committed yet"
-            emptyDescription="Import a script in Script Studio or modify Story Bible entries to record an immutable pipeline revision."
+            emptyDescription="Project revisions are recorded when a project is created or duplicated."
             onRetry={() => void revisionsQuery.refetch()}
           >
             <ul className="space-y-3">

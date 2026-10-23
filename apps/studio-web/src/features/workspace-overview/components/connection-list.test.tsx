@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "@/lib/api/schema";
@@ -76,5 +77,39 @@ describe("ConnectionList", () => {
     );
 
     expect(screen.getByText("12.4 ms")).toBeInTheDocument();
+  });
+
+  it("keeps the base URL empty, mirrors API limits, and clears the API key on cancel", async () => {
+    const user = userEvent.setup();
+    renderWithQueryClient(
+      <ConnectionList
+        connections={[]}
+        isLoading={false}
+        isError={false}
+        errorMessage="Could not load connections."
+        onRetry={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Add provider/i }));
+    const form = screen.getByRole("form", { name: "Create provider connection" });
+    const baseUrl = within(form).getByLabelText("Base URL");
+    expect(baseUrl).toHaveValue("");
+    expect(baseUrl).toBeRequired();
+    expect(within(form).getByLabelText("Max concurrency")).toHaveAttribute("max", "20");
+    expect(within(form).getByLabelText("Timeout (seconds)")).toHaveAttribute("max", "120");
+
+    const timeout = within(form).getByLabelText("Timeout (seconds)");
+    await user.clear(timeout);
+    await user.type(timeout, "500");
+    expect(timeout).toHaveValue(120);
+
+    await user.type(
+      within(form).getByLabelText("API key (optional if using account pool)"),
+      "sk-secret",
+    );
+    await user.click(within(form).getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: /Add provider/i }));
+    expect(screen.getByLabelText("API key (optional if using account pool)")).toHaveValue("");
   });
 });

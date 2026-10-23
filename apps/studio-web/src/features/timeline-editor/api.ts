@@ -103,6 +103,8 @@ export function useLaunchTimelineExport(projectId: string) {
   return { ...mutation, mutate };
 }
 
+export const EXPORT_STATUS_POLL_INTERVAL_MS = 2500;
+
 export function useTimelineExportStatus(projectId: string, exportId: string | null) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   return useQuery({
@@ -114,8 +116,11 @@ export function useTimelineExportStatus(projectId: string, exportId: string | nu
       }),
     enabled: Boolean(exportId),
     refetchInterval: (query) => {
+      // A failed refetch keeps the last (possibly "running") data; stop polling instead of
+      // retrying forever every 2.5s. The page surfaces the error and the user can retry.
+      if (query.state.status === "error") return false;
       const state = query.state.data?.state;
-      return state === "queued" || state === "running" ? 2500 : false;
+      return state === "queued" || state === "running" ? EXPORT_STATUS_POLL_INTERVAL_MS : false;
     },
     refetchIntervalInBackground: false,
   });

@@ -120,8 +120,8 @@ describe("ProjectModuleRoute", () => {
     expect(screen.getByTestId("shot-board-stub").textContent).toBe("project-a");
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const shotBoard = within(nav).getByRole("link", { name: /Shot Board/i });
-    const queue = within(nav).getByRole("link", { name: /Queue Monitor/i });
+    const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
+    const queue = within(nav).getByRole("link", { name: "Queue Monitor" });
     expect(shotBoard).toHaveAttribute("aria-current", "page");
     expect(shotBoard).toHaveAttribute("href", "/projects/project-a/shot-board");
     expect(queue).not.toHaveAttribute("aria-current");
@@ -135,11 +135,25 @@ describe("ProjectModuleRoute", () => {
     expect(screen.getByTestId("script-studio-stub").textContent).toBe("project-a");
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const scriptStudio = within(nav).getByRole("link", { name: /Script Studio/i });
-    const shotBoard = within(nav).getByRole("link", { name: /Shot Board/i });
+    const scriptStudio = within(nav).getByRole("link", { name: "Script Studio" });
+    const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
     expect(scriptStudio).toHaveAttribute("aria-current", "page");
     expect(scriptStudio).toHaveAttribute("href", "/projects/project-a/script-studio");
     expect(shotBoard).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks Project Settings as the active module on the projects route", () => {
+    mocks.params = { projectId: "project-a", module: "projects" };
+    render(<ProjectModuleRoute />);
+
+    expect(screen.getByTestId("projects-stub").textContent).toBe("project-a");
+    const nav = screen.getByRole("navigation", { name: "Project modules" });
+    const settings = within(nav).getByRole("link", { name: "Project Settings" });
+    const systemOps = within(nav).getByRole("link", { name: "System & Backups" });
+    expect(settings).toHaveAttribute("aria-current", "page");
+    expect(settings).toHaveAttribute("href", "/projects/project-a/projects");
+    expect(systemOps).not.toHaveAttribute("aria-current");
+    expect(systemOps).toHaveAttribute("href", "/projects/project-a/system-ops");
   });
 
   it("renders Workflow Canvas, Timeline Editor, Connections, Projects, and System Ops modules", () => {

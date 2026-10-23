@@ -7,26 +7,12 @@ import { useSessionStore } from "@/lib/stores/session-store";
 
 export type Project = components["schemas"]["ProjectOut"];
 export type ProjectCreateRequest = components["schemas"]["ProjectCreateIn"];
-export type ProjectRevision = components["schemas"]["RevisionOut"];
 
 export function useProjects() {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   return useQuery({
     queryKey: queryKeys.projects(sessionVersion),
     queryFn: ({ signal }) => apiGet("/api/v1/projects", { signal }),
-  });
-}
-
-export function useProjectRevisions(projectId: string) {
-  const sessionVersion = useSessionStore((state) => state.sessionVersion);
-  return useQuery({
-    queryKey: queryKeys.projectRevisions(sessionVersion, projectId),
-    queryFn: ({ signal }) =>
-      apiGet("/api/v1/projects/{project_id}/revisions", {
-        signal,
-        pathParams: { project_id: projectId },
-      }),
-    enabled: Boolean(projectId),
   });
 }
 
@@ -44,6 +30,9 @@ export function useCreateProject() {
         }),
         queryClient.invalidateQueries({
           queryKey: queryKeys.metricsSummary(variables.sessionVersion),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.projectRevisionsPrefix(variables.sessionVersion),
         }),
       ]),
   });
@@ -84,6 +73,9 @@ export function useDuplicateProject() {
         }),
         queryClient.invalidateQueries({
           queryKey: queryKeys.metricsSummary(variables.sessionVersion),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.projectRevisionsPrefix(variables.sessionVersion),
         }),
       ]),
   });
