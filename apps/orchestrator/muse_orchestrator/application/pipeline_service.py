@@ -397,12 +397,19 @@ class PipelineService:
                 "Project has queued/running/paused generation tasks; cancel or finish them "
                 "before re-applying a script.",
             )
-        if not replace_existing and await self.count_project_takes(project_id):
-            raise ApplicationError(
-                409,
-                "Re-applying a script would delete every existing shot together with its "
-                "generated takes. Retry with replace_existing=true to confirm.",
-            )
+        if not replace_existing:
+            if await self.count_project_takes(project_id):
+                raise ApplicationError(
+                    409,
+                    "Re-applying a script would delete every existing shot together with its "
+                    "generated takes. Retry with replace_existing=true to confirm.",
+                )
+            if await self.repository.has_project_pipeline_records(project_id):
+                raise ApplicationError(
+                    409,
+                    "Re-applying a script would replace existing pipeline data (Story Bible and shots). "
+                    "Retry with replace_existing=true to confirm.",
+                )
 
     async def _replace_pipeline_records(self, project_id: str, replace_existing: bool) -> None:
         session = self.repository.session

@@ -4,6 +4,7 @@ import NotFoundPage from "@/app/not-found-page";
 import { useProjects } from "@/entities/project/api";
 import { ProjectModuleNav } from "@/app/project-module-nav";
 import QueueMonitorPage from "@/features/queue-monitor";
+import ScriptStudioPage from "@/features/script-studio";
 import ShotBoardPage from "@/features/shot-board";
 
 export default function ProjectModuleRoute() {
@@ -43,7 +44,9 @@ export default function ProjectModuleRoute() {
 
   // Remount per project so no local UI state (filters, open editors) leaks across projects.
   const content =
-    module === "queue-monitor" ? (
+    module === "script-studio" ? (
+      <ScriptStudioPage key={projectId} projectId={projectId} />
+    ) : module === "queue-monitor" ? (
       <QueueMonitorPage key={projectId} projectId={projectId} />
     ) : module === "shot-board" ? (
       <ShotBoardPage key={projectId} projectId={projectId} />
