@@ -72,6 +72,10 @@ class CompiledPromptResult:
     prompt_hash: str
     sections: dict[str, str]
     lint_issues: list[LintIssue]
+    # Hash the same shot produced before action_start/action_end entered the prompt.
+    # Equal to ``prompt_hash`` when the shot has no boundaries. Computed, never persisted:
+    # batch ``only_changed`` accepts it so takes rendered before the upgrade stay current.
+    legacy_prompt_hash: str
 
     @property
     def has_blockers(self) -> bool:
@@ -229,6 +233,34 @@ def _lint_inter_shot_continuity(
         )
 
 
+def _action_section(action: str, action_start: str, action_end: str) -> str:
+    """Build the ACTION section; boundaries are appended only when non-empty.
+
+    Dialogue is deliberately never part of the video prompt: video models do not speak
+    and tend to render quoted dialogue as on-screen text.
+    """
+    text = f"Action: {action}"
+    start = action_start.strip().rstrip(".").strip()
+    end = action_end.strip().rstrip(".").strip()
+    if not start and not end:
+        # Byte-identical to the pre-boundary prompt so existing hashes stay valid.
+        return text
+    text = text.rstrip()
+    if not text.endswith((".", "!", "?")):
+        text += "."
+    if start:
+        text += f" Starts: {start}."
+    if end:
+        text += f" Ends: {end}."
+    return text
+
+
+def _prompt_hash(sections: dict[str, str], negative_prompt: str) -> str:
+    return hashlib.sha256(
+        json.dumps({"s": sections, "n": negative_prompt}, sort_keys=True).encode()
+    ).hexdigest()
+
+
 class PromptCompiler:
     @staticmethod
     def compile_and_lint(
@@ -332,15 +364,16 @@ class PromptCompiler:
             "CHARACTER_LOCKS": f"Subjects: {'; '.join(char_descriptions)}." if char_descriptions else "Subjects: Environment.",
             "LOCATION_LOCK": f"Environment: {loc_text}",
             "CAMERA_AND_COMPOSITION": f"Camera: {shot.shot_size}, {shot.camera_angle}, {shot.camera_motion}. {shot.composition}.",
-            "ACTION": f"Action: {shot.action}",
+            "ACTION": _action_section(shot.action, shot.action_start, shot.action_end),
             "CONTINUITY": f"Continuity: {shot.continuity_notes}",
             "TECHNICAL_OUTPUT": f"Technical: {shot.duration_seconds:.1f}s, {shot.aspect_ratio}.",
         }
         prompt_final = " ".join(v for v in sections.values() if v)
         negative_prompt = ", ".join(style.negative_constraints)
-        prompt_hash = hashlib.sha256(
-            json.dumps({"s": sections, "n": negative_prompt}, sort_keys=True).encode()
-        ).hexdigest()
+        prompt_hash = _prompt_hash(sections, negative_prompt)
+        legacy_prompt_hash = _prompt_hash(
+            {**sections, "ACTION": f"Action: {shot.action}"}, negative_prompt
+        )
 
         return CompiledPromptResult(
             shot_id=shot.shot_id,
@@ -349,4 +382,5 @@ class PromptCompiler:
             prompt_hash=prompt_hash,
             sections=sections,
             lint_issues=issues,
+            legacy_prompt_hash=legacy_prompt_hash,
         )

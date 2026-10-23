@@ -207,6 +207,14 @@ async def _recompile_project_shots(project_id: str, repository: StudioRepository
     return await PipelineService(repository).recompile_project_shots(project_id)
 
 
+async def _recompile_project_shots_with_prompt_hashes(
+    project_id: str, repository: StudioRepository
+) -> tuple[list[ShotRecord], dict[str, frozenset[str]]]:
+    """Like ``_recompile_project_shots`` and also return the prompt hashes per shot id
+    that a selected take may carry and still be current (new + computed legacy hash)."""
+    return await PipelineService(repository).recompile_project_shots_with_prompt_hashes(project_id)
+
+
 @router.post("/scripts/import", response_model=ScriptImportOut, status_code=status.HTTP_201_CREATED)
 async def import_and_analyze_script(
     project_id: str,

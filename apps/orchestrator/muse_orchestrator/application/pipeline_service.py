@@ -107,11 +107,24 @@ class PipelineService:
 
     async def recompile_project_shots(self, project_id: str, *, commit: bool = True) -> list[ShotRecord]:
         """Recompile prompts/lint state and (optionally) commit the current transaction."""
+        shots, _hashes = await self.recompile_project_shots_with_prompt_hashes(project_id, commit=commit)
+        return shots
+
+    async def recompile_project_shots_with_prompt_hashes(
+        self, project_id: str, *, commit: bool = True
+    ) -> tuple[list[ShotRecord], dict[str, frozenset[str]]]:
+        """Recompile like ``recompile_project_shots`` and return, per shot id, the prompt
+        hashes a selected take may carry and still count as current.
+
+        The set holds the persisted ``prompt_hash`` plus the computed legacy hash (the
+        hash before ``action_start``/``action_end`` entered the prompt), so takes rendered
+        before that change are not all invalidated. The legacy hash is never persisted.
+        """
         result = await self._compile(project_id)
         assert isinstance(result, tuple)
         if commit:
             await self.repository.commit_pipeline_changes()
-        return result[0]
+        return result
 
     async def dry_run_shot_lint(
         self, project_id: str, shot_id: str, overrides: dict[str, Any]
@@ -127,7 +140,7 @@ class PipelineService:
         *,
         dry_run_shot_id: str | None = None,
         dry_run_overrides: dict[str, Any] | None = None,
-    ) -> tuple[list[ShotRecord]] | list[dict[str, Any]]:
+    ) -> tuple[list[ShotRecord], dict[str, frozenset[str]]] | list[dict[str, Any]]:
         proj = await self.require_project(project_id)
         bible_rows = await self.repository.list_story_bible_entries(project_id)
         available_assets = set(await self.repository.list_project_asset_ids(project_id))
@@ -180,6 +193,7 @@ class PipelineService:
 
         previous_spec: ShotSpec | None = None
         dry_run_lint: list[dict[str, Any]] = []
+        accepted_prompt_hashes: dict[str, frozenset[str]] = {}
         for s in shots:
             values: dict[str, Any] = {
                 "subject_codes": s.subject_codes,
@@ -238,6 +252,9 @@ class PipelineService:
             s.prompt_final = compiled.prompt_final
             s.negative_prompt = compiled.negative_prompt
             s.prompt_hash = compiled.prompt_hash
+            accepted_prompt_hashes[s.id] = frozenset(
+                {compiled.prompt_hash, compiled.legacy_prompt_hash}
+            )
             s.lint_report_json = lint
             if s.id in busy_shot_ids:
                 # A queued/running/paused task owns the generation state; the queue and
@@ -265,7 +282,7 @@ class PipelineService:
 
         if dry_run_overrides is not None:
             return dry_run_lint
-        return (list(shots),)
+        return (list(shots), accepted_prompt_hashes)
 
     # --- script import --------------------------------------------------------------
 

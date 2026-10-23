@@ -15,7 +15,7 @@ from muse_orchestrator.models.domain import (
     ShotTakeRecord,
     BatchRenderJobRecord,
 )
-from muse_orchestrator.api.pipeline import _recompile_project_shots
+from muse_orchestrator.api.pipeline import _recompile_project_shots_with_prompt_hashes
 from muse_orchestrator.api.arq_dispatch import schedule_generation_task, schedule_generation_tasks
 from muse_orchestrator.services.generation_queue import (
     GenerationQueueService,
@@ -167,7 +167,9 @@ async def launch_batch_render(
         raise HTTPException(status_code=400, detail="Connection không tồn tại hoặc đang bị tắt.")
 
     # Biên dịch lại toàn bộ prompt_hash và lint_report_json mới nhất
-    all_shots = await _recompile_project_shots(project_id, repository)
+    all_shots, accepted_prompt_hashes = await _recompile_project_shots_with_prompt_hashes(
+        project_id, repository
+    )
 
     target_shots = [
         s for s in all_shots
@@ -181,13 +183,14 @@ async def launch_batch_render(
     blocked_shot_ids: list[str] = []
 
     for s in target_shots:
-        # 1. Smart cache: skip only when the selected take matches the current prompt_hash,
-        #    the requested model and the conditioning frame the shared resolver yields now.
+        # 1. Smart cache: skip only when the selected take matches the current prompt_hash
+        #    (or the computed legacy hash from before action_start/action_end entered the
+        #    prompt), the requested model and the conditioning frame the resolver yields now.
         if payload.only_changed and s.generation_state == ShotGenerationState.SUCCEEDED and s.selected_take_id:
             sel_take = await repository.get_shot_take(s.selected_take_id)
             if (
                 sel_take is not None
-                and sel_take.prompt_hash == s.prompt_hash
+                and sel_take.prompt_hash in accepted_prompt_hashes.get(s.id, frozenset({s.prompt_hash}))
                 and sel_take.model_id == payload.model_id
             ):
                 conditioning = await GenerationQueueService.resolve_conditioning_frame(
