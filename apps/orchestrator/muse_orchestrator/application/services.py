@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -295,7 +296,10 @@ class AssetService:
         if await self.repository.get_project(project_id) is None:
             raise ApplicationError(404, "Project không tồn tại.")
         try:
-            saved = self.storage.save_bytes(project_id, filename, content, declared_mime)
+            # Hashing and writing up to the upload limit must not block the event loop.
+            saved = await asyncio.to_thread(
+                self.storage.save_bytes, project_id, filename, content, declared_mime
+            )
         except AssetStorageError as exc:
             raise ApplicationError(400, str(exc)) from exc
 
