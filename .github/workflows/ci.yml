@@ -155,15 +155,15 @@ jobs:
     name: muse2api gateway contract (mock driver)
     runs-on: ubuntu-latest
     env:
-      # Pinned gateway revision the adapter contract is verified against: upstream 949f326
-      # plus the first-frame driver patch and the readyz video_first_frame capability, kept
-      # on the khainq2308 fork until upstream merges them.
-      MUSE2API_REF: 0f7600590e99762927813d826e6bc87aa592f305
+      # Public upstream gateway revision the adapter contract is verified against (mock
+      # driver). The first-frame patch and readyz capability live in the private
+      # khainq2308/muse2api, which CI cannot check out; verify those live (ops runbook).
+      MUSE2API_REF: 949f326443bcc687dbf25118391cf32b4712d734
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          repository: khainq2308/muse2api
+          repository: www222fff/muse2api
           ref: ${{ env.MUSE2API_REF }}
           path: .muse2api
           persist-credentials: false
