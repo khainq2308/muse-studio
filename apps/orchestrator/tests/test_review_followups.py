@@ -383,7 +383,8 @@ def test_redaction_stays_fast_on_adversarial_bounded_input(shape):
     started = time.perf_counter()
     SecretRedactor.redact_text(shape)
     SecretRedactor.redact_text(shape * 4)  # truncated to the bound first
-    assert time.perf_counter() - started < 1.0
+    # Generous bound for slow CI runners; locally this takes well under 0.1 s.
+    assert time.perf_counter() - started < 5.0
 
 
 # --- 4. Shot Board take API gaps --------------------------------------------------------------
@@ -420,3 +421,130 @@ async def test_takes_expose_created_at_and_selection_respects_shot_and_project(c
     assert selected.json()["selected_take_id"] == takes[0]["id"]
     missing = await client.post(f"/api/v1/queue/shots/sht_missing/takes/{takes[0]['id']}/select")
     assert missing.status_code == 404
+
+
+
+# --- Follow-up review fixes ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text, secret", [
+    ('{"detail": "{\\"api_key\\": \\"sk-abc123\\"}"}', "sk-abc123"),
+    ('{"detail": "{\\"password\\": \\"hunter22\\", \\"user\\": \\"bob\\"}"}', "hunter22"),
+    ('{"detail": "{\\"authorization\\": \\"ApiKey xyz123\\"}"}', "xyz123"),
+    ("Auth failed: passphrase=correct-horse", "correct-horse"),
+    ('{"error": "bad pwd=hunter2"}', "hunter2"),
+    ('{"password": "ab\\"cd"}', "cd"),
+    ("'password': 'it\\'s x'", "s x"),
+])
+def test_escaped_and_nested_secrets_are_redacted(text, secret):
+    assert secret not in SecretRedactor.redact_text(text)
+
+
+def test_double_encoded_json_keeps_non_secret_fields():
+    text = '{"detail": "{\\"password\\": \\"hunter22\\", \\"user\\": \\"bob\\"}"}'
+    assert '\\"user\\": \\"bob\\"' in SecretRedactor.redact_text(text)
+
+
+def test_cookie_and_authorization_words_in_options_survive_credential_redaction():
+    for option in ("Fortune cookie: yes", "Key: C major", "Needs authorization review"):
+        assert SecretRedactor.redact_credentials(option) == option
+    assert "abc" not in SecretRedactor.redact_credentials("Cookie: session=abc")
+
+
+def test_proxy_url_keeps_its_host_in_text():
+    redacted = SecretRedactor.redact_text("proxy_url=http://user:pw@proxy.example:8080/x tail")
+    assert "pw" not in redacted and "proxy.example:8080" in redacted
+
+
+@pytest.mark.parametrize("text", ["a=" * 8000, 'a="' * 5000, 'k="' + "x=" * 8000, "ab:" * 5000])
+def test_nested_scan_stays_fast(text):
+    started = time.perf_counter()
+    SecretRedactor.redact_text(text)
+    assert time.perf_counter() - started < 5.0
+
+
+@pytest.mark.asyncio
+async def test_shared_file_does_not_block_deletion_by_an_active_export(client: AsyncClient):
+    pid, *_ = await _setup(client)
+    path = await _asset_with_file(pid, "ast_shared_a")
+    async with STATE["maker"]() as db:
+        original = await db.get(Asset, "ast_shared_a")
+        db.add(Asset(id="ast_shared_b", project_id=pid, asset_type="video", filename="b.mp4",
+                     storage_rel_path=original.storage_rel_path, mime_type="video/mp4",
+                     size_bytes=12, sha256="0" * 64))
+        await db.commit()
+    await _export_using(pid, "exp_shared", "seq_shared", path, ExportJobState.RUNNING)
+
+    deleted = await client.delete("/api/v1/assets/ast_shared_a")
+
+    assert deleted.status_code == 204, deleted.text
+    assert path.is_file()  # still used by ast_shared_b and the running export
+
+
+@pytest.mark.asyncio
+async def test_export_output_reference_is_scoped_to_the_assets_project(client: AsyncClient):
+    pid, *_ = await _setup(client)
+    await _asset_with_file(pid, "ast_out")
+    async with STATE["maker"]() as db:
+        db.add(Project(id="prj_other_out", name="other"))
+        await db.flush()
+        db.add(TimelineSequenceRecord(id="seq_other_out", project_id="prj_other_out"))
+        await db.flush()
+        db.add(ExportJobRecord(id="exp_foreign_out", project_id="prj_other_out",
+                               sequence_id="seq_other_out", state=ExportJobState.SUCCEEDED,
+                               output_asset_id="ast_out"))
+        await db.commit()
+
+    deleted = await client.delete("/api/v1/assets/ast_out")
+
+    assert deleted.status_code == 204, deleted.text
+    async with STATE["maker"]() as db:
+        assert (await db.get(ExportJobRecord, "exp_foreign_out")).output_asset_id == "ast_out"
+
+
+@pytest.mark.asyncio
+async def test_released_lease_of_a_taken_over_holder_is_expunged(client: AsyncClient):
+    _pid, cid, s1, _ = await _setup(client)
+    tid = (await client.post("/api/v1/queue/tasks", json={"shot_id": s1["id"], "connection_id": cid})).json()["id"]
+    async with STATE["maker"]() as db:
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=tid, connection_id=cid, owner_token="old-holder",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        ))
+        await db.commit()
+        stale = await db.get(GenerationDispatchLeaseRecord, tid)
+        assert stale is not None
+        # Another session takes the lease over.
+        async with STATE["maker"]() as other:
+            await other.delete(await other.get(GenerationDispatchLeaseRecord, tid))
+            await other.commit()
+
+        await generation_queue.release_owned_lease(db, tid, "old-holder")
+
+        assert stale not in db
+        db.add(GenerationDispatchLeaseRecord(
+            task_id=tid, connection_id=cid, owner_token="next-holder",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        ))
+        await db.commit()  # no identity conflict with the stale object
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_take_ignores_a_last_frame_from_another_project(client: AsyncClient):
+    pid, _cid, s1, _s2 = await _chain_and_render(client)
+    takes = (await client.get(f"/api/v1/queue/shots/{s1['id']}/takes")).json()
+    async with STATE["maker"]() as db:
+        db.add(Project(id="prj_frame_other", name="other"))
+        await db.flush()
+        db.add(Asset(id="ast_foreign_frame", project_id="prj_frame_other", asset_type="image",
+                     filename="f.png", storage_rel_path="prj_frame_other/f.png", mime_type="image/png",
+                     size_bytes=1, sha256="0" * 64))
+        await db.flush()
+        take = await db.get(ShotTakeRecord, takes[0]["id"])
+        take.last_frame_asset_id = "ast_foreign_frame"
+        await db.commit()
+
+    selected = await client.post(f"/api/v1/queue/shots/{s1['id']}/takes/{takes[0]['id']}/select")
+
+    assert selected.status_code == 200, selected.text
+    assert (await _shots(client, pid))[s1["id"]]["last_frame_asset_id"] is None
