@@ -17,7 +17,9 @@ from muse_orchestrator.providers.base import (
     VideoProvider, ProviderHealth, ModelCapability,
     ImageGenerationRequest, VideoGenerationRequest,
     ProviderTask, ProviderTaskStatus, StoredMedia, ProviderFailure,
-    ErrorCategory, classify_http_error
+    ErrorCategory, classify_http_error,
+    QUESTION_KINDS, QUESTION_TEXT_MAX_CHARS, QUESTION_OPTIONS_MAX_ITEMS,
+    QUESTION_OPTION_MAX_CHARS, ANSWER_TEXT_MAX_CHARS, ANSWER_CHOICE_MAX_CHARS,
 )
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -220,6 +222,93 @@ def _provider_error_message(value: Any) -> str | None:
     if not isinstance(value, str):
         return "Upstream reported an error with a non-text payload."
     return value[:_MAX_ERROR_CHARS]
+
+
+_MAX_ERROR_CODE_CHARS = 64
+
+
+def _provider_error_code(value: Any) -> str | None:
+    """Machine-readable code of a gateway error object (``{"message", "code"}``)."""
+    if not isinstance(value, dict):
+        return None
+    code = value.get("code")
+    if not isinstance(code, str) or not code.strip() or len(code) > _MAX_ERROR_CODE_CHARS:
+        return None
+    return code.strip()
+
+
+def _invalid_question(detail: str) -> ProviderFailure:
+    return ProviderFailure(
+        ErrorCategory.INVALID_REQUEST, f"Provider question is invalid: {detail}.", None, False
+    )
+
+
+def _parse_question(value: Any) -> dict[str, Any] | None:
+    """Validate and bound a gateway ``question`` object.
+
+    ``None`` means the gateway sent no question. A present but malformed question is a
+    non-retryable INVALID_REQUEST (same policy as other out-of-contract fields).
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _invalid_question("not an object")
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in QUESTION_KINDS:
+        raise _invalid_question("unknown kind")
+    text = value.get("text")
+    if not isinstance(text, str) or len(text) > QUESTION_TEXT_MAX_CHARS:
+        raise _invalid_question("text missing or too long")
+    raw_options = value.get("options", [])
+    if raw_options is None:
+        raw_options = []
+    if not isinstance(raw_options, list) or len(raw_options) > QUESTION_OPTIONS_MAX_ITEMS:
+        raise _invalid_question("options must be a list of at most 10 items")
+    options: list[str] = []
+    for option in raw_options:
+        if not isinstance(option, str) or len(option) > QUESTION_OPTION_MAX_CHARS:
+            raise _invalid_question("option is not a string of at most 200 characters")
+        options.append(option)
+    asked_at = value.get("asked_at")
+    if isinstance(asked_at, bool) or not isinstance(asked_at, (int, float)):
+        asked_at = None
+    return {
+        "kind": kind,
+        "text": text,
+        "options": options,
+        "asked_at": float(asked_at) if asked_at is not None else None,
+    }
+
+
+def _validate_answer(answer: Any) -> dict[str, str]:
+    """Exactly one of ``{"text"}`` / ``{"choice"}`` within the gateway's bounds."""
+    if not isinstance(answer, dict) or len(answer) != 1:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST, "Answer must contain exactly one of 'text' or 'choice'.", None, False
+        )
+    ((key, value),) = answer.items()
+    limit = {"text": ANSWER_TEXT_MAX_CHARS, "choice": ANSWER_CHOICE_MAX_CHARS}.get(key)
+    if limit is None or not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST,
+            "Answer text/choice is empty, too long or of an unknown kind.",
+            None,
+            False,
+        )
+    return {key: value}
+
+
+_STATUS_MAP = {
+    "pending": "queued", "queued": "queued",
+    "processing": "running", "running": "running",
+    # The gateway waits for an operator answer (question/approval/stalled).
+    "needs_input": "needs_input",
+    "completed": "succeeded", "succeeded": "succeeded", "success": "succeeded",
+    "failed": "failed", "error": "failed",
+    # Terminal upstream states must not be polled as "running" until max_polls.
+    "cancelled": "failed", "canceled": "failed", "expired": "failed",
+    "timeout": "failed", "timed_out": "failed", "rejected": "failed",
+}
 
 
 # Image and video tasks are polled on different muse2api routes, but the queue stores
@@ -483,30 +572,53 @@ class Muse2ApiAdapter(VideoProvider):
             # A 2xx without a usable task id: the job may exist upstream; never re-send.
             raise _dispatch_outcome_unknown("2xx response without a valid task id") from exc
 
-    async def get_task(self, task_id: str) -> ProviderTaskStatus:
+    def _task_route(self, task_id: str) -> str:
         if task_id.startswith(_IMAGE_TASK_PREFIX):
             upstream_id = task_id[len(_IMAGE_TASK_PREFIX):]
-            route = f"{self.base_url}/v1/images/generations/{quote(upstream_id, safe='')}"
-        else:
-            route = f"{self.base_url}/v1/videos/{quote(task_id, safe='')}"
-        data = await self._request_json("GET", route, headers=self._headers())
+            return f"{self.base_url}/v1/images/generations/{quote(upstream_id, safe='')}"
+        return f"{self.base_url}/v1/videos/{quote(task_id, safe='')}"
+
+    @staticmethod
+    def _status_from_view(task_id: str, data: dict) -> ProviderTaskStatus:
         raw_status = _bounded_str(data.get("status", "running"), "status", _MAX_STATUS_CHARS).lower()
-        status_map = {
-            "pending": "queued", "queued": "queued",
-            "processing": "running", "running": "running",
-            "completed": "succeeded", "succeeded": "succeeded", "success": "succeeded",
-            "failed": "failed", "error": "failed",
-            # Terminal upstream states must not be polled as "running" until max_polls.
-            "cancelled": "failed", "canceled": "failed", "expired": "failed",
-            "timeout": "failed", "timed_out": "failed", "rejected": "failed",
-        }
+        status = _STATUS_MAP.get(raw_status, "running")
+        error = data.get("error")
         return ProviderTaskStatus(
             external_task_id=task_id,
-            status=status_map.get(raw_status, "running"),
+            status=status,
             result_media_url=_result_media_url(data),
-            error_message=_provider_error_message(data.get("error")),
+            error_message=_provider_error_message(error),
             account_used=_optional_bounded_str(data.get("account_id"), "account_id", _MAX_ACCOUNT_ID_CHARS),
+            error_code=_provider_error_code(error),
+            question=_parse_question(data.get("question")) if status == "needs_input" else None,
         )
+
+    async def get_task(self, task_id: str) -> ProviderTaskStatus:
+        data = await self._request_json("GET", self._task_route(task_id), headers=self._headers())
+        return self._status_from_view(task_id, data)
+
+    async def reply(self, task_id: str, answer: dict[str, str]) -> ProviderTaskStatus:
+        """Answer the question a task is waiting on (``POST .../{id}/reply``).
+
+        HTTP 409 (task not waiting for input) becomes non-retryable INPUT_NOT_PENDING;
+        400/404/422 stay INVALID_REQUEST via ``classify_http_error``. Image tasks
+        (``image:`` external ids) use the image reply route.
+        """
+        body = _validate_answer(answer)
+        try:
+            data = await self._request_json(
+                "POST", f"{self._task_route(task_id)}/reply", headers=self._headers(), json_body=body
+            )
+        except ProviderFailure as exc:
+            if exc.http_status == 409:
+                raise ProviderFailure(
+                    ErrorCategory.INPUT_NOT_PENDING,
+                    "Provider task is not waiting for input (already answered, timed out or finished).",
+                    409,
+                    False,
+                ) from exc
+            raise
+        return self._status_from_view(task_id, data)
 
     def _is_provider_origin(self, url: str) -> bool:
         origin = _origin(url)

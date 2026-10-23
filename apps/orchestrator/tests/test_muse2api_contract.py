@@ -122,6 +122,125 @@ async def test_too_long_image_task_id_is_dispatch_outcome_unknown(www222fff) -> 
     assert getattr(excinfo.value, "category", None).value == "dispatch_outcome_unknown"
 
 
+# --- operator questions (needs_input) ------------------------------------------------------
+
+QUESTION = {"kind": "question", "text": "Which style do you prefer?",
+            "options": ["Cinematic", "Anime"], "asked_at": 1761200000.5}
+VIDEO_TASK_NEEDS_INPUT = {**VIDEO_TASK_QUEUED, "status": "needs_input", "question": QUESTION,
+                          "interactions": []}
+VIDEO_TASK_RUNNING_AFTER_REPLY = {
+    **VIDEO_TASK_QUEUED, "status": "running", "question": None,
+    "interactions": [{**QUESTION, "answer": {"choice": "Anime"}, "answered_at": 1761200010.0}],
+}
+VIDEO_TASK_INPUT_TIMEOUT = {
+    **VIDEO_TASK_QUEUED, "status": "failed", "question": None,
+    "error": {"message": "No operator answer within 30 minutes.", "code": "input_timeout"},
+}
+CONFLICT = {"error": {"message": "Task is not waiting for input.", "code": "conflict"}}
+INVALID = {"error": {"message": "choice must be one of the options", "code": "invalid_request"}}
+
+
+async def test_needs_input_maps_status_and_bounded_question() -> None:
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_NEEDS_INPUT), [])
+    status = await adapter.get_task("task_v1")
+    assert status.status == "needs_input"
+    assert status.question == QUESTION
+
+
+async def test_question_is_ignored_unless_status_is_needs_input() -> None:
+    running = {**VIDEO_TASK_QUEUED, "status": "running", "question": QUESTION}
+    adapter = _adapter(lambda _r: httpx.Response(200, json=running), [])
+    status = await adapter.get_task("task_v1")
+    assert status.status == "running" and status.question is None
+
+
+async def test_needs_input_without_question_keeps_status_and_null_question() -> None:
+    adapter = _adapter(lambda _r: httpx.Response(200, json={**VIDEO_TASK_NEEDS_INPUT, "question": None}), [])
+    status = await adapter.get_task("task_v1")
+    assert status.status == "needs_input" and status.question is None
+
+
+@pytest.mark.parametrize("bad_question", [
+    {**QUESTION, "kind": "payment"},
+    {**QUESTION, "text": "x" * 4001},
+    {**QUESTION, "text": 42},
+    {**QUESTION, "options": [f"o{i}" for i in range(11)]},
+    {**QUESTION, "options": ["y" * 201]},
+    {**QUESTION, "options": [1, 2]},
+    "not-an-object",
+])
+async def test_out_of_contract_question_is_non_retryable_invalid_request(bad_question) -> None:
+    view = {**VIDEO_TASK_NEEDS_INPUT, "question": bad_question}
+    adapter = _adapter(lambda _r: httpx.Response(200, json=view), [])
+    with pytest.raises(Exception) as excinfo:
+        await adapter.get_task("task_v1")
+    assert excinfo.value.category.value == "invalid_request"
+    assert excinfo.value.retryable is False
+
+
+async def test_stalled_question_with_keep_waiting_options_is_accepted() -> None:
+    stalled = {"kind": "stalled", "text": "Generation seems stuck.", "options": ["Keep waiting", "Give up"],
+               "asked_at": 1761200100}
+    adapter = _adapter(lambda _r: httpx.Response(200, json={**VIDEO_TASK_NEEDS_INPUT, "question": stalled}), [])
+    status = await adapter.get_task("task_v1")
+    assert status.question == {**stalled, "asked_at": 1761200100.0}
+
+
+async def test_input_timeout_failure_exposes_error_code() -> None:
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_INPUT_TIMEOUT), [])
+    status = await adapter.get_task("task_v1")
+    assert status.status == "failed"
+    assert status.error_code == "input_timeout"
+    assert status.error_message == "No operator answer within 30 minutes."
+
+
+async def test_reply_posts_exact_payload_to_video_route() -> None:
+    seen: list[httpx.Request] = []
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_RUNNING_AFTER_REPLY), seen)
+    status = await adapter.reply("task_v1", {"choice": "Anime"})
+    assert seen[0].method == "POST" and seen[0].url.path == "/v1/videos/task_v1/reply"
+    assert json.loads(seen[0].content) == {"choice": "Anime"}
+    assert seen[0].headers["Authorization"] == "Bearer contract-key"
+    assert status.status == "running" and status.question is None
+
+
+async def test_reply_routes_image_tasks_to_image_reply_route() -> None:
+    seen: list[httpx.Request] = []
+    view = {**IMAGE_TASK_QUEUED, "status": "running", "question": None}
+    adapter = _adapter(lambda _r: httpx.Response(200, json=view), seen)
+    await adapter.reply("image:task_i1", {"text": "Use a blue background"})
+    assert seen[0].url.path == "/v1/images/generations/task_i1/reply"
+    assert json.loads(seen[0].content) == {"text": "Use a blue background"}
+
+
+async def test_reply_conflict_is_input_not_pending_and_not_retryable() -> None:
+    adapter = _adapter(lambda _r: httpx.Response(409, json=CONFLICT), [])
+    with pytest.raises(Exception) as excinfo:
+        await adapter.reply("task_v1", {"text": "hi"})
+    assert excinfo.value.category.value == "input_not_pending"
+    assert excinfo.value.retryable is False and excinfo.value.http_status == 409
+
+
+@pytest.mark.parametrize("status_code", [400, 404])
+async def test_reply_bad_request_and_unknown_task_are_invalid_request(status_code) -> None:
+    adapter = _adapter(lambda _r: httpx.Response(status_code, json=INVALID), [])
+    with pytest.raises(Exception) as excinfo:
+        await adapter.reply("task_v1", {"choice": "Nope"})
+    assert excinfo.value.category.value == "invalid_request"
+    assert excinfo.value.retryable is False
+
+
+@pytest.mark.parametrize("answer", [{}, {"text": "a", "choice": "b"}, {"text": ""}, {"text": "x" * 4001},
+                                    {"choice": "c" * 201}, {"other": "x"}])
+async def test_reply_rejects_malformed_answers_before_sending(answer) -> None:
+    seen: list[httpx.Request] = []
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_RUNNING_AFTER_REPLY), seen)
+    with pytest.raises(Exception) as excinfo:
+        await adapter.reply("task_v1", answer)
+    assert excinfo.value.category.value == "invalid_request"
+    assert seen == []
+
+
 # --- live gateway -------------------------------------------------------------------------
 
 LIVE_URL = os.environ.get("MUSE2API_CONTRACT_URL", "").rstrip("/")
