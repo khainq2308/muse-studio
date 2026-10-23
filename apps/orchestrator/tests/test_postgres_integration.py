@@ -52,6 +52,7 @@ from alembic.config import Config  # noqa: E402
 from alembic.migration import MigrationContext  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import func, select, text  # noqa: E402
+from sqlalchemy import insert as sa_insert  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 from sqlalchemy.exc import DBAPIError, IntegrityError  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
@@ -318,7 +319,7 @@ async def test_pg_alembic_upgrade_head_matches_orm_metadata(pg_engine: AsyncEngi
             return compare_metadata(context, Base.metadata)
 
         diffs = await conn.run_sync(_diff)
-    assert version == ["0002_uniqueness"]
+    assert version == ["0003_awaiting_input"]
     assert diffs == []
 
 
@@ -338,7 +339,7 @@ async def test_pg_alembic_upgrade_head_is_idempotent(migrated_url: str) -> None:
             ).scalar_one()
     finally:
         await engine.dispose()
-    assert version == ["0002_uniqueness"]
+    assert version == ["0003_awaiting_input"]
     assert "UNIQUE" in index_def and "WHERE" in index_def
 
 
@@ -395,13 +396,81 @@ async def test_pg_migration_0002_repairs_duplicates_before_adding_constraints(pg
     finally:
         await engine.dispose()
 
-    assert head == "0002_uniqueness"
+    assert head == "0003_awaiting_input"
     assert versions == [1, 2]
     assert current == 2
     assert code_names == ["hero", "hero__dup1"]
     active = [state for state, _ in task_states if state in ("QUEUED", "RUNNING", "PAUSED")]
     assert len(active) == 1
     assert ("CANCELED", "duplicate_active_task") in task_states
+
+
+async def test_pg_migration_0003_awaiting_input_round_trip(pg_database_url: str) -> None:
+    """ALTER TYPE ADD VALUE runs outside the migration transaction; downgrade maps rows to RUNNING."""
+    await asyncio.to_thread(_alembic_upgrade_to, pg_database_url, "head")
+    engine = create_async_engine(pg_database_url)
+    try:
+        async with engine.begin() as conn:
+            labels = (await conn.execute(text(
+                "SELECT enumlabel FROM pg_enum JOIN pg_type ON pg_type.oid = enumtypid "
+                "WHERE typname = 'queuetaskstate'"
+            ))).scalars().all()
+            index_def = (await conn.execute(text(
+                "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_generation_tasks_active_shot_type'"
+            ))).scalar_one()
+            tables = Base.metadata.tables
+            # Core inserts apply the models' Python-side defaults (NOT NULL columns).
+            await conn.execute(sa_insert(tables["projects"]).values(id="prj_aw", name="A"))
+            await conn.execute(sa_insert(tables["provider_connections"]).values(
+                id="conn_aw", name="c", base_url="http://localhost:8080"
+            ))
+            await conn.execute(sa_insert(tables["scenes"]).values(
+                id="scn_aw", project_id="prj_aw", scene_index=0, title="S"
+            ))
+            await conn.execute(sa_insert(tables["shots"]).values(
+                id="sht_aw", project_id="prj_aw", scene_id="scn_aw", sequence_index=0,
+                title="Shot", location_code="loc",
+            ))
+            await conn.execute(sa_insert(tables["generation_tasks"]).values(
+                id="tsk_aw", project_id="prj_aw", shot_id="sht_aw", connection_id="conn_aw",
+                task_type="video", model_id="m", idempotency_key="idem_aw",
+                state=QueueTaskState.AWAITING_INPUT, pending_input_json={"kind": "question"},
+            ))
+        with pytest.raises(IntegrityError):
+            async with engine.begin() as conn:
+                await conn.execute(sa_insert(Base.metadata.tables["generation_tasks"]).values(
+                    id="tsk_aw2", project_id="prj_aw", shot_id="sht_aw", connection_id="conn_aw",
+                    task_type="video", model_id="m", idempotency_key="idem_aw2",
+                    state=QueueTaskState.QUEUED,
+                ))
+    finally:
+        await engine.dispose()
+    assert "AWAITING_INPUT" in labels
+    assert "AWAITING_INPUT" in index_def
+
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("sqlalchemy.url", pg_database_url.replace("%", "%%"))
+    await asyncio.to_thread(command.downgrade, config, "0002_uniqueness")
+    engine = create_async_engine(pg_database_url)
+    try:
+        async with engine.connect() as conn:
+            state = (await conn.execute(text(
+                "SELECT state::text FROM generation_tasks WHERE id = 'tsk_aw'"
+            ))).scalar_one()
+            columns = (await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'generation_tasks'"
+            ))).scalars().all()
+            index_def = (await conn.execute(text(
+                "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_generation_tasks_active_shot_type'"
+            ))).scalar_one()
+    finally:
+        await engine.dispose()
+    assert state == "RUNNING"
+    assert "pending_input_json" not in columns
+    assert "AWAITING_INPUT" not in index_def
+
+    # The enum value survives the downgrade (PostgreSQL cannot drop it); re-upgrade is safe.
+    await asyncio.to_thread(_alembic_upgrade_to, pg_database_url, "head")
 
 
 # --- queue concurrency ----------------------------------------------------------------

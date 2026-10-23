@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
+HEAD_REVISION = "0003_awaiting_input"
 
 
 def _config(database_path: Path) -> Config:
@@ -142,7 +143,7 @@ def test_upgrade_repairs_duplicates_without_deleting_rows(tmp_path: Path, monkey
 
         with engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-                "0002_uniqueness"
+                HEAD_REVISION
             )
             # Earliest row keeps its number; later duplicates move above the original max.
             assert _values(connection, "SELECT id, version_number FROM workflow_versions") == {
@@ -196,7 +197,7 @@ def test_downgrade_drops_constraints_and_reupgrade_succeeds(tmp_path: Path, monk
     database_path = tmp_path / "review2-downgrade.sqlite3"
     config = _config(database_path)
     command.upgrade(config, "head")
-    command.downgrade(config, "-1")
+    command.downgrade(config, "0001_bootstrap")
     engine = create_engine(f"sqlite:///{database_path}")
     try:
         with engine.begin() as connection:
@@ -208,7 +209,7 @@ def test_downgrade_drops_constraints_and_reupgrade_succeeds(tmp_path: Path, monk
         command.upgrade(config, "head")
         with engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-                "0002_uniqueness"
+                HEAD_REVISION
             )
     finally:
         engine.dispose()
@@ -227,7 +228,7 @@ def test_create_all_models_enforce_the_same_guarantees() -> None:
                 _task("tsk_active", "shot_a", "QUEUED"),
                 _task("tsk_image", "shot_a", "RUNNING", task_type="image"),
             ])
-        for state in ("QUEUED", "RUNNING", "PAUSED"):
+        for state in ("QUEUED", "RUNNING", "PAUSED", "AWAITING_INPUT"):
             with pytest.raises(IntegrityError), engine.begin() as connection:
                 connection.execute(insert(CurrentBase.metadata.tables["generation_tasks"]), [
                     _task(f"tsk_dup_{state}", "shot_a", state),
@@ -239,5 +240,62 @@ def test_create_all_models_enforce_the_same_guarantees() -> None:
                 {"id": "b2", "project_id": "proj_a", "entry_type": "location", "code_name": "X",
                  "display_name": "X"},
             ])
+    finally:
+        engine.dispose()
+
+
+def _index_sql(connection: Connection) -> str:
+    return connection.execute(text(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' "
+        "AND name = 'uq_generation_tasks_active_shot_type'"
+    )).scalar_one()
+
+
+def _task_columns(connection: Connection) -> dict[str, str]:
+    return {row[1]: row[2] for row in connection.execute(text("PRAGMA table_info(generation_tasks)"))}
+
+
+def test_0003_awaiting_input_holds_the_active_slot_and_downgrades_to_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    database_path = tmp_path / "review-0003.sqlite3"
+    config = _config(database_path)
+    command.upgrade(config, "0002_uniqueness")
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            assert "AWAITING_INPUT" in _index_sql(connection)
+            columns = _task_columns(connection)
+            assert columns["state"] == "VARCHAR(14)"
+            assert "pending_input_json" in columns
+            _seed_parents(connection, CurrentBase.metadata.tables)
+            awaiting = _task("tsk_wait", "shot_a", "AWAITING_INPUT")
+            awaiting["pending_input_json"] = {"kind": "question", "text": "Which?", "options": []}
+            connection.execute(insert(CurrentBase.metadata.tables["generation_tasks"]), [awaiting])
+        # One active task per shot: AWAITING_INPUT blocks a second active task.
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(insert(CurrentBase.metadata.tables["generation_tasks"]), [
+                _task("tsk_second", "shot_a", "QUEUED"),
+            ])
+
+        command.downgrade(config, "0002_uniqueness")
+        with engine.begin() as connection:
+            assert connection.execute(
+                text("SELECT state FROM generation_tasks WHERE id = 'tsk_wait'")
+            ).scalar_one() == "RUNNING"
+            columns = _task_columns(connection)
+            assert "pending_input_json" not in columns
+            assert columns["state"] == "VARCHAR(12)"
+            assert "AWAITING_INPUT" not in _index_sql(connection)
+            assert "PAUSED" in _index_sql(connection)
+
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == HEAD_REVISION
+            assert "AWAITING_INPUT" in _index_sql(connection)
     finally:
         engine.dispose()

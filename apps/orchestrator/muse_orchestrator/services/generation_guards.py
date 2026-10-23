@@ -19,10 +19,10 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.models.domain import (
+    ACTIVE_GENERATION_TASK_STATES,
     Asset,
     GenerationTaskRecord,
     ProviderConnection,
-    QueueTaskState,
     ShotGenerationState,
     ShotRecord,
     ShotTakeRecord,
@@ -33,7 +33,7 @@ ConditioningSource = Literal["upstream", "operator", "none"]
 
 # Tasks in these states occupy the per-(shot, task_type) active slot. Mirrors the partial
 # unique index ``uq_generation_tasks_active_shot_type``.
-ACTIVE_SLOT_TASK_STATES = (QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.PAUSED)
+ACTIVE_SLOT_TASK_STATES = ACTIVE_GENERATION_TASK_STATES
 
 BLOCK_BLOCKED_REFERENCE = "blocked_reference"
 BLOCK_LINT = "lint_blocker"

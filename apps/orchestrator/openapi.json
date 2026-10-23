@@ -1718,6 +1718,16 @@
             "title": "Next Poll Delay Seconds",
             "type": "number"
           },
+          "pending_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingInputOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "poll_count": {
             "title": "Poll Count",
             "type": "integer"
@@ -2338,6 +2348,50 @@
         "title": "OrphanScanOut",
         "type": "object"
       },
+      "PendingInputOut": {
+        "description": "Question the provider asked the operator while the task is AWAITING_INPUT.",
+        "properties": {
+          "asked_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asked At"
+          },
+          "kind": {
+            "enum": [
+              "question",
+              "approval",
+              "stalled"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "options",
+          "asked_at"
+        ],
+        "title": "PendingInputOut",
+        "type": "object"
+      },
       "PipelineLintIssueOut": {
         "properties": {
           "code": {
@@ -2815,6 +2869,16 @@
             "title": "Next Poll Delay Seconds",
             "type": "number"
           },
+          "pending_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingInputOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "poll_count": {
             "title": "Poll Count",
             "type": "integer"
@@ -2956,7 +3020,8 @@
           "succeeded",
           "failed",
           "poll_timeout",
-          "canceled"
+          "canceled",
+          "awaiting_input"
         ],
         "title": "QueueTaskState",
         "type": "string"
@@ -3834,6 +3899,39 @@
           "is_selected"
         ],
         "title": "TakeComparisonOut",
+        "type": "object"
+      },
+      "TaskReplyIn": {
+        "description": "Operator answer: exactly one of free ``text`` or one of the offered ``choice`` options.",
+        "properties": {
+          "choice": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "title": "TaskReplyIn",
         "type": "object"
       },
       "TimelineAssembleIn": {
@@ -13907,6 +14005,185 @@
           }
         },
         "summary": "Pause Task",
+        "tags": [
+          "M4 Generation Queue & Takes"
+        ]
+      }
+    },
+    "/api/v1/queue/tasks/{task_id}/reply": {
+      "post": {
+        "description": "Answer the question the provider asked for an AWAITING_INPUT task.\n\n404 unknown task; 409 when the task (or the provider job) is not waiting for input;\n422 for a malformed answer or a ``choice`` outside the pending options; provider\nfailures use the shared error envelope. On success the task is RUNNING again and its\nnext step is scheduled immediately.",
+        "operationId": "reply_to_task_api_v1_queue_tasks__task_id__reply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-studio-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Studio-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskReplyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueTaskOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication failed"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Payload too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limited"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Upstream provider error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Upstream timeout"
+          }
+        },
+        "summary": "Reply To Task",
         "tags": [
           "M4 Generation Queue & Takes"
         ]

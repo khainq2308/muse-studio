@@ -4,7 +4,11 @@ import logging
 
 from fastapi import HTTPException, Request, status
 
-from muse_orchestrator.models.domain import GenerationTaskRecord, QueueTaskState
+from muse_orchestrator.models.domain import (
+    SCHEDULABLE_GENERATION_TASK_STATES,
+    GenerationTaskRecord,
+    QueueTaskState,
+)
 from muse_orchestrator.services.arq_dispatch import enqueue_export_job, enqueue_generation_step
 
 logger = logging.getLogger(__name__)
@@ -12,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 async def schedule_generation_task(request: Request, task: GenerationTaskRecord) -> None:
     """Publish an already-persisted task; expose a safe 503 if Redis cannot schedule it."""
-    if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
+    if task.state not in SCHEDULABLE_GENERATION_TASK_STATES:
         return
 
     redis = getattr(request.app.state, "arq_pool", None)

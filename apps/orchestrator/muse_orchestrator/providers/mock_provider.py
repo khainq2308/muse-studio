@@ -5,7 +5,8 @@ import uuid
 from muse_orchestrator.providers.base import (
     VideoProvider, ProviderHealth, ModelCapability,
     ImageGenerationRequest, VideoGenerationRequest,
-    ProviderTask, ProviderTaskStatus, StoredMedia, classify_http_error
+    ProviderTask, ProviderTaskStatus, StoredMedia, classify_http_error,
+    ErrorCategory, ProviderFailure,
 )
 
 # Lưu trạng thái giả lập dùng chung trong tiến trình test để mô phỏng chính xác vòng đời bất đồng bộ
@@ -72,6 +73,15 @@ class MockVideoProvider(VideoProvider):
             status="succeeded",
             result_media_url=f"mock://media/{task_id}.{ext}",
             account_used="mock_pool_acc_01",
+        )
+
+    async def reply(self, task_id: str, answer: dict[str, str]) -> ProviderTaskStatus:
+        """The mock provider never asks the operator anything, so no task is waiting."""
+        raise ProviderFailure(
+            ErrorCategory.INPUT_NOT_PENDING,
+            "Mock provider tasks never wait for operator input.",
+            409,
+            False,
         )
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:

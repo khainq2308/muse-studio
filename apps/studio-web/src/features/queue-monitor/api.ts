@@ -7,6 +7,7 @@ import {
   getQueueRefetchInterval,
   type QueueTaskAction,
   type QueueTaskFilter,
+  type QueueTaskReply,
 } from "@/features/queue-monitor/state";
 import { isRetryableApiError } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
@@ -39,7 +40,10 @@ export function useQueueTasks(projectId: string, stateFilter: QueueTaskFilter, o
         query.state.data?.items.map((task) => task.state),
         Date.now() - pollingWindow.current.startedAt,
         query.state.status,
-        stateFilter === "all" || stateFilter === "queued" || stateFilter === "running"
+        stateFilter === "all" ||
+          stateFilter === "queued" ||
+          stateFilter === "running" ||
+          stateFilter === "awaiting_input"
           ? query.state.data?.summary.active_tasks
           : undefined,
         query.state.status === "error" && isRetryableApiError(query.state.error),
@@ -101,6 +105,68 @@ export function useQueueTaskAction(projectId: string, onActionSettled?: () => vo
   const { mutate: rawMutate } = mutation;
   const mutate = useCallback(
     (variables: QueueTaskActionVariables) => rawMutate({ ...variables, projectId, sessionVersion }),
+    [projectId, rawMutate, sessionVersion],
+  );
+
+  return { ...mutation, mutate, pendingTaskIds };
+}
+
+export interface QueueTaskReplyVariables {
+  taskId: string;
+  reply: QueueTaskReply;
+}
+
+interface QueueTaskReplyScope extends QueueTaskReplyVariables {
+  projectId: string;
+  sessionVersion: number;
+}
+
+/**
+ * Answer the question of an AWAITING_INPUT task. The queue is refreshed whether the reply
+ * succeeds or fails: a 409 means the task already moved on and the list must show its new state.
+ */
+export function useQueueTaskReply(projectId: string, onReplySettled?: () => void) {
+  const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  const queryClient = useQueryClient();
+
+  const mutationKey = queryKeys.queueTaskReplies(sessionVersion, projectId);
+  const mutation = useMutation({
+    mutationKey,
+    mutationFn: ({ taskId, reply }: QueueTaskReplyScope) =>
+      apiPost("/api/v1/queue/tasks/{task_id}/reply", reply, {
+        pathParams: { task_id: taskId },
+      }),
+    onSettled: (_data, _error, variables) => {
+      onReplySettled?.();
+      return queryClient.invalidateQueries({
+        queryKey: queryKeys.queueTasksPrefix(variables.sessionVersion, variables.projectId),
+      });
+    },
+  });
+
+  const pendingTaskIdList = useMutationState({
+    filters: { mutationKey, status: "pending" },
+    select: (pending) => (pending.state.variables as QueueTaskReplyScope | undefined)?.taskId,
+  });
+  const pendingTaskIdKey = pendingTaskIdList.filter(Boolean).sort().join("\u0000");
+  const pendingTaskIds = useMemo<ReadonlySet<string>>(
+    () => new Set(pendingTaskIdKey ? pendingTaskIdKey.split("\u0000") : []),
+    [pendingTaskIdKey],
+  );
+
+  const { mutate: rawMutate } = mutation;
+  const mutate = useCallback(
+    (
+      variables: QueueTaskReplyVariables,
+      callbacks?: { onSuccess?: () => void; onError?: (error: unknown) => void },
+    ) =>
+      rawMutate(
+        { ...variables, projectId, sessionVersion },
+        {
+          onSuccess: () => callbacks?.onSuccess?.(),
+          onError: (error) => callbacks?.onError?.(error),
+        },
+      ),
     [projectId, rawMutate, sessionVersion],
   );
 

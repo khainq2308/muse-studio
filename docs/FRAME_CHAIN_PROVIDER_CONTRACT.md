@@ -33,11 +33,34 @@ At enqueue the queue stores a **request snapshot** in the task history: `duratio
 | `blocked_upstream_frame` | No validated last frame on the upstream shot's selected take. | Generate/select the upstream take first. |
 | `conditioning_frame_invalid` | Operator-set first frame is missing or belongs to another project. | Set a valid frame or clear it. |
 | `stale_conditioning_frame` | Conditioning frame changed between enqueue and dispatch. | Re-enqueue explicitly. |
+| `input_timeout` | The provider asked the operator a question (task `AWAITING_INPUT`) and the gateway gave up after its 30-minute input timeout. Non-retryable; the shot is settled like any other failure. | Enqueue again (consider answering faster). |
 | `dispatch_outcome_unknown` | The worker step was cancelled (job timeout/shutdown) after the provider request may have been sent and before an external task id was stored. The task is FAILED and non-retryable; it is not re-sent automatically to avoid a duplicate paid generation. | Check the provider dashboard, then retry explicitly. |
 
 ### One active task per shot and task type
 
-At most one `QUEUED`/`RUNNING`/`PAUSED` task may exist per `(shot_id, task_type)`. The queue returns the existing active task instead of creating a second one, and Alembic revision `0002_uniqueness` enforces it with the partial unique index `uq_generation_tasks_active_shot_type` (predicate on the stored enum names `QUEUED`, `RUNNING`, `PAUSED`). A lost concurrent insert returns the winning task rather than a 500. On upgrade, pre-existing duplicates are repaired by keeping the newest active task and cancelling the others with `error_category = duplicate_active_task`.
+At most one `QUEUED`/`RUNNING`/`PAUSED`/`AWAITING_INPUT` task may exist per `(shot_id, task_type)`. The queue returns the existing active task instead of creating a second one, and the partial unique index `uq_generation_tasks_active_shot_type` enforces it (created by Alembic revision `0002_uniqueness` with the stored enum names `QUEUED`, `RUNNING`, `PAUSED`; `0003_awaiting_input` adds `AWAITING_INPUT`). A lost concurrent insert returns the winning task rather than a 500. On upgrade, pre-existing duplicates are repaired by keeping the newest active task and cancelling the others with `error_category = duplicate_active_task`.
+
+## Operator questions (needs-input)
+
+Source: `providers/muse2api_adapter.py`, `services/generation_queue.py`, `application/queue_service.py`, `api/queue.py`. Status: **unverified** against a real muse.ai account (see the capability matrix); the gateway contract below is exercised only with offline `httpx.MockTransport` tests and a fake provider.
+
+Gateway contract (muse2api fork with the needs-input driver):
+
+- `GET /v1/videos/{id}` and `GET /v1/images/generations/{id}` may return `"status": "needs_input"` with `"question": {"kind": "question" | "approval" | "stalled", "text": str (<= 4000), "options": [str] (<= 10, each <= 200), "asked_at": float}`; `question` is `null` otherwise. `interactions` lists earlier questions and answers (not stored by MuseStudio). `stalled` questions offer `["Keep waiting", "Give up"]`; payment approvals never reach the operator.
+- `POST /v1/videos/{id}/reply` or `POST /v1/images/generations/{id}/reply` with exactly one of `{"text": str <= 4000}` / `{"choice": str <= 200}` (one of the options) returns the task view; `409 {"error": {"code": "conflict"}}` when the task is not waiting, `400 invalid_request` for a bad payload or choice, `404` for an unknown task. After an answer the gateway task is `running` again.
+- An unanswered question fails the gateway task after 30 minutes with `error.code = "input_timeout"`.
+
+Adapter: `needs_input` maps to provider status `needs_input` with a validated question; a present but out-of-contract question (unknown kind, oversize text/options, wrong types) is a non-retryable `invalid_request`, a `null` question keeps the status with no question. `reply()` routes `image:` external ids to the image route; HTTP 409 becomes the non-retryable category `input_not_pending`, 400/404 stay `invalid_request`. The mock provider never asks questions and answers `reply()` with `input_not_pending`.
+
+Queue:
+
+- Poll result `needs_input` → task `AWAITING_INPUT`, question stored (text secret-redacted) in `generation_tasks.pending_input_json`, one history entry per new question. The discovering poll and all polls while waiting do not count against `max_polls`; the task is re-polled every 15 s (the gateway enforces its own input timeout). The task keeps its dispatch account, its `(shot, task_type)` slot and a connection concurrency slot (it still holds a muse.ai tab); the shot stays `RUNNING`.
+- The gateway reports `running` again (answered elsewhere) → task `RUNNING`, question cleared. `failed` with `input_timeout` → `FAILED`, `error_category = input_timeout`, non-retryable.
+- Cancel is allowed while awaiting input (local only: the gateway question then times out upstream); pause is refused with 409. Recovery re-schedules awaiting tasks; batch tick polls them with the running tasks.
+
+API: `POST /api/v1/queue/tasks/{task_id}/reply` with exactly one of `text` (1–4000 chars) or `choice` (1–200 chars, must be one of the pending options) — 422 otherwise, 404 for an unknown task, 409 (`category: input_not_pending`) when the task is not `AWAITING_INPUT`. The answer is sent with the task's pinned account credentials; on success the task is `RUNNING` (or still `AWAITING_INPUT` when the provider immediately asks a follow-up), a redacted history entry records the answer and the next step is scheduled. A provider 409 also returns 409 after the task is stepped once to refresh its state; other provider failures use the shared error envelope (e.g. 502 `upstream_5xx`). `QueueTaskOut.pending_input` exposes the question (`kind`, `text`, `options`, `asked_at`) while the task is `AWAITING_INPUT`, otherwise `null`.
+
+Known limitation: a poll whose provider response was read just before an answer was accepted can briefly put the task back into `AWAITING_INPUT`; the next poll (15 s) corrects it.
 
 ## Local frame handoff
 

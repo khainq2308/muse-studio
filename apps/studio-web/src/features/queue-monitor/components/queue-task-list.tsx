@@ -1,23 +1,34 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Pause, Play, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { QueueTaskQuestion } from "@/features/queue-monitor/components/queue-task-question";
 import {
   QUEUE_TERMINAL_TASK_STATES,
   queueTaskStateLabel,
   queueTaskStateTone,
   type QueueTask,
   type QueueTaskAction,
+  type QueueTaskReply,
 } from "@/features/queue-monitor/state";
 import { cn } from "@/lib/utils";
 
 interface QueueTaskListProps {
   tasks: QueueTask[];
-  /** Tasks with an in-flight pause/resume/cancel request. */
+  /** Tasks with an in-flight pause/resume/cancel or reply request. */
   busyTaskIds: ReadonlySet<string>;
   onAction: (taskId: string, action: QueueTaskAction) => void;
+  /** Latest failed reply, shown next to that task's question while it is still pending. */
+  replyError?: { taskId: string; message: string } | null;
+  onReply: (taskId: string, reply: QueueTaskReply, onSuccess: () => void) => void;
 }
 
-export function QueueTaskList({ tasks, busyTaskIds, onAction }: QueueTaskListProps) {
+export function QueueTaskList({
+  tasks,
+  busyTaskIds,
+  onAction,
+  replyError = null,
+  onReply,
+}: QueueTaskListProps) {
   const [cancelConfirmationId, setCancelConfirmationId] = useState<string | null>(null);
   const cancelButtons = useRef(new Map<string, HTMLButtonElement>());
   const keepTaskButton = useRef<HTMLButtonElement | null>(null);
@@ -53,7 +64,9 @@ export function QueueTaskList({ tasks, busyTaskIds, onAction }: QueueTaskListPro
     <div className="space-y-3">
       {tasks.map((task) => {
         const busy = busyTaskIds.has(task.id);
+        // Pausing is refused (409) while the provider waits for an answer; cancel stays allowed.
         const canPause = task.state === "queued" || task.state === "running";
+        const pendingInput = task.state === "awaiting_input" ? task.pending_input : null;
         const canResume = task.state === "paused";
         const canCancel = !QUEUE_TERMINAL_TASK_STATES.includes(task.state);
 
@@ -62,7 +75,10 @@ export function QueueTaskList({ tasks, busyTaskIds, onAction }: QueueTaskListPro
             key={task.id}
             data-testid={`queue-task-${task.id}`}
             aria-busy={busy}
-            className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
+            className={cn(
+              "rounded-xl border bg-card p-4 shadow-sm sm:p-5",
+              task.state === "awaiting_input" ? "border-warning/60" : "border-border",
+            )}
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
@@ -170,6 +186,23 @@ export function QueueTaskList({ tasks, busyTaskIds, onAction }: QueueTaskListPro
                 </div>
               )}
             </dl>
+
+            {task.state === "awaiting_input" &&
+              (pendingInput ? (
+                <QueueTaskQuestion
+                  key={`${pendingInput.asked_at ?? ""}:${pendingInput.text}`}
+                  taskId={task.id}
+                  pendingInput={pendingInput}
+                  busy={busy}
+                  error={replyError?.taskId === task.id ? replyError.message : null}
+                  onReply={(reply, onSuccess) => onReply(task.id, reply, onSuccess)}
+                />
+              ) : (
+                <p className="mt-4 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+                  The provider is waiting for input but did not send a question yet. Refresh to
+                  check again.
+                </p>
+              ))}
 
             {task.error_message_redacted && (
               <p

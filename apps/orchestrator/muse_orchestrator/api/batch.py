@@ -10,6 +10,8 @@ from muse_orchestrator.models.domain import (
     ShotGenerationState,
     GenerationTaskRecord,
     QueueTaskState,
+    PROVIDER_SLOT_TASK_STATES,
+    SCHEDULABLE_GENERATION_TASK_STATES,
     ShotTakeRecord,
     BatchRenderJobRecord,
 )
@@ -216,7 +218,7 @@ async def launch_batch_render(
         except ValueError:
             blocked_shot_ids.append(s.id)
             continue
-        if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
+        if task.state not in SCHEDULABLE_GENERATION_TASK_STATES:
             # An existing SUCCEEDED/FAILED/CANCELED/POLL_TIMEOUT/PAUSED task for the same
             # inputs: nothing was enqueued (use retry-failed / only_changed=false / resume).
             skipped_shot_ids.append(s.id)
@@ -315,7 +317,7 @@ async def tick_project_batch_queue(
     )
 
     # Ưu tiên bước Poll cho các task đang RUNNING trước, sau đó mới Dispatch các task QUEUED theo slot trống
-    running_tasks = [t for t in active_tasks if t.state == QueueTaskState.RUNNING]
+    running_tasks = [t for t in active_tasks if t.state in PROVIDER_SLOT_TASK_STATES]
     queued_tasks = [t for t in active_tasks if t.state == QueueTaskState.QUEUED]
 
     stepped_results: list[dict[str, Any]] = []

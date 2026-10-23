@@ -79,6 +79,7 @@ def test_queue_task_state_and_enqueue_task_type_are_openapi_enums() -> None:
         "failed",
         "poll_timeout",
         "canceled",
+        "awaiting_input",
     }
 
     task_type_schema = components["EnqueueTaskIn"]["properties"]["task_type"]

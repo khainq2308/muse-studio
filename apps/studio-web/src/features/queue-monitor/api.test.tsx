@@ -30,7 +30,7 @@ vi.mock("@/lib/api/client", async (importOriginal) => ({
   apiPost: mocks.apiPost,
 }));
 
-import { useQueueTaskAction, useQueueTasks } from "@/features/queue-monitor/api";
+import { useQueueTaskAction, useQueueTaskReply, useQueueTasks } from "@/features/queue-monitor/api";
 import { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
 import { useSessionStore } from "@/lib/stores/session-store";
@@ -224,5 +224,93 @@ describe("Queue Monitor query hooks", () => {
     await waitFor(() => expect([...result.current.pendingTaskIds]).toEqual(["task-a"]));
     await act(async () => resolvers.get("task-a")?.({}));
     await waitFor(() => expect(result.current.pendingTaskIds.size).toBe(0));
+  });
+
+  it("posts a typed reply, tracks it as pending and refreshes the queue even on 409", async () => {
+    const actual = await vi.importActual<typeof ReactQuery>("@tanstack/react-query");
+    mocks.useMutation.mockImplementation(actual.useMutation);
+    mocks.useQueryClient.mockImplementation(actual.useQueryClient);
+    const queryClient = new actual.QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const sessionVersion = useSessionStore.getState().sessionVersion;
+
+    let resolvePost: (value: unknown) => void = () => undefined;
+    mocks.apiPost.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePost = resolve;
+      }),
+    );
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(actual.QueryClientProvider, { client: queryClient }, children);
+    const resetWindow = vi.fn();
+    const { result } = renderHook(() => useQueueTaskReply("project-a", resetWindow), { wrapper });
+
+    const onSuccess = vi.fn();
+    const onError = vi.fn();
+    act(() =>
+      result.current.mutate(
+        { taskId: "task-1", reply: { choice: "Anime" } },
+        { onSuccess, onError },
+      ),
+    );
+    await waitFor(() => expect([...result.current.pendingTaskIds]).toEqual(["task-1"]));
+    expect(mocks.apiPost).toHaveBeenCalledWith(
+      "/api/v1/queue/tasks/{task_id}/reply",
+      { choice: "Anime" },
+      { pathParams: { task_id: "task-1" } },
+    );
+
+    await act(async () => resolvePost({ id: "task-1", state: "running" }));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+    expect(onError).not.toHaveBeenCalled();
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.queueTasksPrefix(sessionVersion, "project-a"),
+    });
+    expect(resetWindow).toHaveBeenCalledTimes(1);
+
+    const conflict = new ApiError({
+      status: 409,
+      detail: "Task is not awaiting input.",
+      category: "input_not_pending",
+      retryable: false,
+    });
+    mocks.apiPost.mockRejectedValueOnce(conflict);
+    act(() =>
+      result.current.mutate({ taskId: "task-1", reply: { text: "Noir" } }, { onSuccess, onError }),
+    );
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(conflict));
+    expect(mocks.apiPost).toHaveBeenLastCalledWith(
+      "/api/v1/queue/tasks/{task_id}/reply",
+      { text: "Noir" },
+      { pathParams: { task_id: "task-1" } },
+    );
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.pendingTaskIds.size).toBe(0));
+  });
+
+  it("keeps polling while the awaiting-input filter has active project tasks", () => {
+    let options: QueryOptionsShape | undefined;
+    mocks.useQuery.mockImplementation((value: unknown) => {
+      options = value as QueryOptionsShape;
+      return {} as never;
+    });
+    renderHook(() => useQueueTasks("project-1", "awaiting_input", 0));
+
+    expect(
+      options?.refetchInterval({
+        state: {
+          data: { items: [{ state: "awaiting_input" }], summary: { active_tasks: 1 } },
+          status: "success",
+        },
+      }),
+    ).toBe(2_000);
+    expect(
+      options?.refetchInterval({
+        state: { data: { items: [], summary: { active_tasks: 0 } }, status: "success" },
+      }),
+    ).toBe(false);
   });
 });

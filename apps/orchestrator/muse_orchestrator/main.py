@@ -443,6 +443,7 @@ _PROVIDER_FAILURE_STATUS: dict[ErrorCategory, int] = {
     ErrorCategory.AUTH_FAILED: status.HTTP_502_BAD_GATEWAY,
     ErrorCategory.UPSTREAM_5XX: status.HTTP_502_BAD_GATEWAY,
     ErrorCategory.TRANSIENT_NETWORK: status.HTTP_502_BAD_GATEWAY,
+    ErrorCategory.INPUT_NOT_PENDING: status.HTTP_409_CONFLICT,
 }
 # The request may have reached the provider (read timeout / dropped connection after send).
 if hasattr(ErrorCategory, "DISPATCH_OUTCOME_UNKNOWN"):

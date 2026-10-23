@@ -19,7 +19,7 @@ from muse_orchestrator.models.domain import (
     GenerationDispatchLeaseRecord,
     GenerationTaskRecord,
     Project,
-    QueueTaskState,
+    ACTIVE_GENERATION_TASK_STATES,
     SceneRecord,
     ScriptRevision,
     ShotApprovalState,
@@ -43,7 +43,7 @@ from muse_orchestrator.services.script_parser import (
 
 # Tasks in these states still own the shot: recompiles must not rewrite its state and
 # destructive re-imports must not delete it.
-ACTIVE_TASK_STATES = frozenset({QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.PAUSED})
+ACTIVE_TASK_STATES = frozenset(ACTIVE_GENERATION_TASK_STATES)
 _DEFAULT_NEGATIVE_CONSTRAINTS = ["3d cgi"]
 
 

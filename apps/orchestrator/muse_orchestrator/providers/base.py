@@ -1,7 +1,7 @@
 from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
-from typing import Protocol, Any
+from typing import Protocol, Any, runtime_checkable
 
 
 class ErrorCategory(str, enum.Enum):
@@ -16,6 +16,11 @@ class ErrorCategory(str, enum.Enum):
     # (read timeout / connection drop after sending). Never retried automatically:
     # re-sending could create a second paid generation.
     DISPATCH_OUTCOME_UNKNOWN = "dispatch_outcome_unknown"
+    # An operator answer was sent but the provider task is not waiting for input
+    # (already answered elsewhere, timed out or finished). Not retryable.
+    INPUT_NOT_PENDING = "input_not_pending"
+    # The provider asked the operator a question and gave up waiting for an answer.
+    INPUT_TIMEOUT = "input_timeout"
 
 
 @dataclass
@@ -78,13 +83,27 @@ class ProviderTask:
     raw_response: dict[str, Any] = field(default_factory=dict)
 
 
+QUESTION_KINDS = frozenset({"question", "approval", "stalled"})
+QUESTION_TEXT_MAX_CHARS = 4000
+QUESTION_OPTIONS_MAX_ITEMS = 10
+QUESTION_OPTION_MAX_CHARS = 200
+ANSWER_TEXT_MAX_CHARS = 4000
+ANSWER_CHOICE_MAX_CHARS = 200
+
+
 @dataclass
 class ProviderTaskStatus:
     external_task_id: str
+    # queued | running | needs_input | succeeded | failed
     status: str
     result_media_url: str | None = None
     error_message: str | None = None
     account_used: str | None = None
+    # Machine-readable upstream error code of a failed task (e.g. "input_timeout").
+    error_code: str | None = None
+    # Validated question while status == "needs_input":
+    # {"kind": str, "text": str, "options": list[str], "asked_at": float | None}.
+    question: dict[str, Any] | None = None
 
 
 @dataclass
@@ -102,6 +121,17 @@ class VideoProvider(Protocol):
     async def generate_video(self, request: VideoGenerationRequest) -> ProviderTask: ...
     async def get_task(self, task_id: str) -> ProviderTaskStatus: ...
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia: ...
+
+
+@runtime_checkable
+class InteractiveProvider(Protocol):
+    """Optional capability: answer a question the provider asked the operator.
+
+    Kept separate from :class:`VideoProvider` so existing providers and test doubles
+    stay valid. ``answer`` is exactly one of ``{"text": str}`` or ``{"choice": str}``.
+    """
+
+    async def reply(self, task_id: str, answer: dict[str, str]) -> ProviderTaskStatus: ...
 
 
 def classify_http_error(status_code: int, body_text: str = "") -> ProviderFailure:

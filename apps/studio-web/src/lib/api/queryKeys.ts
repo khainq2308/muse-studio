@@ -9,4 +9,7 @@ export const queryKeys = {
   /** Mutation key for pause/resume/cancel actions, used to track every in-flight action. */
   queueTaskActions: (sessionVersion: number, projectId: string) =>
     ["queue-task-actions", sessionVersion, projectId] as const,
+  /** Mutation key for operator replies to awaiting-input tasks. */
+  queueTaskReplies: (sessionVersion: number, projectId: string) =>
+    ["queue-task-replies", sessionVersion, projectId] as const,
 };

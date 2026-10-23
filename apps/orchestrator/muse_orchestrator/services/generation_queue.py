@@ -26,11 +26,11 @@ from muse_orchestrator.core.security import vault
 from muse_orchestrator.models.domain import (
     ShotRecord, ShotGenerationState, ProviderConnection, ConnectionHealthState,
     GenerationTaskRecord, GenerationDispatchLeaseRecord, QueueTaskState, Asset, ShotTakeRecord,
-    ConnectionAccount,
+    ConnectionAccount, PROVIDER_SLOT_TASK_STATES,
 )
 from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
-    ProviderFailure, ErrorCategory, StoredMedia,
+    ProviderFailure, ErrorCategory, StoredMedia, ProviderTaskStatus, InteractiveProvider,
 )
 from muse_orchestrator.services.arq_dispatch import generation_step_token
 from muse_orchestrator.services.asset_storage import (
@@ -64,7 +64,17 @@ _TERMINAL_TASK_STATES = (
     QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
     QueueTaskState.FAILED, QueueTaskState.POLL_TIMEOUT,
 )
-_ACTIVE_TASK_STATES = (QueueTaskState.QUEUED, QueueTaskState.RUNNING)
+# Tasks that own the shot's current work (settle_shot_after_task_end).
+_ACTIVE_TASK_STATES = (QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.AWAITING_INPUT)
+
+# While the provider waits for an operator answer the task is polled at a fixed slow
+# cadence and those polls do not count against max_polls: the gateway enforces its own
+# input timeout (30 min) and then fails the task with error code "input_timeout".
+AWAITING_INPUT_POLL_SECONDS = 15.0
+# After an answer the provider resumes quickly; poll soon to pick up the new status.
+AFTER_REPLY_POLL_SECONDS = 2.0
+_GATEWAY_INPUT_TIMEOUT_CODE = "input_timeout"
+_HISTORY_TEXT_MAX_CHARS = 500
 
 # Dispatch/poll leases protect one in-flight provider call. Connection timeouts are
 # bounded to <=120s by the API, so a lease never exceeds this ceiling; the ARQ step
@@ -333,6 +343,26 @@ _FIRST_FRAME_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 class StaleGenerationStepJob(Exception):
     """An ARQ step job whose schedule token no longer matches the task row (superseded)."""
+
+
+class TaskNotFoundError(LookupError):
+    """The generation task does not exist."""
+
+
+class TaskNotAwaitingInputError(Exception):
+    """An operator answer was sent for a task that is not AWAITING_INPUT."""
+
+    def __init__(self, state: QueueTaskState) -> None:
+        super().__init__(f"Task is not waiting for operator input (state '{state.value}').")
+        self.state = state
+
+
+class TaskStateConflictError(Exception):
+    """The requested operation is not allowed in the task's current state."""
+
+
+class InvalidOperatorAnswerError(ValueError):
+    """The answer does not match the pending question (e.g. choice not in options)."""
 
 
 _UNSET: Any = object()
@@ -774,7 +804,7 @@ class GenerationQueueService:
         synced: ShotGenerationState | None = None
         if task.state == QueueTaskState.QUEUED:
             synced = ShotGenerationState.QUEUED
-        elif task.state == QueueTaskState.RUNNING:
+        elif task.state in PROVIDER_SLOT_TASK_STATES:
             synced = ShotGenerationState.RUNNING
         elif task.state == QueueTaskState.SUCCEEDED and shot.selected_take_id:
             synced = ShotGenerationState.SUCCEEDED
@@ -1259,7 +1289,9 @@ class GenerationQueueService:
             await db.execute(
                 select(func.count(GenerationTaskRecord.id)).where(
                     GenerationTaskRecord.connection_id == conn.id,
-                    GenerationTaskRecord.state == QueueTaskState.RUNNING,
+                    # A task waiting for operator input still holds its provider job
+                    # (a muse.ai tab), so it occupies a concurrency slot like RUNNING.
+                    GenerationTaskRecord.state.in_(PROVIDER_SLOT_TASK_STATES),
                     GenerationTaskRecord.id != task.id,
                 )
             )
@@ -1442,8 +1474,11 @@ class GenerationQueueService:
         raw_secret: str,
         lease_state: dict[str, bool],
     ) -> GenerationTaskRecord:
-        task.poll_count += 1
-        if task.poll_count > task.max_polls:
+        # Polls while waiting for the operator do not consume max_polls.
+        counted_poll = task.state != QueueTaskState.AWAITING_INPUT
+        if counted_poll:
+            task.poll_count += 1
+        if counted_poll and task.poll_count > task.max_polls:
             task.state = QueueTaskState.POLL_TIMEOUT
             task.error_category = ErrorCategory.UPSTREAM_POLL_TIMEOUT.value
             task.retryable = True
@@ -1484,6 +1519,22 @@ class GenerationQueueService:
         if p_status.account_used and not task.account_used:
             task.account_used = p_status.account_used
 
+        if p_status.status == "needs_input":
+            return await GenerationQueueService._mark_awaiting_input(
+                db, task, shot, p_status, raw_secret, counted_poll=counted_poll
+            )
+        if task.state == QueueTaskState.AWAITING_INPUT or task.pending_input_json is not None:
+            # Answered elsewhere (or the provider moved on): the question is no longer open.
+            task.state = QueueTaskState.RUNNING
+            task.pending_input_json = None
+            task.history_log = list(task.history_log or []) + [
+                f"Provider is no longer waiting for input (status={p_status.status})."
+            ]
+            if p_status.status not in ("queued", "running"):
+                # Persist before the (possibly long) download/failure handling, which
+                # refreshes the task from the database.
+                await db.commit()
+
         if p_status.status in ("queued", "running"):
             lease = await db.get(GenerationDispatchLeaseRecord, task.id)
             if lease is not None:
@@ -1502,7 +1553,11 @@ class GenerationQueueService:
             if lease is not None:
                 await db.delete(lease)
             task.state = QueueTaskState.FAILED
-            task.error_category = "upstream_generation_failed"
+            task.error_category = (
+                ErrorCategory.INPUT_TIMEOUT.value
+                if p_status.error_code == _GATEWAY_INPUT_TIMEOUT_CODE
+                else "upstream_generation_failed"
+            )
             task.retryable = False
             task.error_message_redacted = SecretRedactor.redact_text(p_status.error_message or "Upstream reported generation failed.", [raw_secret])
             task.finished_at = datetime.now(timezone.utc)
@@ -1539,6 +1594,192 @@ class GenerationQueueService:
         return await GenerationQueueService._finalize_media(
             db, task, shot, conn, stored, dest_dir, raw_secret
         )
+
+    @staticmethod
+    async def _mark_awaiting_input(
+        db: AsyncSession,
+        task: GenerationTaskRecord,
+        shot: ShotRecord,
+        p_status: ProviderTaskStatus,
+        raw_secret: str,
+        *,
+        counted_poll: bool,
+    ) -> GenerationTaskRecord:
+        """The provider asked the operator a question: keep the slot, poll slowly.
+
+        The task keeps its provider job, dispatch account and connection concurrency slot;
+        the shot stays RUNNING. The poll that discovered the question is not counted
+        against max_polls. A history entry is written only when the question changes.
+        """
+        lease = await db.get(GenerationDispatchLeaseRecord, task.id)
+        if lease is not None:
+            await db.delete(lease)
+        if counted_poll:
+            task.poll_count = max(0, task.poll_count - 1)
+        raw_question = p_status.question or {
+            "kind": "question", "text": "", "options": [], "asked_at": None,
+        }
+        question = {
+            "kind": raw_question.get("kind", "question"),
+            "text": SecretRedactor.redact_text(str(raw_question.get("text") or ""), [raw_secret]),
+            "options": list(raw_question.get("options") or []),
+            "asked_at": raw_question.get("asked_at"),
+        }
+        is_new_question = (
+            task.state != QueueTaskState.AWAITING_INPUT or task.pending_input_json != question
+        )
+        task.state = QueueTaskState.AWAITING_INPUT
+        task.pending_input_json = question
+        if shot.generation_state in (ShotGenerationState.QUEUED, ShotGenerationState.RUNNING):
+            shot.generation_state = ShotGenerationState.RUNNING
+        task.next_poll_delay_seconds = AWAITING_INPUT_POLL_SECONDS
+        # Always change the row so the follow-up ARQ job ID differs from the running job.
+        task.updated_at = datetime.now(timezone.utc)
+        if is_new_question:
+            preview = question["text"][:_HISTORY_TEXT_MAX_CHARS]
+            task.history_log = list(task.history_log or []) + [
+                f"Provider is waiting for operator input ({question['kind']}): {preview}"
+            ]
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def reply_to_task(
+        db: AsyncSession, task_id: str, answer: dict[str, str]
+    ) -> GenerationTaskRecord:
+        """Send the operator's answer to the provider question a task is waiting on.
+
+        ``answer`` is exactly one of ``{"text": ...}`` / ``{"choice": ...}`` (validated by
+        the API). Raises TaskNotFoundError, TaskNotAwaitingInputError,
+        InvalidOperatorAnswerError, or ProviderFailure (INPUT_NOT_PENDING when the
+        provider task is no longer waiting). On success the task is RUNNING again (or
+        still AWAITING_INPUT with the provider's follow-up question); the caller must
+        schedule the next step because the row version changed.
+        """
+        task = (
+            await db.execute(
+                select(GenerationTaskRecord)
+                .where(GenerationTaskRecord.id == task_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if task is None:
+            raise TaskNotFoundError(task_id)
+        if task.state != QueueTaskState.AWAITING_INPUT or not task.external_task_id:
+            state = task.state
+            await db.rollback()
+            raise TaskNotAwaitingInputError(state)
+        if "choice" in answer:
+            options = list((task.pending_input_json or {}).get("options") or [])
+            if answer["choice"] not in options:
+                await db.rollback()
+                raise InvalidOperatorAnswerError("choice must be one of the pending question's options.")
+
+        conn = await db.get(ProviderConnection, task.connection_id)
+        if conn is None:
+            await db.rollback()
+            raise TaskNotFoundError(task_id)
+        accounts = list((
+            await db.execute(
+                select(ConnectionAccount).where(ConnectionAccount.connection_id == conn.id)
+            )
+        ).scalars().all())
+        try:
+            # The answer must reach the account that owns the provider task.
+            account = resolve_task_account(accounts, task.account_id_used, True)
+        except LookupError as exc:
+            await db.rollback()
+            raise ProviderFailure(ErrorCategory.INVALID_REQUEST, str(exc), retryable=False) from exc
+        provider = build_provider(conn, account)
+        raw_secret = (
+            vault.decrypt(account.encrypted_api_key)
+            if account is not None
+            else vault.decrypt(conn.encrypted_api_key)
+        ) or ""
+        external_task_id = task.external_task_id
+        # Release the row lock before network I/O.
+        await db.commit()
+
+        if not isinstance(provider, InteractiveProvider):
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                "This provider does not support answering operator questions.",
+                retryable=False,
+            )
+        try:
+            p_status = await provider.reply(external_task_id, dict(answer))
+        except ProviderFailure as exc:
+            raise ProviderFailure(
+                exc.category,
+                SecretRedactor.redact_text(exc.message, [raw_secret]),
+                exc.http_status,
+                exc.retryable,
+            ) from exc
+
+        await db.refresh(task)
+        kind, value = next(iter(answer.items()))
+        answered = SecretRedactor.redact_text(value, [raw_secret])[:_HISTORY_TEXT_MAX_CHARS]
+        entry = f"Operator answered ({kind}): {answered}"
+        if task.state != QueueTaskState.AWAITING_INPUT:
+            # Canceled (or otherwise moved on) while the answer was in flight.
+            task.history_log = list(task.history_log or []) + [
+                f"{entry} (delivered after the local state changed to '{task.state.value}'; state preserved)."
+            ]
+        else:
+            task.history_log = list(task.history_log or []) + [entry]
+            follow_up = p_status.question if p_status.status == "needs_input" else None
+            if follow_up is not None and follow_up != task.pending_input_json:
+                task.pending_input_json = {
+                    **follow_up,
+                    "text": SecretRedactor.redact_text(str(follow_up.get("text") or ""), [raw_secret]),
+                }
+                task.next_poll_delay_seconds = AWAITING_INPUT_POLL_SECONDS
+                task.history_log = list(task.history_log) + [
+                    f"Provider asked a follow-up ({follow_up.get('kind')}): "
+                    f"{task.pending_input_json['text'][:_HISTORY_TEXT_MAX_CHARS]}"
+                ]
+            else:
+                task.state = QueueTaskState.RUNNING
+                task.pending_input_json = None
+                task.next_poll_delay_seconds = AFTER_REPLY_POLL_SECONDS
+        task.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def cancel_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
+        """Cancel a non-terminal task locally (QUEUED/RUNNING/PAUSED/AWAITING_INPUT).
+
+        Raises TaskNotFoundError, or TaskStateConflictError for a terminal task. The provider job is not contacted; a pending provider question
+        simply times out upstream.
+        """
+        task = await db.get(GenerationTaskRecord, task_id)
+        if task is None:
+            raise TaskNotFoundError(task_id)
+        if task.state in (
+            QueueTaskState.SUCCEEDED,
+            QueueTaskState.FAILED,
+            QueueTaskState.CANCELED,
+            QueueTaskState.POLL_TIMEOUT,
+        ):
+            raise TaskStateConflictError(f"Cannot cancel a task in terminal state '{task.state.value}'.")
+        task.state = QueueTaskState.CANCELED
+        task.pending_input_json = None
+        task.finished_at = datetime.now(timezone.utc)
+        shot = await db.get(ShotRecord, task.shot_id)
+        if shot is not None:
+            # A stale/extra task must not downgrade a shot that has newer active work or
+            # an already selected take.
+            await GenerationQueueService.settle_shot_after_task_end(
+                db, task, shot, ShotGenerationState.CANCELED
+            )
+        task.history_log = list(task.history_log or []) + ["Canceled by operator."]
+        await db.commit()
+        await db.refresh(task)
+        return task
 
     @staticmethod
     async def _finalize_media(
