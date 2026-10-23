@@ -631,7 +631,8 @@ def test_cancel_running_task_stops_the_worker_chain(stack: Stack) -> None:
     final = stack.task(project_id, task["id"])
     assert final["state"] == "canceled"
     assert final["result_asset_id"] is None and final["take_id"] is None
-    assert final["history_log"][-1] == "Canceled by operator."
+    # Builds that propagate cancel to the provider append a "Provider cancel: ..." entry after it.
+    assert "Canceled by operator." in final["history_log"]
     assert stack.gateway.polls(running["external_task_id"]) == 0
     assert stack.step_jobs(task["id"]) == {}
     assert stack.api.get(f"/api/v1/queue/shots/{shots[0]}/takes").json() == []
