@@ -356,7 +356,13 @@ async def _verify_downloaded_artifact(path: str, task_type: str, provider_type: 
 
 
 _FIRST_FRAME_MAX_BYTES = 20 * 1024 * 1024
+# muse2api accepts at most four reference images per request.
+_MAX_REFERENCE_IMAGES = 4
 _FIRST_FRAME_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+
+
+class IdempotencyKeyConflictError(ValueError):
+    """A client idempotency key was reused for a different generation request."""
 
 
 class StaleGenerationStepJob(Exception):
@@ -504,6 +510,46 @@ class GenerationQueueService:
             )
         encoded = base64.b64encode(content).decode("ascii")
         return f"data:{asset.mime_type};base64,{encoded}"
+
+    @staticmethod
+    async def load_reference_data_uris(db: AsyncSession, shot: Any) -> list[str]:
+        """Load the shot's reference images as validated data URIs (same checks as frames).
+
+        At most ``_MAX_REFERENCE_IMAGES`` images and ``_FIRST_FRAME_MAX_BYTES`` in total;
+        a missing, foreign, non-image or corrupt reference fails the dispatch closed.
+        """
+        asset_ids = [a for a in (shot.reference_asset_ids or []) if a]
+        if not asset_ids:
+            return []
+        if len(asset_ids) > _MAX_REFERENCE_IMAGES:
+            raise ProviderFailure(
+                ErrorCategory.INVALID_REQUEST,
+                f"A shot can send at most {_MAX_REFERENCE_IMAGES} reference images to the provider.",
+                retryable=False,
+            )
+        uris: list[str] = []
+        total = 0
+        for asset_id in asset_ids:
+            try:
+                uri = await GenerationQueueService.load_first_frame_data_uri(db, shot, asset_id=asset_id)
+            except ProviderFailure as exc:
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    f"Reference image {asset_id} cannot be sent: "
+                    + exc.message.replace("First-frame asset", "the asset"),
+                    retryable=False,
+                ) from exc
+            if uri is None:
+                continue
+            total += (len(uri) * 3) // 4
+            if total > _FIRST_FRAME_MAX_BYTES:
+                raise ProviderFailure(
+                    ErrorCategory.INVALID_REQUEST,
+                    "Reference images exceed the 20 MiB provider handoff limit in total.",
+                    retryable=False,
+                )
+            uris.append(uri)
+        return uris
 
     @staticmethod
     async def resolve_conditioning_frame(db: AsyncSession, shot: ShotRecord) -> ConditioningFrame:
@@ -878,8 +924,10 @@ class GenerationQueueService:
             shot.first_frame_asset_id = conditioning.asset_id
 
         frame_chain_seed = conditioning.asset_id or "no_first_frame"
+        # The connection is part of the request identity: the same prompt on another
+        # provider is a different generation, not a cached result.
         computed_idem = idempotency_key or hashlib.sha256(
-            f"{shot.id}:{task_type}:{model_id}:{shot.prompt_hash}:{frame_chain_seed}".encode("utf-8")
+            f"{shot.id}:{task_type}:{model_id}:{conn.id}:{shot.prompt_hash}:{frame_chain_seed}".encode("utf-8")
         ).hexdigest()[:32]
 
         existing = (
@@ -887,6 +935,20 @@ class GenerationQueueService:
                 select(GenerationTaskRecord).where(GenerationTaskRecord.idempotency_key == computed_idem)
             )
         ).scalar_one_or_none()
+
+        if existing is not None and (
+            existing.shot_id != shot.id
+            or existing.project_id != shot.project_id
+            or existing.task_type != task_type
+            or existing.connection_id != conn.id
+        ):
+            # A client-supplied key is unique across the whole database; never hand back
+            # (or sync this shot with) a task that belongs to a different request.
+            await db.rollback()
+            raise IdempotencyKeyConflictError(
+                "idempotency_key is already used by a different generation request "
+                "(another shot, task type or connection)."
+            )
 
         if existing is not None and not force_retry:
             # Strict idempotency: the same key returns the same (finished) task. A new
@@ -1082,6 +1144,24 @@ class GenerationQueueService:
         await GenerationQueueService._handle_cancelled_step(db, task_id, outcome_unknown=False)
 
     @staticmethod
+    async def _fail_dispatch_outcome_unknown(
+        db: AsyncSession, task: GenerationTaskRecord, reason: str
+    ) -> GenerationTaskRecord:
+        """Fail a task whose dispatch may have reached the provider (non-retryable)."""
+        task.state = QueueTaskState.FAILED
+        task.error_category = ErrorCategory.DISPATCH_OUTCOME_UNKNOWN.value
+        task.retryable = False
+        task.error_message_redacted = DISPATCH_OUTCOME_UNKNOWN_MESSAGE
+        task.finished_at = datetime.now(timezone.utc)
+        task.history_log = list(task.history_log or []) + [f"{reason} {DISPATCH_OUTCOME_UNKNOWN_MESSAGE}"]
+        shot = await db.get(ShotRecord, task.shot_id)
+        if shot is not None:
+            await GenerationQueueService.settle_shot_after_task_end(db, task, shot, ShotGenerationState.FAILED)
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
     async def _handle_cancelled_step(db: AsyncSession, task_id: str, *, outcome_unknown: bool) -> None:
         try:
             try:
@@ -1168,6 +1248,13 @@ class GenerationQueueService:
                 return task
             await db.delete(lease)
             await db.flush()
+            if not task.external_task_id:
+                # Only dispatch takes a lease before a task has an external id. An expired
+                # one means the process died mid-dispatch (hard kill, OOM, host loss) after
+                # the provider request may have been sent: never re-send it automatically.
+                return await GenerationQueueService._fail_dispatch_outcome_unknown(
+                    db, task, "Dispatch lease expired without a provider task id (worker died mid-dispatch)."
+                )
 
         # Polling an existing task does not consume a new slot. Lock only for dispatch reservation.
         if task.external_task_id:
@@ -1347,6 +1434,17 @@ class GenerationQueueService:
 
         dispatch_markers: list[str] = []
         try:
+            # Reference images are sent only where the provider has a field for them;
+            # otherwise the history says so instead of implying they were applied.
+            references: list[str] = []
+            if shot.reference_asset_ids:
+                if task.task_type == "video" and not getattr(provider, "supports_video_references", True):
+                    dispatch_markers.append(
+                        "Reference images not sent: this provider payload has no video reference field."
+                    )
+                else:
+                    references = await GenerationQueueService.load_reference_data_uris(db, shot)
+                    dispatch_markers.append(f"Reference images sent: {len(references)}.")
             if task.task_type == "image":
                 lease_state["dispatch_in_flight"] = True
                 p_task = await provider.generate_image(
@@ -1356,6 +1454,7 @@ class GenerationQueueService:
                         negative_prompt=task.negative_prompt_snapshot,
                         model_id=task.model_id,
                         aspect_ratio=aspect_ratio,
+                        reference_image_urls=references,
                         idempotency_key=task.idempotency_key,
                     )
                 )
@@ -1376,6 +1475,7 @@ class GenerationQueueService:
                         duration_seconds=duration_seconds,
                         aspect_ratio=aspect_ratio,
                         first_frame_url=first_frame_data_uri,
+                        reference_image_urls=references,
                         idempotency_key=task.idempotency_key,
                     )
                 )
@@ -1638,7 +1738,10 @@ class GenerationQueueService:
         question = {
             "kind": raw_question.get("kind", "question"),
             "text": SecretRedactor.redact_text(str(raw_question.get("text") or ""), [raw_secret]),
-            "options": list(raw_question.get("options") or []),
+            "options": [
+                SecretRedactor.redact_text(str(option), [raw_secret])
+                for option in (raw_question.get("options") or [])
+            ],
             "asked_at": raw_question.get("asked_at"),
         }
         is_new_question = (
@@ -1765,6 +1868,10 @@ class GenerationQueueService:
                 task.pending_input_json = {
                     **follow_up,
                     "text": SecretRedactor.redact_text(str(follow_up.get("text") or ""), [raw_secret]),
+                    "options": [
+                        SecretRedactor.redact_text(str(option), [raw_secret])
+                        for option in (follow_up.get("options") or [])
+                    ],
                 }
                 task.next_poll_delay_seconds = AWAITING_INPUT_POLL_SECONDS
                 task.history_log = list(task.history_log) + [
@@ -1969,6 +2076,14 @@ class GenerationQueueService:
         ).scalar_one()
         take_num = (int(latest_max_take_num) if latest_max_take_num is not None else 0) + 1
         is_first_take = latest_max_take_num is None
+        # Propagation skips shots with an active task, so the upstream selection may have
+        # changed while this provider job ran. Output rendered on a superseded frame is
+        # kept as a take but must not count as this shot's continuity.
+        stale_conditioning: ConditioningFrame | None = None
+        if task.task_type == "video" and shot.continuity_mode == "frame_chain" and shot.previous_shot_id:
+            current = await resolve_conditioning_frame(db, shot)
+            if current.missing or current.asset_id != conditioning_first_frame_of(task):
+                stale_conditioning = current
 
         asset_id = f"ast_{uuid.uuid4().hex[:10]}"
         db.add(Asset(
@@ -2031,7 +2146,7 @@ class GenerationQueueService:
             model_id=task.model_id,
             prompt_hash=task.prompt_hash,
             account_used=task.account_used,
-            is_selected=is_first_take,
+            is_selected=is_first_take and stale_conditioning is None,
         )
         if not await _insert_take_with_number_retry(db, take):
             _unlink_quietly(stored.local_path, *(frame.path for frame in boundary_artifacts))
@@ -2051,7 +2166,6 @@ class GenerationQueueService:
             # shot.first_frame_asset_id is reserved for the conditioning input.
             shot.last_frame_asset_id = last_frame_aid
 
-        shot.generation_state = ShotGenerationState.SUCCEEDED
         task.result_asset_id = asset_id
         task.take_id = take_id
         task.state = QueueTaskState.SUCCEEDED
@@ -2059,6 +2173,20 @@ class GenerationQueueService:
         task.history_log = list(task.history_log or []) + [
             f"Completed! Saved asset={asset_id}, take={take_id}, last_frame={last_frame_aid}."
         ]
+        if stale_conditioning is None:
+            shot.generation_state = ShotGenerationState.SUCCEEDED
+        else:
+            if stale_conditioning.missing:
+                shot.generation_state = ShotGenerationState.BLOCKED_UPSTREAM_FRAME
+            else:
+                shot.generation_state = ShotGenerationState.NOT_STARTED
+                if stale_conditioning.source == "upstream":
+                    shot.first_frame_asset_id = stale_conditioning.asset_id
+            task.history_log = list(task.history_log) + [
+                f"Stale continuity: rendered on first_frame={conditioning_first_frame_of(task)}, but the "
+                f"upstream selection now yields {stale_conditioning.asset_id}. The take was kept but not "
+                "selected; re-enqueue to render on the current frame."
+            ]
 
         lease = await db.get(GenerationDispatchLeaseRecord, task.id)
         if lease is not None:

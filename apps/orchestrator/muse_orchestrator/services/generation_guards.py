@@ -156,15 +156,18 @@ async def upstream_selected_last_frame(
 ) -> str | None:
     """The validated last frame of the upstream shot's *selected* take, or None.
 
-    Legacy rows without a selected take fall back to ``upstream.last_frame_asset_id``.
+    Legacy rows without a selected take fall back to ``upstream.last_frame_asset_id``; a
+    selected take that does not resolve to one of the upstream's takes yields None.
     """
     if upstream is None or upstream.project_id != shot.project_id:
         return None
     frame_id = upstream.last_frame_asset_id
     if upstream.selected_take_id:
         take = await db.get(ShotTakeRecord, upstream.selected_take_id)
-        if take is not None and take.shot_id == upstream.id:
-            frame_id = take.last_frame_asset_id
+        if take is None or take.shot_id != upstream.id:
+            # A dangling selection must not fall back to a frame from an older selection.
+            return None
+        frame_id = take.last_frame_asset_id
     if not await _valid_project_asset(db, frame_id, shot.project_id):
         return None
     return frame_id

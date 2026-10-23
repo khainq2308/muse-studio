@@ -197,6 +197,7 @@ async def launch_batch_render(
                 if (
                     not conditioning.missing
                     and sel_task is not None
+                    and sel_task.connection_id == conn.id
                     and conditioning_first_frame_of(sel_task) == conditioning.asset_id
                 ):
                     skipped_shot_ids.append(s.id)
