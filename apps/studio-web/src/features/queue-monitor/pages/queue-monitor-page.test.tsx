@@ -53,7 +53,7 @@ function makePage(overrides: Partial<QueueTaskPage> = {}): QueueTaskPage {
     limit: 50,
     offset: 0,
     has_more: false,
-    summary: { total_tasks: 1, active_tasks: 1, failed_tasks: 0 },
+    summary: { total_tasks: 1, active_tasks: 1, failed_tasks: 0, awaiting_input_tasks: 0 },
     ...overrides,
   };
 }
@@ -128,7 +128,7 @@ describe("QueueMonitorPage", () => {
         data: makePage({
           total: 65,
           has_more: true,
-          summary: { total_tasks: 80, active_tasks: 12, failed_tasks: 4 },
+          summary: { total_tasks: 80, active_tasks: 12, failed_tasks: 4, awaiting_input_tasks: 0 },
         }),
       },
     });
@@ -311,23 +311,52 @@ describe("QueueMonitorPage", () => {
     function setupAwaiting(items: QueueTask[] = [makeAwaitingTask(), makeTask()]) {
       const reply = makeReplyMutation();
       mocks.useQueueTaskReply.mockReturnValue(reply);
-      const result = setup({ query: { data: makePage({ items, total: items.length }) } });
+      const awaiting = items.filter((task) => task.state === "awaiting_input").length;
+      const result = setup({
+        query: {
+          data: makePage({
+            items,
+            total: items.length,
+            summary: {
+              total_tasks: items.length,
+              active_tasks: items.length,
+              failed_tasks: 0,
+              awaiting_input_tasks: awaiting,
+            },
+          }),
+        },
+      });
       return { ...result, reply };
     }
 
-    it("counts tasks awaiting input on the page and offers the awaiting filter", () => {
+    it("shows the project-wide awaiting count and offers the awaiting filter", () => {
       setupAwaiting();
       render(<QueueMonitorPage projectId="project-1" />);
 
       expect(screen.getByTestId("queue-awaiting-input-banner")).toHaveTextContent(
-        "1 task on this page is waiting for your answer.",
+        "1 task in this project is waiting for your answer.",
       );
       fireEvent.click(screen.getByRole("button", { name: "Show only awaiting input" }));
       expect(mocks.useQueueTasks).toHaveBeenLastCalledWith("project-1", "awaiting_input", 0);
       expect(screen.getByLabelText("Filter by state")).toHaveValue("awaiting_input");
     });
 
-    it("hides the banner when no task on the page awaits input", () => {
+    it("counts awaiting tasks that are not on the current page", () => {
+      setup({
+        query: {
+          data: makePage({
+            summary: { total_tasks: 4, active_tasks: 3, failed_tasks: 0, awaiting_input_tasks: 2 },
+          }),
+        },
+      });
+      render(<QueueMonitorPage projectId="project-1" />);
+
+      expect(screen.getByTestId("queue-awaiting-input-banner")).toHaveTextContent(
+        "2 tasks in this project are waiting for your answer.",
+      );
+    });
+
+    it("hides the banner when no task in the project awaits input", () => {
       setup();
       render(<QueueMonitorPage projectId="project-1" />);
       expect(screen.queryByTestId("queue-awaiting-input-banner")).toBeNull();

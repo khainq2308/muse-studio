@@ -2098,10 +2098,15 @@ export interface components {
          * @enum {string}
          */
         QueueTaskState: "queued" | "paused" | "running" | "succeeded" | "failed" | "poll_timeout" | "canceled" | "awaiting_input";
-        /** QueueTaskSummaryOut */
+        /**
+         * QueueTaskSummaryOut
+         * @description Project-wide totals, independent of the state filter and page being viewed.
+         */
         QueueTaskSummaryOut: {
             /** Active Tasks */
             active_tasks: number;
+            /** Awaiting Input Tasks */
+            awaiting_input_tasks: number;
             /** Failed Tasks */
             failed_tasks: number;
             /** Total Tasks */

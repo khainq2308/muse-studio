@@ -71,7 +71,7 @@ describe("Queue Monitor query hooks", () => {
       limit: QUEUE_TASKS_PAGE_SIZE,
       offset: 100,
       has_more: false,
-      summary: { total_tasks: 0, active_tasks: 0, failed_tasks: 0 },
+      summary: { total_tasks: 0, active_tasks: 0, failed_tasks: 0, awaiting_input_tasks: 0 },
     });
 
     const initialProps: { projectId: string; stateFilter: QueueTaskFilter; offset: number } = {
