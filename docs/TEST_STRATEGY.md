@@ -49,12 +49,19 @@ Unit test cho `muse_media` với subprocess được mock. Integration thật v�
 - `pip-audit` trên dependency production đã khoá của orchestrator (blocking trong CI; không gồm dev extras và package local `muse-media`).
 - `npm audit --omit=dev --audit-level=high` cho dependency production của frontend.
 
+## Redis/ARQ end-to-end (`tests/test_arq_e2e.py`, job CI `arq-e2e`)
+
+- **Chạy khi:** có `TEST_REDIS_URL` (`redis://host:port/db`, database phải rỗng; module flush nó khi xong). Không có thì skip; `REQUIRE_ARQ_E2E=1` (CI) thì fail thay vì skip, và CI còn fail nếu JUnit có test bị skip.
+- **Dựng gì:** hai tiến trình thật giống Compose — `uvicorn muse_orchestrator.main:app` và `arq muse_orchestrator.workers.queue_worker.WorkerSettings` — dùng chung một file SQLite migrate bằng `alembic upgrade head` và một Redis thật. Provider là connection `mock`, hoặc connection `muse2api` trỏ tới một gateway HTTP giả trong tiến trình test (adapter thật chạy qua HTTP thật). Không patch nội bộ worker; chỉ quan sát qua API công khai, log request của gateway giả và key ARQ trong Redis.
+- **Chứng minh:** enqueue qua `POST /api/v1/queue/tasks` → worker dispatch, poll, lưu take/asset (mock video và adapter muse2api ảnh); step thủ công làm job đã lên lịch thành stale, không tách chuỗi (schedule token); huỷ task RUNNING thì job còn lại không poll nữa; `needs_input` → `AWAITING_INPUT` → `POST /reply` → hoàn thành; job bị mất khỏi Redis được cron recovery thật (giây 0 mỗi phút) lên lịch lại với cùng job id.
+- **Giới hạn:** SQLite thay vì PostgreSQL, một worker, không kill/restart worker giữa task, gateway giả thay cho muse2api thật (lần chạy với muse.ai thật xem docs/evidence/m4/2026-10-23-real-arq-worker.md).
+
 ## Không được bao phủ
 
-`.github/workflows/ci.yml` chạy PostgreSQL thật chỉ trong job `postgres-integration` (xem mục PostgreSQL integration ở trên) và không có job nào chạy Redis thật. Các hạng mục sau **chưa có bằng chứng tự động**:
+`.github/workflows/ci.yml` chạy PostgreSQL thật chỉ trong job `postgres-integration` (xem mục PostgreSQL integration ở trên) và Redis/ARQ thật chỉ trong job `arq-e2e` (xem mục Redis/ARQ end-to-end ở trên). Các hạng mục sau **chưa có bằng chứng tự động**:
 
 - PostgreSQL ngoài các kịch bản trong `test_postgres_integration.py`: nhiều tiến trình worker/API thật cạnh tranh nhau, tải lớn, migration trên bản sao dữ liệu production và các interleaving race chưa được viết thành test. Mapping lỗi 22xxx → 422 hiện **sai** trên PostgreSQL (bug đã biết ở trên).
-- Redis/ARQ thật: lập lịch, dedupe job id, cron recovery và huỷ job trong một worker thật.
+- Redis/ARQ ngoài các kịch bản trong `test_arq_e2e.py`: worker bị kill giữa chừng rồi khởi động lại, nhiều worker song song, worker thật trên PostgreSQL (job `arq-e2e` dùng SQLite), Redis mất kết nối giữa chừng.
 - Provider muse2api thật, kể cả first-frame conditioning (xem [MUSE2API_CAPABILITY_MATRIX.md](MUSE2API_CAPABILITY_MATRIX.md) và [FRAME_CHAIN_PROVIDER_CONTRACT.md](FRAME_CHAIN_PROVIDER_CONTRACT.md)).
 - Kiểm tra trực quan giao diện; ảnh chụp Queue Monitor do CI upload chỉ là artifact tham khảo.
 - Backup tạo trên một deployment và restore trên deployment khác.

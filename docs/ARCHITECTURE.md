@@ -90,7 +90,7 @@ Generation tasks are persisted rows; Redis/ARQ only schedules work.
 - A disabled connection never receives a new dispatch (task FAILED `connection_disabled`); already-dispatched tasks keep polling so a paid result is still collected.
 - **Operator questions (needs-input):** when the gateway reports `needs_input`, the task becomes `AWAITING_INPUT` with the question in `pending_input_json` and is polled every 15 s without consuming `max_polls`; it keeps its shot slot and a connection concurrency slot, and the shot stays RUNNING. `POST /api/v1/queue/tasks/{id}/reply` forwards the answer and schedules the next step; the gateway's own 30-minute input timeout fails the task with `error_category = input_timeout`. Details in [FRAME_CHAIN_PROVIDER_CONTRACT.md](FRAME_CHAIN_PROVIDER_CONTRACT.md#operator-questions-needs-input).
 
-These behaviors are covered by SQLite-backed tests with fake Redis pools, and the row-lock, partial-unique-index and lease races are additionally exercised against real PostgreSQL in the `postgres-integration` CI job. Real Redis/ARQ and a real provider are not exercised in CI (see [TEST_STRATEGY.md](TEST_STRATEGY.md)); M4 remains partial in the implementation plan until that end-to-end evidence exists.
+These behaviors are covered by SQLite-backed tests with fake Redis pools, and the row-lock, partial-unique-index and lease races are additionally exercised against real PostgreSQL in the `postgres-integration` CI job. The `arq-e2e` CI job runs the API and the ARQ worker as separate processes against a real Redis (`tests/test_arq_e2e.py`: enqueue → dispatch → poll → take, schedule-token dedupe, cancel, needs-input reply, recovery cron for a lost job); a real provider is not exercised in CI (see [TEST_STRATEGY.md](TEST_STRATEGY.md) and docs/evidence/m4/2026-10-23-real-arq-worker.md for a manual run against muse.ai).
 
 ## Timeline export
 
@@ -139,4 +139,4 @@ The M3 workflow API validates typed DAGs, builds deterministic execution plans, 
 - **media-engine-tests:** media-engine unit tests (subprocess calls are mocked).
 - **frontend-build:** `npm ci`, `npm audit --omit=dev --audit-level=high`, lint, format check, Vitest, production build, Playwright against the production preview with a mocked API.
 
-CI runs PostgreSQL only in the `postgres-integration` job; it does not run Redis/ARQ (the queue is driven by direct `step_task` calls and a fake pool) and does not contact a real muse2api provider; passing mocks do not verify external provider capabilities.
+CI runs PostgreSQL only in the `postgres-integration` job and Redis/ARQ only in the `arq-e2e` job (elsewhere the queue is driven by direct `step_task` calls and a fake pool); it does not contact a real muse2api provider; passing mocks do not verify external provider capabilities.
