@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -13,7 +13,22 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => mocks.params,
-  Link: ({ children }: { children: unknown }) => <a href="/">{children as string}</a>,
+  Link: ({
+    children,
+    params,
+    "aria-current": ariaCurrent,
+  }: {
+    children: unknown;
+    params?: { projectId: string; module: string };
+    "aria-current"?: "page";
+  }) => (
+    <a
+      href={params ? `/projects/${params.projectId}/${params.module}` : "/"}
+      aria-current={ariaCurrent}
+    >
+      {children as string}
+    </a>
+  ),
 }));
 
 vi.mock("@/entities/project/api", () => ({
@@ -31,6 +46,12 @@ vi.mock("@/features/queue-monitor", async () => {
     },
   };
 });
+
+vi.mock("@/features/shot-board", () => ({
+  default: function ShotBoardStub({ projectId }: { projectId: string }) {
+    return <div data-testid="shot-board-stub">{projectId}</div>;
+  },
+}));
 
 import ProjectModuleRoute from "@/app/project-module-route";
 
@@ -54,6 +75,21 @@ describe("ProjectModuleRoute", () => {
 
     expect(getByTestId("queue-stub").textContent).toBe("project-b");
     expect(mocks.mounts).toEqual(["project-a", "project-b"]);
+  });
+
+  it("renders the Shot Board module with project navigation marking the active module", () => {
+    mocks.params = { projectId: "project-a", module: "shot-board" };
+    render(<ProjectModuleRoute />);
+
+    expect(screen.getByTestId("shot-board-stub").textContent).toBe("project-a");
+    expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Project modules" });
+    const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
+    const queue = within(nav).getByRole("link", { name: "Queue Monitor" });
+    expect(shotBoard).toHaveAttribute("aria-current", "page");
+    expect(shotBoard).toHaveAttribute("href", "/projects/project-a/shot-board");
+    expect(queue).not.toHaveAttribute("aria-current");
+    expect(queue).toHaveAttribute("href", "/projects/project-a/queue-monitor");
   });
 
   it("shows a not-found page instead of an empty module for an unknown project", () => {
