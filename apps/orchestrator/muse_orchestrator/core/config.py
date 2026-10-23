@@ -173,8 +173,15 @@ _SECRET_KEY_NAMES = (
     r"|secret[-_]?key|password|passwd|secret|token"
 )
 
+# An unquoted value may contain spaces ("password=my secret value, user=bob"): it runs up
+# to the next field delimiter (, ; & } quote or line break), never just to the first space.
+# The value is one non-space character followed by a single greedy star with nothing
+# after it, so a match attempt never backtracks into the value (linear). An apostrophe
+# ends it here; SecretRedactor._redact_key_values then extends a sensitive bare value
+# past it up to the field delimiter.
 _KEY_NAME_PATTERN = re.compile(
-    r"(?i)([\"']?\b(?:" + _SECRET_KEY_NAMES + r")[\"']?\s*[:=]\s*[\"']?)[^\s,'\"}&]+"
+    r"(?i)([\"']?\b(?:" + _SECRET_KEY_NAMES + r")[\"']?\s*[:=]\s*[\"']?)"
+    r"[^\s,'\"}&;][^,'\"}&;\r\n]*"
 )
 
 # Every pattern below is anchored on a literal keyword and uses only non-overlapping
@@ -219,6 +226,10 @@ _KEY_VALUE_PATTERN = re.compile(
     r"(\"(?:[^\"\\\r\n]|\\.)*\"|'(?:[^'\\\r\n]|\\.)*'|[^\s,'\"}&;]+|[\"'][^\r\n]*)"
 )
 _REDACTION_MARKERS = frozenset({"[REDACTED]", "[REDACTED_COOKIE]", "[REDACTED_PROXY_CRED]"})
+# End of an unquoted value under a sensitive key: the next field delimiter. An apostrophe
+# does not end it ("password=it's my secret" is hidden whole); a double quote does, so
+# a value embedded in a JSON string keeps the closing quote.
+_FIELD_END_PATTERN = re.compile(r"[,;&}\"\r\n]")
 
 # Proxy/provider URLs with userinfo. The scheme is located with a fixed alternation and
 # the rest of the whitespace-delimited token is parsed with str methods, so the work is
@@ -320,21 +331,50 @@ class SecretRedactor:
         sanitized = _redact_url_userinfo(sanitized)
         for pattern, replacement in _SENSITIVE_PATTERNS:
             sanitized = pattern.sub(replacement, sanitized)
-        return _KEY_VALUE_PATTERN.sub(SecretRedactor._redact_key_value_match, sanitized)
+        return SecretRedactor._redact_key_values(sanitized)
 
     @staticmethod
-    def _redact_key_value_match(match: re.Match[str]) -> str:
+    def _redact_key_values(text: str) -> str:
+        """Apply _KEY_VALUE_PATTERN left to right; a sensitive bare value may extend the match.
+
+        Linear: every search resumes at or after the end of the previous match, and the
+        extension of a sensitive bare value is one scan for the next field delimiter over
+        text that is then consumed (never scanned again).
+        """
+        parts: list[str] = []
+        cursor = 0
+        while (match := _KEY_VALUE_PATTERN.search(text, cursor)) is not None:
+            replacement, end = SecretRedactor._redact_key_value_match(match, text)
+            parts.append(text[cursor : match.start()])
+            parts.append(replacement)
+            cursor = end
+        parts.append(text[cursor:])
+        return "".join(parts)
+
+    @staticmethod
+    def _redact_key_value_match(match: re.Match[str], text: str) -> tuple[str, int]:
+        """Return the replacement for ``match`` and the index where scanning resumes."""
         key, value = match.group(2), match.group(4)
+        whole = match.group(0)
         if not SecretRedactor.is_sensitive_key(key):
-            return match.group(0)
+            return whole, match.end()
         if SecretRedactor._is_proxy_key(key) and "://" in value:
-            return match.group(0)  # userinfo was already stripped by _redact_url_userinfo
+            return whole, match.end()  # userinfo was already stripped by _redact_url_userinfo
+        quote = value[0] if value[:1] in ("\"", "'") else ""
+        prefix = whole[: match.start(4) - match.start(0)]
+        if not quote:
+            # A bare value runs to the next field delimiter, spaces included, so
+            # "password=my secret value, user=bob" never leaks "secret value".
+            field_end = _FIELD_END_PATTERN.search(text, match.end())
+            end = field_end.start() if field_end is not None else len(text)
+            if value in _REDACTION_MARKERS:
+                return whole, end
+            return prefix + "[REDACTED]", end
         if value.strip("\"'") in _REDACTION_MARKERS:
             # Fully redacted by an earlier pattern. A partial "[REDACTED] rest" (an earlier
-            # pattern stopped at a space or delimiter) is redacted again as a whole.
-            return match.group(0)
-        quote = value[0] if value[:1] in ("\"", "'") else ""
-        return match.group(0)[: match.start(4) - match.start(0)] + f"{quote}[REDACTED]{quote}"
+            # pattern stopped at a delimiter) is redacted again as a whole.
+            return whole, match.end()
+        return prefix + f"{quote}[REDACTED]{quote}", match.end()
 
     @staticmethod
     def redact_credentials(text: str, explicit_secrets: list[str] | None = None) -> str:

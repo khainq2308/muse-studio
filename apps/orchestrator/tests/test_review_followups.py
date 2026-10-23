@@ -5,6 +5,7 @@ owner tokens, redaction of unquoted values with spaces and Shot Board take API g
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import pytest
 from httpx import AsyncClient
 
 from muse_orchestrator.application import queue_service
-from muse_orchestrator.core.config import settings
+from muse_orchestrator.core.config import SecretRedactor, settings
 from muse_orchestrator.models.domain import (
     Asset,
     ExportJobRecord,
@@ -317,3 +318,66 @@ async def test_release_owned_lease_only_matches_the_owner_token(client: AsyncCli
         await generation_queue.release_owned_lease(db, tid, "mine")
         await db.commit()
     assert await _lease_token(tid) is None
+
+
+# --- 3. Redaction of unquoted values containing spaces ---------------------------------------
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("password=my secret value, user=bob", "password=[REDACTED], user=bob"),
+    ("password=my secret value; user=bob", "password=[REDACTED]; user=bob"),
+    ("password=my secret value & user=bob", "password=[REDACTED]& user=bob"),
+    ("password: my secret value\nuser: bob", "password: [REDACTED]\nuser: bob"),
+    ("{password=my secret value}", "{password=[REDACTED]}"),
+    ("password=my secret value", "password=[REDACTED]"),
+    # Keys only known to is_sensitive_key (not to the key-name pattern).
+    ("user=bob pwd=hunter two, next=1", "user=bob pwd=[REDACTED], next=1"),
+    ("secret_pin=12 34, ok", "secret_pin=[REDACTED], ok"),
+    ("passphrase=correct horse battery", "passphrase=[REDACTED]"),
+    # An apostrophe does not end a bare value.
+    ("password=it's my secret, user=bob", "password=[REDACTED], user=bob"),
+    # Quoted values keep their quotes and the rest of the structure.
+    ('{"detail": "password=abc def", "x": 1}', '{"detail": "password=[REDACTED]", "x": 1}'),
+    ("'password': 'abc def', 'u': 1", "'password': '[REDACTED]', 'u': 1"),
+    ('{"api_key": "abc def", "model": "m"}', '{"api_key": "[REDACTED]", "model": "m"}'),
+])
+def test_unquoted_sensitive_values_are_redacted_up_to_the_field_delimiter(text, expected):
+    assert SecretRedactor.redact_text(text) == expected
+
+
+def test_value_redaction_keeps_non_secret_context():
+    assert SecretRedactor.redact_text("max_tokens=5 and more, idempotency_key=abc def") == (
+        "max_tokens=5 and more, idempotency_key=abc def"
+    )
+    proxy = SecretRedactor.redact_text("proxy_url=http://u:pw@proxy.example:8080 secret_pin=12 34, ok")
+    assert "proxy.example:8080" in proxy and "pw@" not in proxy
+    assert "12 34" not in proxy and proxy.endswith(", ok")
+    assert SecretRedactor.redact_text("Authorization: Bearer abcdefghijklmnop rejected\r\nX: 1") == (
+        "Authorization: [REDACTED]\r\nX: 1"
+    )
+    # Question options are credential-shape redacted only and stay usable as answers.
+    assert SecretRedactor.redact_credentials("Key: C major") == "Key: C major"
+
+
+@pytest.mark.parametrize("shape", [
+    "password=a" + " " * 16_374,
+    "pwd=a b " * 2_048,
+    "a=b " * 4_096,
+    ("password=" + "x " * 8_192)[:16_384],
+    "token=it's " * 1_489,
+    ":" * 16_384,
+    "key=" * 4_096,
+    'key="' * 3_276,
+    ("a" * 63 + "=") * 256,
+    "x-admin-key: " * 1_260,
+])
+def test_redaction_stays_fast_on_adversarial_bounded_input(shape):
+    """Benchmark-style guard: input is bounded to 16 384 chars and every pattern is linear.
+
+    A quadratic scan over 16 384 characters needs ~10^8 steps (seconds); a linear one
+    finishes in milliseconds. The bound leaves ample room for slow CI machines.
+    """
+    started = time.perf_counter()
+    SecretRedactor.redact_text(shape)
+    SecretRedactor.redact_text(shape * 4)  # truncated to the bound first
+    assert time.perf_counter() - started < 1.0

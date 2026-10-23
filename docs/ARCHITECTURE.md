@@ -68,7 +68,7 @@ CORS is configured in code, not by environment: the only allowed origin is `http
 
 - Every response carries `X-Request-ID`: a safe client-supplied value (`[A-Za-z0-9._:-]{1,128}`) is echoed, otherwise a new id is generated. The request-id middleware is the outermost middleware, so guard rejections carry it too.
 - Errors use one envelope `{detail, category, retryable}` (`ErrorEnvelope` in OpenAPI). Validation errors never echo the submitted input; unhandled exceptions return a generic 500 and log a redacted traceback.
-- The application logger writes one redacting stdout handler. `LOG_LEVEL` (default `INFO`) and `LOG_FORMAT` (`keyvalue` default, or `json`) configure it; each line includes the request id and the request log records the path only (no query string).
+- The application logger writes one redacting stdout handler. `LOG_LEVEL` (default `INFO`) and `LOG_FORMAT` (`keyvalue` default, or `json`) configure it; each line includes the request id and the request log records the path only (no query string). Free-text redaction (`SecretRedactor.redact_text`, input bounded to 16 384 characters, linear patterns) hides an unquoted value under a sensitive key up to the next field delimiter (`,` `;` `&` `}` `"` or line break), so `password=my secret value, user=bob` becomes `password=[REDACTED], user=bob`; quoted values are redacted inside their quotes.
 
 ## Media engine and frame chaining
 
