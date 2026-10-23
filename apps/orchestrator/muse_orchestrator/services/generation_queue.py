@@ -69,8 +69,9 @@ _TERMINAL_TASK_STATES = (
 _ACTIVE_TASK_STATES = (QueueTaskState.QUEUED, QueueTaskState.RUNNING, QueueTaskState.AWAITING_INPUT)
 
 # While the provider waits for an operator answer the task is polled at a fixed slow
-# cadence and those polls do not count against max_polls: the gateway enforces its own
-# input timeout (30 min) and then fails the task with error code "input_timeout".
+# cadence and successful polls do not count against max_polls (failed ones do, so an
+# unreachable gateway still ends the task): the gateway enforces its own input timeout
+# (30 min) and then fails the task with error code "input_timeout".
 AWAITING_INPUT_POLL_SECONDS = 15.0
 # After an answer the provider resumes quickly; poll soon to pick up the new status.
 AFTER_REPLY_POLL_SECONDS = 2.0
@@ -1612,7 +1613,8 @@ class GenerationQueueService:
         raw_secret: str,
         lease_state: dict[str, bool],
     ) -> GenerationTaskRecord:
-        # Polls while waiting for the operator do not consume max_polls.
+        # Successful polls while waiting for the operator do not consume max_polls
+        # (failed ones do, in _handle_poll_failure).
         counted_poll = task.state != QueueTaskState.AWAITING_INPUT
         if counted_poll:
             task.poll_count += 1
@@ -1892,7 +1894,14 @@ class GenerationQueueService:
             expires_at=now + timedelta(seconds=dispatch_lease_seconds(conn)),
         ))
         # Release the row lock before network I/O.
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            # SQLite has no row lock: a concurrent poll/answer inserted the lease first.
+            await db.rollback()
+            raise TaskStateConflictError(
+                "Another answer or a provider poll is in progress for this task; retry shortly."
+            ) from exc
 
         try:
             p_status = await provider.reply(external_task_id, dict(answer))
@@ -1908,6 +1917,24 @@ class GenerationQueueService:
             await GenerationQueueService._release_reply_lease(db, task.id)
             raise
 
+        try:
+            return await GenerationQueueService._record_reply(db, task_id, answer, p_status, raw_secret)
+        except BaseException:
+            # The provider already has the answer; never leave the task locked for a whole
+            # lease because recording it locally failed.
+            logger.warning("Task %s: the answer was delivered but recording it failed", task_id)
+            await GenerationQueueService._release_reply_lease(db, task_id)
+            raise
+
+    @staticmethod
+    async def _record_reply(
+        db: AsyncSession,
+        task_id: str,
+        answer: dict[str, str],
+        p_status: ProviderTaskStatus,
+        raw_secret: str,
+    ) -> GenerationTaskRecord:
+        """Persist a delivered answer and drop the reply lease in the same transaction."""
         task = (
             await db.execute(
                 select(GenerationTaskRecord)

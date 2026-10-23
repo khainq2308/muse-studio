@@ -62,7 +62,7 @@ Adapter: `needs_input` maps to provider status `needs_input` with a validated qu
 
 Queue:
 
-- Poll result `needs_input` → task `AWAITING_INPUT`, question stored (text secret-redacted) in `generation_tasks.pending_input_json`, one history entry per new question. The discovering poll and all polls while waiting do not count against `max_polls`; the task is re-polled every 15 s (the gateway enforces its own input timeout). The task keeps its dispatch account, its `(shot, task_type)` slot and a connection concurrency slot (it still holds a muse.ai tab); the shot stays `RUNNING`.
+- Poll result `needs_input` → task `AWAITING_INPUT`, question stored (text secret-redacted) in `generation_tasks.pending_input_json`, one history entry per new question. The discovering poll and every successful poll while waiting do not count against `max_polls` (failed ones do, see below); the task is re-polled every 15 s (the gateway enforces its own input timeout). The task keeps its dispatch account, its `(shot, task_type)` slot and a connection concurrency slot (it still holds a muse.ai tab); the shot stays `RUNNING`.
 - The gateway reports `running` again (answered elsewhere) → task `RUNNING`, question cleared. `failed` with `input_timeout` → `FAILED`, `error_category = input_timeout`, non-retryable.
 - Cancel is allowed while awaiting input; pause is refused with 409. See "Provider cancel" below.
 - Successful polls while waiting are free, but **failed** polls (gateway unreachable, 5xx) count against `max_polls`, so an outage ends in `POLL_TIMEOUT` instead of polling forever.

@@ -323,34 +323,36 @@ async def tick_project_batch_queue(
 
     stepped_results: list[dict[str, Any]] = []
     to_schedule: list[GenerationTaskRecord] = []
-    for t in running_tasks + queued_tasks:
-        updated = await GenerationQueueService.step_task(repository.session, t.id)
-        to_schedule.append(updated)
-        stepped_results.append({
-            "task_id": updated.id,
-            "shot_id": updated.shot_id,
-            "state": updated.state.value,
-            "poll_count": updated.poll_count,
-        })
-
-    # Kiểm tra xem có shot nào vừa được mở khoá khỏi BLOCKED_UPSTREAM_FRAME nhờ Frame Chaining không
-    # Nếu có và vừa được chuyển về NOT_STARTED (có first_frame_asset_id), tự động enqueue vào cùng Connection!
-    # Shots without a valid config/enabled connection stay NOT_STARTED for a later tick.
-    auto_results = await GenerationQueueService.auto_enqueue_ready_frame_chain_shots(
-        repository, project_id, requested_connection_id=connection_id
-    )
-    for cs, new_t, created in auto_results:
-        to_schedule.append(new_t)
-        if created:
+    try:
+        for t in running_tasks + queued_tasks:
+            updated = await GenerationQueueService.step_task(repository.session, t.id)
+            to_schedule.append(updated)
             stepped_results.append({
-                "task_id": new_t.id,
-                "shot_id": cs.id,
-                "state": new_t.state.value,
-                "auto_enqueued_from_frame_chain": True,
+                "task_id": updated.id,
+                "shot_id": updated.shot_id,
+                "state": updated.state.value,
+                "poll_count": updated.poll_count,
             })
 
-    # Every step and auto-enqueue is committed; publish them all before reporting a 503.
-    await schedule_generation_tasks(request, to_schedule)
+        # Kiểm tra xem có shot nào vừa được mở khoá khỏi BLOCKED_UPSTREAM_FRAME nhờ Frame Chaining không
+        # Nếu có và vừa được chuyển về NOT_STARTED (có first_frame_asset_id), tự động enqueue vào cùng Connection!
+        # Shots without a valid config/enabled connection stay NOT_STARTED for a later tick.
+        auto_results = await GenerationQueueService.auto_enqueue_ready_frame_chain_shots(
+            repository, project_id, requested_connection_id=connection_id
+        )
+        for cs, new_t, created in auto_results:
+            to_schedule.append(new_t)
+            if created:
+                stepped_results.append({
+                    "task_id": new_t.id,
+                    "shot_id": cs.id,
+                    "state": new_t.state.value,
+                    "auto_enqueued_from_frame_chain": True,
+                })
+    finally:
+        # Publish whatever was committed even if a later step raised, so one bad task
+        # cannot strand the tasks stepped before it (they would wait for recovery).
+        await schedule_generation_tasks(request, to_schedule)
 
     all_project_tasks = await repository.list_project_generation_tasks(project_id)
     counts: dict[str, int] = {}
