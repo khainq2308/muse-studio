@@ -362,6 +362,22 @@ class Muse2ApiAdapter(VideoProvider):
                 safe_msg = SecretRedactor.redact_text(str(exc), [self.api_key or ""])
                 return ProviderHealth(healthy=False, ready=False, status_state="unavailable", latency_ms=round(latency, 2), details={"error": safe_msg})
 
+    async def first_frame_capability(self) -> bool | None:
+        """Whether the gateway advertises real first-frame (image-to-video) conditioning.
+
+        Read from ``/readyz`` ``driver.capabilities.video_first_frame``. ``None`` means
+        unknown: the gateway does not advertise it (e.g. upstream muse2api ``949f326``,
+        whose browser driver ignores the frame) or the probe failed.
+        """
+        try:
+            data = await self._request_json("GET", f"{self.base_url}/readyz", headers=self._headers())
+        except ProviderFailure:
+            return None
+        driver = data.get("driver")
+        capabilities = driver.get("capabilities") if isinstance(driver, dict) else None
+        value = capabilities.get("video_first_frame") if isinstance(capabilities, dict) else None
+        return value if isinstance(value, bool) else None
+
     async def list_models(self) -> list[ModelCapability]:
         payload = await self._request_json("GET", f"{self.base_url}/v1/models", headers=self._headers())
         items = payload.get("data", [])
