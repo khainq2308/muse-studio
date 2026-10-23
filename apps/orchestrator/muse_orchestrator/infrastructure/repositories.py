@@ -16,6 +16,7 @@ from muse_orchestrator.models.domain import (
     ProviderConnection,
     GenerationTaskRecord,
     QueueTaskState,
+    SCHEDULABLE_GENERATION_TASK_STATES,
     ShotTakeRecord,
     BatchRenderJobRecord,
     BackupRecord,
@@ -230,7 +231,7 @@ class StudioRepository:
             select(GenerationTaskRecord)
             .where(
                 GenerationTaskRecord.project_id == project_id,
-                GenerationTaskRecord.state.in_((QueueTaskState.RUNNING, QueueTaskState.QUEUED)),
+                GenerationTaskRecord.state.in_(SCHEDULABLE_GENERATION_TASK_STATES),
             )
             .order_by(
                 GenerationTaskRecord.priority.desc(),
@@ -261,14 +262,14 @@ class StudioRepository:
     async def list_active_generation_tasks_for_recovery(
         self, limit: int
     ) -> list[GenerationTaskRecord]:
-        """Bounded recovery scan: least-recently-updated QUEUED/RUNNING tasks first.
+        """Bounded recovery scan: least-recently-updated QUEUED/RUNNING/AWAITING_INPUT tasks first.
 
         Tasks with a live step chain are touched on every step, so orphaned tasks
         (no scheduled job) bubble to the front and are never starved by the limit.
         """
         result = await self.session.execute(
             select(GenerationTaskRecord)
-            .where(GenerationTaskRecord.state.in_((QueueTaskState.QUEUED, QueueTaskState.RUNNING)))
+            .where(GenerationTaskRecord.state.in_(SCHEDULABLE_GENERATION_TASK_STATES))
             .order_by(GenerationTaskRecord.updated_at.asc(), GenerationTaskRecord.id.asc())
             .limit(limit)
         )
@@ -385,9 +386,7 @@ class StudioRepository:
             stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
         result = await self.session.execute(stmt)
         by_state = {state.value: int(count) for state, count in result.all()}
-        active = by_state.get(QueueTaskState.QUEUED.value, 0) + by_state.get(
-            QueueTaskState.RUNNING.value, 0
-        )
+        active = sum(by_state.get(state.value, 0) for state in SCHEDULABLE_GENERATION_TASK_STATES)
         failed = by_state.get(QueueTaskState.FAILED.value, 0) + by_state.get(
             QueueTaskState.POLL_TIMEOUT.value, 0
         )

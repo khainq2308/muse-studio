@@ -1,16 +1,20 @@
 from __future__ import annotations
-from datetime import datetime, timezone
 from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
-from muse_orchestrator.api.dependencies import get_studio_repository
+from pydantic import BaseModel, Field, model_validator
+from muse_orchestrator.api.dependencies import get_queue_task_service, get_studio_repository
+from muse_orchestrator.application.queue_service import InputNotPendingError, QueueTaskService
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.api.arq_dispatch import schedule_generation_task
 from muse_orchestrator.core.security import verify_single_admin
 from muse_orchestrator.models.domain import (
-    ShotGenerationState,
     GenerationTaskRecord,
     QueueTaskState,
+)
+from muse_orchestrator.providers.base import (
+    ANSWER_CHOICE_MAX_CHARS,
+    ANSWER_TEXT_MAX_CHARS,
+    QUESTION_KINDS,
 )
 from muse_orchestrator.services.generation_queue import GenerationQueueService
 
@@ -26,6 +30,28 @@ class EnqueueTaskIn(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=128)
     force_retry: bool = False
     max_polls: int = Field(default=60, ge=1, le=500)
+
+
+class PendingInputOut(BaseModel):
+    """Question the provider asked the operator while the task is AWAITING_INPUT."""
+
+    kind: Literal["question", "approval", "stalled"]
+    text: str
+    options: list[str]
+    asked_at: float | None
+
+
+class TaskReplyIn(BaseModel):
+    """Operator answer: exactly one of free ``text`` or one of the offered ``choice`` options."""
+
+    text: str | None = Field(default=None, min_length=1, max_length=ANSWER_TEXT_MAX_CHARS)
+    choice: str | None = Field(default=None, min_length=1, max_length=ANSWER_CHOICE_MAX_CHARS)
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "TaskReplyIn":
+        if (self.text is None) == (self.choice is None):
+            raise ValueError("Provide exactly one of 'text' or 'choice'.")
+        return self
 
 
 class QueueTaskOut(BaseModel):
@@ -54,6 +80,7 @@ class QueueTaskOut(BaseModel):
     result_asset_id: str | None
     take_id: str | None
     history_log: list[str]
+    pending_input: PendingInputOut | None = None
 
 
 class EnqueuedQueueTaskOut(QueueTaskOut):
@@ -98,6 +125,21 @@ class ShotTakeSelectionOut(BaseModel):
     propagated_downstream_shots: list[str]
 
 
+def _pending_input(t: GenerationTaskRecord) -> dict[str, Any] | None:
+    """The stored question, only while the task actually waits for it."""
+    pending = t.pending_input_json
+    if t.state != QueueTaskState.AWAITING_INPUT or not isinstance(pending, dict):
+        return None
+    kind = pending.get("kind")
+    asked_at = pending.get("asked_at")
+    return {
+        "kind": kind if kind in QUESTION_KINDS else "question",
+        "text": str(pending.get("text") or ""),
+        "options": [str(option) for option in pending.get("options") or []],
+        "asked_at": float(asked_at) if isinstance(asked_at, (int, float)) and not isinstance(asked_at, bool) else None,
+    }
+
+
 def _serialize_task(t: GenerationTaskRecord) -> dict[str, Any]:
     return {
         "id": t.id,
@@ -123,6 +165,7 @@ def _serialize_task(t: GenerationTaskRecord) -> dict[str, Any]:
         "result_asset_id": t.result_asset_id,
         "take_id": t.take_id,
         "history_log": t.history_log,
+        "pending_input": _pending_input(t),
     }
 
 
@@ -254,31 +297,39 @@ async def resume_task(task_id: str, request: Request, repository: StudioReposito
 
 
 @router.post("/tasks/{task_id}/cancel", response_model=QueueTaskOut)
-async def cancel_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> QueueTaskOut:
-    task = await repository.get_generation_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task không tồn tại.")
-    if task.state in (
-        QueueTaskState.SUCCEEDED,
-        QueueTaskState.FAILED,
-        QueueTaskState.CANCELED,
-        QueueTaskState.POLL_TIMEOUT,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot cancel a task in terminal state '{task.state.value}'.",
-        )
-    task.state = QueueTaskState.CANCELED
-    task.finished_at = datetime.now(timezone.utc)
-    shot = await repository.get_shot(task.shot_id)
-    if shot:
-        # A stale/extra task must not downgrade a shot that has newer active work or
-        # an already selected take.
-        await GenerationQueueService.settle_shot_after_task_end(
-            repository.session, task, shot, ShotGenerationState.CANCELED
-        )
-    task.history_log = list(task.history_log or []) + ["Canceled by operator."]
-    await repository.save_queue_task(task, shot=shot)
+async def cancel_task(
+    task_id: str,
+    service: QueueTaskService = Depends(get_queue_task_service),
+    actor: str = Depends(verify_single_admin),
+) -> QueueTaskOut:
+    # Allowed for QUEUED/RUNNING/PAUSED/AWAITING_INPUT; terminal states return 409.
+    task = await service.cancel_task(task_id)
+    return _serialize_task(task)
+
+
+@router.post("/tasks/{task_id}/reply", response_model=QueueTaskOut)
+async def reply_to_task(
+    task_id: str,
+    payload: TaskReplyIn,
+    request: Request,
+    service: QueueTaskService = Depends(get_queue_task_service),
+    actor: str = Depends(verify_single_admin),
+) -> QueueTaskOut:
+    """Answer the question the provider asked for an AWAITING_INPUT task.
+
+    404 unknown task; 409 when the task (or the provider job) is not waiting for input;
+    422 for a malformed answer or a ``choice`` outside the pending options; provider
+    failures use the shared error envelope. On success the task is RUNNING again and its
+    next step is scheduled immediately.
+    """
+    try:
+        task = await service.reply_to_task(task_id, text=payload.text, choice=payload.choice)
+    except InputNotPendingError as exc:
+        if exc.task is not None:
+            # The local state was refreshed from the provider; keep its step chain alive.
+            await schedule_generation_task(request, exc.task)
+        raise
+    await schedule_generation_task(request, task)
     return _serialize_task(task)
 
 

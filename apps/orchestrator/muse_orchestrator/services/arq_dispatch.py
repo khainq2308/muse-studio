@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from muse_orchestrator.models.domain import GenerationTaskRecord, QueueTaskState
+from muse_orchestrator.models.domain import (
+    SCHEDULABLE_GENERATION_TASK_STATES,
+    GenerationTaskRecord,
+)
 
 
 def generation_step_token(task: GenerationTaskRecord) -> str:
@@ -53,7 +56,7 @@ async def enqueue_generation_step(
     preserve the task's persisted backoff or lease wait to avoid a tight retry loop.
     The job carries ``schedule_token`` so a superseded job exits without forking a chain.
     """
-    if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
+    if task.state not in SCHEDULABLE_GENERATION_TASK_STATES:
         return False
 
     delay = 0.0 if immediate else max(0.0, float(task.next_poll_delay_seconds))

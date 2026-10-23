@@ -831,6 +831,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/queue/tasks/{task_id}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reply To Task
+         * @description Answer the question the provider asked for an AWAITING_INPUT task.
+         *
+         *     404 unknown task; 409 when the task (or the provider job) is not waiting for input;
+         *     422 for a malformed answer or a ``choice`` outside the pending options; provider
+         *     failures use the shared error envelope. On success the task is RUNNING again and its
+         *     next step is scheduled immediately.
+         */
+        post: operations["reply_to_task_api_v1_queue_tasks__task_id__reply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/queue/tasks/{task_id}/resume": {
         parameters: {
             query?: never;
@@ -1619,6 +1644,7 @@ export interface components {
             model_id: string;
             /** Next Poll Delay Seconds */
             next_poll_delay_seconds: number;
+            pending_input?: components["schemas"]["PendingInputOut"] | null;
             /** Poll Count */
             poll_count: number;
             /** Priority */
@@ -1825,6 +1851,23 @@ export interface components {
             /** Total Bytes */
             total_bytes: number;
         };
+        /**
+         * PendingInputOut
+         * @description Question the provider asked the operator while the task is AWAITING_INPUT.
+         */
+        PendingInputOut: {
+            /** Asked At */
+            asked_at: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "question" | "approval" | "stalled";
+            /** Options */
+            options: string[];
+            /** Text */
+            text: string;
+        };
         /** PipelineLintIssueOut */
         PipelineLintIssueOut: {
             /** Code */
@@ -2012,6 +2055,7 @@ export interface components {
             model_id: string;
             /** Next Poll Delay Seconds */
             next_poll_delay_seconds: number;
+            pending_input?: components["schemas"]["PendingInputOut"] | null;
             /** Poll Count */
             poll_count: number;
             /** Priority */
@@ -2053,7 +2097,7 @@ export interface components {
          * QueueTaskState
          * @enum {string}
          */
-        QueueTaskState: "queued" | "paused" | "running" | "succeeded" | "failed" | "poll_timeout" | "canceled";
+        QueueTaskState: "queued" | "paused" | "running" | "succeeded" | "failed" | "poll_timeout" | "canceled" | "awaiting_input";
         /** QueueTaskSummaryOut */
         QueueTaskSummaryOut: {
             /** Active Tasks */
@@ -2342,6 +2386,16 @@ export interface components {
             take_id: string;
             /** Take Number */
             take_number: number;
+        };
+        /**
+         * TaskReplyIn
+         * @description Operator answer: exactly one of free ``text`` or one of the offered ``choice`` options.
+         */
+        TaskReplyIn: {
+            /** Choice */
+            choice?: string | null;
+            /** Text */
+            text?: string | null;
         };
         /** TimelineAssembleIn */
         TimelineAssembleIn: {
@@ -9371,6 +9425,142 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTaskOut"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication failed */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Upstream provider error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Upstream timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reply_to_task_api_v1_queue_tasks__task_id__reply_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-studio-admin-token"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskReplyIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
