@@ -5,6 +5,13 @@ import type {
   ProjectShot,
   ShotReview,
 } from "@/features/shot-board/state";
+import type {
+  CompareShotTakes,
+  ContinuityFlagResult,
+  ShotTake,
+  ShotTakeSelection,
+  TakeComparison,
+} from "@/features/shot-board/takes";
 
 /** Test-only builders typed from the generated OpenAPI schema. */
 export function makeShot(overrides: Partial<ProjectShot> = {}): ProjectShot {
@@ -117,6 +124,74 @@ export function makeBatchResult(overrides: Partial<BatchLaunchResult> = {}): Bat
     skipped_shot_ids: ["shot-3"],
     blocked_shot_ids: ["shot-2"],
     warnings: [],
+    ...overrides,
+  };
+}
+
+export function makeTake(overrides: Partial<ShotTake> = {}): ShotTake {
+  return {
+    id: "take-1",
+    shot_id: "shot-1",
+    take_number: 1,
+    task_id: "task-1",
+    asset_id: "asset-video-1",
+    model_id: "muse-video-mock-v1",
+    prompt_hash: "hash-1",
+    account_used: null,
+    first_frame_asset_id: null,
+    last_frame_asset_id: null,
+    continuity_flagged: false,
+    director_notes: "",
+    is_selected: false,
+    ...overrides,
+  };
+}
+
+export function toComparison(take: ShotTake): TakeComparison {
+  return {
+    take_id: take.id,
+    take_number: take.take_number,
+    asset_id: take.asset_id,
+    first_frame_asset_id: take.first_frame_asset_id,
+    last_frame_asset_id: take.last_frame_asset_id,
+    model_id: take.model_id,
+    prompt_hash: take.prompt_hash,
+    account_used: take.account_used,
+    continuity_flagged: take.continuity_flagged,
+    director_notes: take.director_notes,
+    is_selected: take.is_selected,
+  };
+}
+
+export function makeComparison(a: ShotTake, b: ShotTake): CompareShotTakes {
+  return {
+    shot_id: a.shot_id,
+    same_prompt_hash: a.prompt_hash === b.prompt_hash,
+    same_model: a.model_id === b.model_id,
+    take_a: toComparison(a),
+    take_b: toComparison(b),
+  };
+}
+
+export function makeSelection(overrides: Partial<ShotTakeSelection> = {}): ShotTakeSelection {
+  return {
+    shot_id: "shot-1",
+    selected_take_id: "take-1",
+    last_frame_asset_id: null,
+    propagated_downstream_shots: [],
+    ...overrides,
+  };
+}
+
+export function makeFlagResult(
+  overrides: Partial<ContinuityFlagResult> = {},
+): ContinuityFlagResult {
+  return {
+    shot_id: "shot-1",
+    take_id: "take-1",
+    continuity_flagged: true,
+    director_notes: "Hair changes side.",
+    regenerated_task_id: null,
     ...overrides,
   };
 }

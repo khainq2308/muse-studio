@@ -114,7 +114,10 @@ describe("ShotBoardPage", () => {
     expect(within(chase).getByTestId("shot-first-frame")).toHaveTextContent("First frame set");
     expect(chase).toHaveTextContent("Frame chain");
     expect(chase).toHaveTextContent("Shot 1 · Hero enters");
-    expect(within(chase).getByTestId("shot-takes-placeholder")).toBeInTheDocument();
+    expect(
+      within(chase).getByRole("button", { name: "Review takes for Shot 2 · Chase" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(within(chase).queryByTestId("shot-predecessor-warning")).not.toBeInTheDocument();
   });
 
   it("explains a missing admin token and shows the empty state when there are no shots", async () => {

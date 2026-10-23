@@ -21,6 +21,7 @@ import {
   ShotGenerateConfirm,
 } from "@/features/shot-board/components/shot-generate-confirm";
 import { ShotList } from "@/features/shot-board/components/shot-list";
+import { ShotTakeReview } from "@/features/shot-board/components/shot-take-review";
 import {
   buildEnqueueRequest,
   generationErrorMessage,
@@ -56,6 +57,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
   });
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
   const [generateShotId, setGenerateShotId] = useState<string | null>(null);
+  const [reviewShotId, setReviewShotId] = useState<string | null>(null);
 
   const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
   const sceneIds = useMemo(() => groupShotsByScene(shots).map((group) => group.sceneId), [shots]);
@@ -75,6 +77,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
     resetEnqueue();
     resetBatch();
     setGenerateShotId(null);
+    setReviewShotId(null);
   }, [resetBatch, resetEnqueue, resetUpdate, sessionVersion]);
 
   const generateDisabledReason = !connection
@@ -121,12 +124,27 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
   };
   const enqueueShotId = enqueueMutation.variables?.request.shot_id ?? null;
 
+  const toggleTakeReview = (shotId: string) => {
+    setReviewShotId((current) => (current === shotId ? null : shotId));
+  };
+
   const refresh = () => {
     void shotsQuery.refetch({ cancelRefetch: true });
   };
 
   const renderShotDetail = (shot: ProjectShot) => (
     <>
+      {reviewShotId === shot.id && (
+        <ShotTakeReview
+          projectId={projectId}
+          shot={shot}
+          shots={shots}
+          connection={connection}
+          modelId={settings.modelId}
+          regenerateDisabledReason={generateDisabledReason}
+          onClose={() => setReviewShotId(null)}
+        />
+      )}
       {editingShotId === shot.id && (
         <ShotEditPanel
           shot={shot}
@@ -258,6 +276,8 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
             editingShotId={editingShotId}
             onEdit={openEditor}
             onGenerate={openGenerate}
+            reviewingShotId={reviewShotId}
+            onReviewTakes={toggleTakeReview}
             canGenerate={!generateDisabledReason && !enqueueMutation.isPending}
             generateDisabledReason={generateDisabledReason}
             renderShotDetail={renderShotDetail}

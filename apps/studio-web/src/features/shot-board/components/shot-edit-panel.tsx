@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { LoaderCircle, Save, X } from "lucide-react";
+import { LoaderCircle, Save, TriangleAlert, X } from "lucide-react";
 import { useEffect, useId, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -23,6 +23,7 @@ import {
   type ShotReview,
   type ShotUpdate,
 } from "@/features/shot-board/state";
+import { PREDECESSOR_ORDER_WARNING, isPredecessorOutOfOrder } from "@/features/shot-board/takes";
 import { cn } from "@/lib/utils";
 
 /**
@@ -129,6 +130,10 @@ export function ShotEditPanel({
   const candidates = previousShotCandidates(shot, shots);
   const continuityMode = watch("continuity_mode");
   const previousShotId = watch("previous_shot_id");
+  const chosenPrevious = previousShotId
+    ? shots.find((candidate) => candidate.id === previousShotId)
+    : undefined;
+  const predecessorOutOfOrder = isPredecessorOutOfOrder(shot, chosenPrevious);
   const continuityChanged =
     continuityMode !== shot.continuity_mode || (previousShotId || null) !== shot.previous_shot_id;
 
@@ -322,6 +327,18 @@ export function ShotEditPanel({
               )}
           </select>
           {fieldError("previous_shot_id")}
+          {predecessorOutOfOrder && chosenPrevious && (
+            <p
+              role="note"
+              data-testid="edit-predecessor-warning"
+              className="flex items-start gap-1 text-xs text-warning"
+            >
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {PREDECESSOR_ORDER_WARNING} ({shotLabel(chosenPrevious)} is #
+              {chosenPrevious.sequence_index}; this shot is #{shot.sequence_index}). You can still
+              save.
+            </p>
+          )}
         </div>
 
         {continuityChanged && shot.first_frame_asset_id && (
