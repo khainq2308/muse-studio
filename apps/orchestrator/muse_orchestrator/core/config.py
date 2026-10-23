@@ -209,6 +209,15 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)((?:set-)?cookie\s*[:=]\s*['\"]?)[^\r\n\"']+"), r"\1[REDACTED_COOKIE]"),
 ]
 
+# Any key: value / key=value pair in free text. The key is judged by the same rule as
+# mapping keys (SecretRedactor.is_sensitive_key), so text and structured redaction agree
+# on aliases such as passphrase, pwd or secret_pin. Keys start with a letter and are at most
+# 64 characters, so a failed match backtracks over at most 64 characters (linear overall).
+_KEY_VALUE_PATTERN = re.compile(
+    r"([\"']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1[ \t]*([:=])[ \t]*"
+    r"(\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,'\"}&;]+)"
+)
+
 # Proxy/provider URLs with userinfo. The scheme is located with a fixed alternation and
 # the rest of the whitespace-delimited token is parsed with str methods, so the work is
 # linear even for inputs such as "http://" * 300_000.
@@ -309,7 +318,17 @@ class SecretRedactor:
         sanitized = _redact_url_userinfo(sanitized)
         for pattern, replacement in _SENSITIVE_PATTERNS:
             sanitized = pattern.sub(replacement, sanitized)
-        return sanitized
+        return _KEY_VALUE_PATTERN.sub(SecretRedactor._redact_key_value_match, sanitized)
+
+    @staticmethod
+    def _redact_key_value_match(match: re.Match[str]) -> str:
+        key, value = match.group(2), match.group(4)
+        if not SecretRedactor.is_sensitive_key(key) or SecretRedactor._is_proxy_key(key):
+            return match.group(0)
+        if value.strip("\"'").startswith("[REDACTED"):
+            return match.group(0)
+        quote = value[0] if value[:1] in ("\"", "'") else ""
+        return match.group(0)[: match.start(4) - match.start(0)] + f"{quote}[REDACTED]{quote}"
 
     @classmethod
     def redact_dict(cls, data: dict[str, Any], explicit_secrets: list[str] | None = None) -> dict[str, Any]:
