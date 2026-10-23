@@ -6,6 +6,7 @@ from muse_orchestrator.services.asset_storage import LocalAssetStorage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_orchestrator.application.account_service import ConnectionAccountService
+from muse_orchestrator.application.pipeline_service import PipelineService
 from muse_orchestrator.application.queue_service import QueueTaskService
 from muse_orchestrator.application.system_service import SystemService
 from muse_orchestrator.application.services import (
@@ -22,6 +23,12 @@ async def get_studio_repository(
     db: AsyncSession = Depends(get_db),
 ) -> StudioRepository:
     return StudioRepository(db)
+
+
+def get_pipeline_service(
+    repository: StudioRepository = Depends(get_studio_repository),
+) -> PipelineService:
+    return PipelineService(repository)
 
 
 def get_project_service(

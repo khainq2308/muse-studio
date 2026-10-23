@@ -7,7 +7,7 @@ from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from muse_orchestrator.api.dependencies import get_studio_repository
+from muse_orchestrator.api.dependencies import get_pipeline_service, get_studio_repository
 from muse_orchestrator.application.pipeline_service import PipelineService
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.core.security import verify_single_admin
@@ -24,12 +24,6 @@ JsonValue = TypeAliasType(
 
 MAX_REFERENCE_ASSETS = 32
 MAX_MUTABLE_ATTRIBUTES_CHARS = 32_768
-
-
-def get_pipeline_service(
-    repository: StudioRepository = Depends(get_studio_repository),
-) -> PipelineService:
-    return PipelineService(repository)
 
 
 def _check_asset_ids(value: list[str] | None) -> list[str] | None:

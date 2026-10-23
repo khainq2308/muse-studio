@@ -117,3 +117,127 @@ def test_explicit_location_transition_suppresses_location_drift_warning() -> Non
 
     result = compile_shot(current, previous)
     assert not any(item.code == "LOCATION_CONTINUITY_BREAK" for item in result.lint_issues)
+
+
+# --- action boundaries in the video prompt -------------------------------------------
+
+# Prompt and hash produced by main 668659a (before boundaries entered the prompt) for
+# make_shot with any action_start/action_end. Pinned so a shot without boundaries keeps
+# exactly this text and hash, and the computed legacy hash keeps matching old takes.
+_LEGACY_PROMPT = (
+    "Style: 2D anime, cinematic. Subjects: Environment. Environment: cafe "
+    "Camera: medium, eye level, static. balanced framing. "
+    "Action: Character remains at the table "
+    "Continuity: inherit lighting and screen direction from scene "
+    "Technical: 4.0s, 16:9."
+)
+_LEGACY_HASH = "7c8313569a4d78f451f22ec200d7ef94f430bcb9b8d1076ec436c0263b5a34e4"
+
+
+def test_prompt_includes_action_boundaries_when_set() -> None:
+    result = compile_shot(
+        make_shot(action_start="Seated, cup in hand.", action_end="Stands up and leaves")
+    )
+
+    assert result.sections["ACTION"] == (
+        "Action: Character remains at the table. Starts: Seated, cup in hand. "
+        "Ends: Stands up and leaves."
+    )
+    assert result.prompt_final == (
+        "Style: 2D anime, cinematic. Subjects: Environment. Environment: cafe "
+        "Camera: medium, eye level, static. balanced framing. "
+        "Action: Character remains at the table. Starts: Seated, cup in hand. "
+        "Ends: Stands up and leaves. "
+        "Continuity: inherit lighting and screen direction from scene "
+        "Technical: 4.0s, 16:9."
+    )
+
+
+def test_prompt_includes_only_the_boundary_that_is_set() -> None:
+    only_end = compile_shot(make_shot(action_start="   ", action_end="Stands up"))
+
+    assert only_end.sections["ACTION"] == "Action: Character remains at the table. Ends: Stands up."
+    assert "Starts:" not in only_end.prompt_final
+
+
+def test_prompt_and_hash_are_byte_identical_to_legacy_without_boundaries() -> None:
+    result = compile_shot(make_shot(action_start="", action_end=""))
+
+    assert result.prompt_final == _LEGACY_PROMPT
+    assert result.prompt_hash == _LEGACY_HASH
+    assert result.legacy_prompt_hash == _LEGACY_HASH
+    whitespace = compile_shot(make_shot(action_start="  ", action_end="\n"))
+    assert whitespace.prompt_final == _LEGACY_PROMPT
+    assert whitespace.prompt_hash == _LEGACY_HASH
+
+
+def test_legacy_hash_matches_pre_change_hash_of_a_shot_with_boundaries() -> None:
+    result = compile_shot(make_shot(action_start="Seated", action_end="Stands up"))
+
+    assert result.prompt_hash != _LEGACY_HASH
+    assert result.legacy_prompt_hash == _LEGACY_HASH
+
+
+def test_generic_parser_default_boundaries_keep_the_legacy_prompt_and_hash() -> None:
+    # script_parser fills "in position" / "completes motion" (and "neutral pose") when
+    # the script gives no boundaries; they carry no information.
+    for start, end in [
+        ("in position", "completes motion"),
+        ("In position.", "Completes the motion!"),
+        ("neutral pose", "pose_completed"),
+    ]:
+        result = compile_shot(make_shot(action_start=start, action_end=end))
+        assert result.prompt_final == _LEGACY_PROMPT
+        assert result.prompt_hash == _LEGACY_HASH
+        assert result.legacy_prompt_hash == _LEGACY_HASH
+
+
+def test_generic_boundary_is_omitted_next_to_a_real_one() -> None:
+    real_end = compile_shot(make_shot(action_start="in position", action_end="Stands up"))
+    real_start = compile_shot(make_shot(action_start="Seated", action_end="completes motion"))
+
+    assert real_end.sections["ACTION"] == "Action: Character remains at the table. Ends: Stands up."
+    assert real_start.sections["ACTION"] == "Action: Character remains at the table. Starts: Seated."
+    assert "in position" not in real_end.prompt_final
+    assert "completes motion" not in real_start.prompt_final
+    # Hash equals the same shot with the generic boundary left empty.
+    assert real_end.prompt_hash == compile_shot(make_shot(action_start="", action_end="Stands up")).prompt_hash
+
+
+def test_hash_changes_when_only_action_end_changes() -> None:
+    before = compile_shot(make_shot(action_start="Seated", action_end="Stands up"))
+    after = compile_shot(make_shot(action_start="Seated", action_end="Walks out"))
+
+    assert after.prompt_hash != before.prompt_hash
+    # The computed legacy hash cannot see boundaries (documented limitation).
+    assert after.legacy_prompt_hash == before.legacy_prompt_hash == _LEGACY_HASH
+
+
+def test_dialogue_never_reaches_the_video_prompt() -> None:
+    spec = make_shot(action_start="Seated", action_end="Stands up")
+    # ShotSpec carries no dialogue: the compiler cannot place dialogue in the prompt.
+    assert not hasattr(spec, "dialogue")
+    result = compile_shot(spec)
+    assert "dialogue" not in result.prompt_final.casefold()
+    assert "dialogue" not in {key.casefold() for key in result.sections}
+
+
+def _action_of(action: str, start: str, end: str) -> str:
+    spec = make_shot(action_start=start, action_end=end)
+    spec.action = action
+    return compile_shot(spec).sections["ACTION"]
+
+
+def test_empty_action_with_a_real_boundary_has_no_stray_period() -> None:
+    assert _action_of("", "Seated", "") == "Action: Starts: Seated."
+    assert _action_of("   ", "", "Stands up") == "Action: Ends: Stands up."
+
+
+def test_boundaries_ending_in_other_punctuation_get_a_single_period() -> None:
+    assert _action_of("He waits", "Seated!", "Stands up?") == "Action: He waits. Starts: Seated. Ends: Stands up."
+    assert _action_of("He waits", "Seated…", "Stands up...") == "Action: He waits. Starts: Seated. Ends: Stands up."
+
+
+def test_action_ending_in_sentence_punctuation_is_not_doubled() -> None:
+    for action in ("He waits!", "He waits?", "He waits…", "He waits."):
+        assert _action_of(action, "Seated", "") == f"Action: {action} Starts: Seated."

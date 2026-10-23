@@ -35,6 +35,7 @@ from muse_orchestrator.services.prompt_compiler import (
     ShotSpec,
     StyleBibleLock,
 )
+from muse_orchestrator.services.generation_guards import prompt_version_of
 from muse_orchestrator.services.script_parser import (
     ParsedScriptProposal,
     ScriptAnalyzerService,
@@ -56,6 +57,34 @@ def _string_list(value: Any, default: list[str]) -> list[str]:
 
 def _string_value(value: Any, default: str) -> str:
     return value if isinstance(value, str) and value.strip() else default
+
+
+@dataclass(frozen=True)
+class ShotPromptHashes:
+    """The current prompt hash of a shot and its computed (never persisted) legacy hash.
+
+    ``legacy`` is the hash the shot had before informative action_start/action_end entered
+    the prompt; it equals ``current`` when the shot has no informative boundaries.
+    """
+
+    current: str
+    legacy: str
+
+    def take_is_current(self, take_prompt_hash: str, task: GenerationTaskRecord | None) -> bool:
+        """Whether a selected take still matches this shot's prompt.
+
+        The legacy hash is accepted only for a take whose task predates the prompt
+        version marker (enqueued before the upgrade). A take rendered afterwards on a shot
+        with empty/generic boundaries also carries the legacy-equal hash; accepting it
+        would hide a later boundary edit forever.
+        """
+        if take_prompt_hash == self.current:
+            return True
+        return (
+            take_prompt_hash == self.legacy
+            and task is not None
+            and prompt_version_of(task) is None
+        )
 
 
 @dataclass
@@ -107,11 +136,21 @@ class PipelineService:
 
     async def recompile_project_shots(self, project_id: str, *, commit: bool = True) -> list[ShotRecord]:
         """Recompile prompts/lint state and (optionally) commit the current transaction."""
+        shots, _hashes = await self.recompile_project_shots_with_prompt_hashes(project_id, commit=commit)
+        return shots
+
+    async def recompile_project_shots_with_prompt_hashes(
+        self, project_id: str, *, commit: bool = True
+    ) -> tuple[list[ShotRecord], dict[str, ShotPromptHashes]]:
+        """Recompile like ``recompile_project_shots`` and return, per shot id, the current
+        and computed legacy prompt hash (see ``ShotPromptHashes.take_is_current``), so
+        takes rendered before boundaries entered the prompt are not all invalidated.
+        """
         result = await self._compile(project_id)
         assert isinstance(result, tuple)
         if commit:
             await self.repository.commit_pipeline_changes()
-        return result[0]
+        return result
 
     async def dry_run_shot_lint(
         self, project_id: str, shot_id: str, overrides: dict[str, Any]
@@ -127,7 +166,7 @@ class PipelineService:
         *,
         dry_run_shot_id: str | None = None,
         dry_run_overrides: dict[str, Any] | None = None,
-    ) -> tuple[list[ShotRecord]] | list[dict[str, Any]]:
+    ) -> tuple[list[ShotRecord], dict[str, ShotPromptHashes]] | list[dict[str, Any]]:
         proj = await self.require_project(project_id)
         bible_rows = await self.repository.list_story_bible_entries(project_id)
         available_assets = set(await self.repository.list_project_asset_ids(project_id))
@@ -180,6 +219,7 @@ class PipelineService:
 
         previous_spec: ShotSpec | None = None
         dry_run_lint: list[dict[str, Any]] = []
+        prompt_hashes: dict[str, ShotPromptHashes] = {}
         for s in shots:
             values: dict[str, Any] = {
                 "subject_codes": s.subject_codes,
@@ -238,6 +278,9 @@ class PipelineService:
             s.prompt_final = compiled.prompt_final
             s.negative_prompt = compiled.negative_prompt
             s.prompt_hash = compiled.prompt_hash
+            prompt_hashes[s.id] = ShotPromptHashes(
+                current=compiled.prompt_hash, legacy=compiled.legacy_prompt_hash
+            )
             s.lint_report_json = lint
             if s.id in busy_shot_ids:
                 # A queued/running/paused task owns the generation state; the queue and
@@ -265,7 +308,7 @@ class PipelineService:
 
         if dry_run_overrides is not None:
             return dry_run_lint
-        return (list(shots),)
+        return (list(shots), prompt_hashes)
 
     # --- script import --------------------------------------------------------------
 

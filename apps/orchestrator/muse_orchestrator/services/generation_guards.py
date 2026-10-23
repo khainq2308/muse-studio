@@ -27,6 +27,7 @@ from muse_orchestrator.models.domain import (
     ShotRecord,
     ShotTakeRecord,
 )
+from muse_orchestrator.services.prompt_compiler import PROMPT_COMPILER_VERSION
 
 GuardPhase = Literal["enqueue", "dispatch"]
 ConditioningSource = Literal["upstream", "operator", "none"]
@@ -243,6 +244,9 @@ def request_snapshot_entry(shot: Any, conditioning: ConditioningFrame) -> str:
         "aspect_ratio": str(shot.aspect_ratio),
         "conditioning_first_frame": conditioning.asset_id,
         "conditioning_source": conditioning.source,
+        # Absent on tasks enqueued before action boundaries entered the prompt; batch
+        # only_changed accepts the legacy prompt hash only for such tasks.
+        "prompt_version": PROMPT_COMPILER_VERSION,
     }
     return _REQUEST_SNAPSHOT_MARKER + json.dumps(payload, sort_keys=True)
 
@@ -257,3 +261,9 @@ def request_snapshot_of(task: GenerationTaskRecord) -> dict[str, Any] | None:
                 return None
             return data if isinstance(data, dict) else None
     return None
+
+
+def prompt_version_of(task: GenerationTaskRecord) -> int | None:
+    """Prompt compiler version recorded at enqueue, or None for pre-upgrade tasks."""
+    version = (request_snapshot_of(task) or {}).get("prompt_version")
+    return version if isinstance(version, int) and not isinstance(version, bool) else None
