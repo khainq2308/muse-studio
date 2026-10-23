@@ -75,12 +75,18 @@ export function downstreamShotLabels(
 /**
  * Product decision: a predecessor whose `sequence_index` is not lower than the shot's own
  * is allowed by the backend but almost always a mistake, so the UI warns without blocking.
+ * The script parser numbers shots across the whole project, but the backend only accepts a
+ * previous shot from the same scene, so only same-scene pairs are compared.
  */
 export function isPredecessorOutOfOrder(
-  shot: Pick<ProjectShot, "sequence_index">,
-  previousShot: Pick<ProjectShot, "sequence_index"> | undefined,
+  shot: Pick<ProjectShot, "sequence_index" | "scene_id">,
+  previousShot: Pick<ProjectShot, "sequence_index" | "scene_id"> | undefined,
 ): boolean {
-  return previousShot !== undefined && previousShot.sequence_index >= shot.sequence_index;
+  return (
+    previousShot !== undefined &&
+    previousShot.scene_id === shot.scene_id &&
+    previousShot.sequence_index >= shot.sequence_index
+  );
 }
 
 export const PREDECESSOR_ORDER_WARNING = "Previous shot comes after this shot in the sequence";
@@ -119,4 +125,49 @@ export function takeActionErrorMessage(error: unknown, action: TakeAction): stri
     return `${subject}: ${missing}. Refresh and try again.`;
   }
   return `${subject}: ${error.message}`;
+}
+
+/** Longer bound for a flag that also enqueues a regeneration (the server does more work). */
+export const REGENERATE_REQUEST_TIMEOUT_MS = 60_000;
+
+export interface FlagErrorFeedback {
+  message: string;
+  /**
+   * The request may have succeeded on the server (flag saved, regeneration task created):
+   * the operator must check the Queue Monitor and take list instead of retrying blindly.
+   */
+  outcomeUnknown: boolean;
+}
+
+/** No HTTP answer, or a server failure: the server may have processed the request. */
+function isUncertainFailure(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.status === 0 || error.category === "timeout" || error.status >= 500;
+}
+
+/**
+ * Feedback for a failed `flag-continuity` request. The backend saves the flag before it
+ * enqueues the regeneration with `force_retry`, so after an uncertain failure a retry could
+ * start a second paid generation, and a 422 after regeneration may follow a saved flag.
+ */
+export function flagErrorFeedback(error: unknown, regenerate: boolean): FlagErrorFeedback {
+  if (regenerate && isUncertainFailure(error)) {
+    return {
+      message:
+        "The outcome is unknown: the continuity flag and a regeneration task may already exist. " +
+        "Check the Queue Monitor and refresh the take list before retrying, otherwise a second " +
+        "generation may be started.",
+      outcomeUnknown: true,
+    };
+  }
+  if (regenerate && error instanceof ApiError && error.status === 422) {
+    return {
+      message:
+        `The regeneration was refused: ${error.message.replace(/\.+$/, "")}. ` +
+        "The continuity flag may already be " +
+        "saved; refresh the take list to check it before retrying.",
+      outcomeUnknown: true,
+    };
+  }
+  return { message: takeActionErrorMessage(error, "flag"), outcomeUnknown: false };
 }

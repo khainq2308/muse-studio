@@ -583,7 +583,9 @@ describe("apiGetBlob (authenticated media)", () => {
 
   it("stops reading a stream once it exceeds the bound when no length is declared", async () => {
     let pulls = 0;
+    const cancelled = vi.fn();
     const stream = new ReadableStream<Uint8Array>({
+      cancel: cancelled,
       pull(controller) {
         pulls += 1;
         controller.enqueue(new Uint8Array(512));
@@ -603,6 +605,7 @@ describe("apiGetBlob (authenticated media)", () => {
       { category: "too_large" },
     );
     expect(pulls).toBeLessThan(10);
+    expect(cancelled).toHaveBeenCalledTimes(1);
   });
 
   it("normalizes JSON errors such as 404 into ApiError", async () => {

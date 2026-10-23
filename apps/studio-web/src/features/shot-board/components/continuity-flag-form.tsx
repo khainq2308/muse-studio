@@ -1,16 +1,19 @@
-import { Flag, LoaderCircle, X } from "lucide-react";
+import { Flag, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { QueueMonitorLink } from "@/features/shot-board/components/queue-monitor-link";
 import { isMockConnection, type Connection } from "@/features/shot-board/state";
 import {
   buildContinuityFlagRequest,
   takeLabel,
   type ContinuityFlagRequest,
+  type FlagErrorFeedback,
   type ShotTake,
 } from "@/features/shot-board/takes";
 import { cn } from "@/lib/utils";
 
 interface ContinuityFlagFormProps {
+  projectId: string;
   take: ShotTake;
   shotLabel: string;
   /** Connection chosen in Generation settings; required for "Regenerate now". */
@@ -19,10 +22,12 @@ interface ContinuityFlagFormProps {
   /** Why regeneration cannot be requested (no connection/model), or null when it can. */
   regenerateDisabledReason: string | null;
   isSubmitting: boolean;
-  /** Inline error from the last failed request (400/404/409/422/auth). */
-  errorMessage: string | null;
+  /** Feedback for the last failed request (400/404/409/422/auth or an unknown outcome). */
+  error: FlagErrorFeedback | null;
   onSubmit: (request: ContinuityFlagRequest) => void;
   onCancel: () => void;
+  /** Reload the take list, e.g. to check whether a request with an unknown outcome landed. */
+  onRefreshTakes: () => void;
 }
 
 const controlClass = cn(
@@ -37,15 +42,17 @@ const controlClass = cn(
  * it needs a separate confirmation step.
  */
 export function ContinuityFlagForm({
+  projectId,
   take,
   shotLabel,
   connection,
   modelId,
   regenerateDisabledReason,
   isSubmitting,
-  errorMessage,
+  error,
   onSubmit,
   onCancel,
+  onRefreshTakes,
 }: ContinuityFlagFormProps) {
   const idPrefix = useId();
   const [notes, setNotes] = useState(take.director_notes);
@@ -54,14 +61,34 @@ export function ContinuityFlagForm({
   const [confirming, setConfirming] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement | null>(null);
   const confirmCancelRef = useRef<HTMLButtonElement | null>(null);
-
-  useEffect(() => notesRef.current?.focus(), []);
-  useEffect(() => {
-    if (confirming) confirmCancelRef.current?.focus();
-  }, [confirming]);
+  const submitRef = useRef<HTMLButtonElement | null>(null);
+  const focusSubmitNext = useRef(false);
 
   const canRegenerate = !regenerateDisabledReason && Boolean(connection);
   const wantsRegenerate = regenerate && canRegenerate;
+
+  useEffect(() => notesRef.current?.focus(), []);
+  useEffect(() => {
+    if (confirming) {
+      confirmCancelRef.current?.focus();
+    } else if (focusSubmitNext.current) {
+      focusSubmitNext.current = false;
+      submitRef.current?.focus();
+    }
+  }, [confirming]);
+
+  const leaveConfirm = () => {
+    focusSubmitNext.current = true;
+    setConfirming(false);
+  };
+
+  // If Generation settings change while confirming so regeneration is no longer possible,
+  // drop the confirmation rather than sending a different request under its button.
+  useEffect(() => {
+    if (!confirming || wantsRegenerate) return;
+    focusSubmitNext.current = true;
+    setConfirming(false);
+  }, [confirming, wantsRegenerate]);
 
   const request = (): ContinuityFlagRequest =>
     buildContinuityFlagRequest({
@@ -97,7 +124,7 @@ export function ContinuityFlagForm({
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
         event.stopPropagation();
-        if (confirming) setConfirming(false);
+        if (confirming) leaveConfirm();
         else onCancel();
       }}
     >
@@ -117,13 +144,23 @@ export function ContinuityFlagForm({
         </Button>
       </div>
 
-      {errorMessage && (
-        <p
+      {error && (
+        <div
           role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+          data-outcome-unknown={error.outcomeUnknown ? "true" : undefined}
+          className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
         >
-          {errorMessage}
-        </p>
+          <p>{error.message}</p>
+          {error.outcomeUnknown && (
+            <div className="flex flex-wrap items-center gap-3">
+              <QueueMonitorLink projectId={projectId} label="Check the Queue Monitor" />
+              <Button type="button" size="sm" variant="outline" onClick={onRefreshTakes}>
+                <RefreshCw aria-hidden="true" />
+                Refresh takes
+              </Button>
+            </div>
+          )}
+        </div>
       )}
 
       <form
@@ -176,7 +213,7 @@ export function ContinuityFlagForm({
 
         {!confirming && (
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" size="sm" disabled={isSubmitting}>
+            <Button type="submit" size="sm" disabled={isSubmitting} ref={submitRef}>
               {isSubmitting ? (
                 <LoaderCircle className="animate-spin" aria-hidden="true" />
               ) : (
@@ -201,7 +238,7 @@ export function ContinuityFlagForm({
         )}
       </form>
 
-      {confirming && connection && (
+      {confirming && wantsRegenerate && connection && (
         <div
           role="alertdialog"
           aria-labelledby={`${idPrefix}-confirm-title`}
@@ -232,6 +269,7 @@ export function ContinuityFlagForm({
               size="sm"
               disabled={isSubmitting}
               onClick={() => {
+                if (!wantsRegenerate || !connection) return;
                 setConfirming(false);
                 onSubmit(request());
               }}
@@ -243,7 +281,7 @@ export function ContinuityFlagForm({
               size="sm"
               variant="outline"
               ref={confirmCancelRef}
-              onClick={() => setConfirming(false)}
+              onClick={leaveConfirm}
             >
               Back
             </Button>

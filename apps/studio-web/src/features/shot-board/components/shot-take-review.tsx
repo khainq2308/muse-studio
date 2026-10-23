@@ -16,6 +16,7 @@ import { shotLabel, type Connection, type ProjectShot } from "@/features/shot-bo
 import {
   buildContinuityFlagRequest,
   downstreamShotLabels,
+  flagErrorFeedback,
   sortTakes,
   takeActionErrorMessage,
   takeLabel,
@@ -63,12 +64,24 @@ export function ShotTakeReview({
   const [compareOpen, setCompareOpen] = useState(false);
   const [previewTakeId, setPreviewTakeId] = useState<string | null>(null);
   const [flagTakeId, setFlagTakeId] = useState<string | null>(null);
+  // Swapping A/B is a client-side view change: it must not refetch or remount the compare.
+  const [swapped, setSwapped] = useState(false);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const compareButtonRef = useRef<HTMLButtonElement | null>(null);
+  const focusCompareButtonNext = useRef(false);
+  const focusFlagButtonFor = useRef<string | null>(null);
 
   const comparePair =
     compareOpen && compareIds.length === 2 ? ([compareIds[0]!, compareIds[1]!] as const) : null;
   const compareQuery = useCompareTakes(projectId, shot.id, comparePair);
 
   const takes = useMemo(() => sortTakes(takesQuery.data ?? []), [takesQuery.data]);
+  const displayIds = swapped ? [...compareIds].reverse() : compareIds;
+  const comparison = useMemo(() => {
+    const data = compareQuery.data;
+    if (!data || !swapped) return data;
+    return { ...data, take_a: data.take_b, take_b: data.take_a };
+  }, [compareQuery.data, swapped]);
 
   const { reset: resetSelect } = selectMutation;
   const { reset: resetFlag } = flagMutation;
@@ -101,6 +114,33 @@ export function ShotTakeReview({
       ? flagVariablesTakeId
       : null;
   const takeById = new Map(takes.map((take) => [take.id, take]));
+  const flagFeedback = flagMutation.error
+    ? flagErrorFeedback(flagMutation.error, Boolean(flagMutation.variables?.request.regenerate_now))
+    : null;
+
+  const closeFlagForm = (takeId: string | null) => {
+    focusFlagButtonFor.current = takeId;
+    setFlagTakeId(null);
+  };
+  // Closing the flag form returns focus to the take's "Flag continuity" button.
+  useEffect(() => {
+    if (flagTakeId !== null || !focusFlagButtonFor.current) return;
+    const takeId = focusFlagButtonFor.current;
+    focusFlagButtonFor.current = null;
+    const buttons = panelRef.current?.querySelectorAll<HTMLButtonElement>("[data-flag-take]");
+    [...(buttons ?? [])].find((button) => button.dataset.flagTake === takeId)?.focus();
+  }, [flagTakeId]);
+
+  const closeCompare = () => {
+    focusCompareButtonNext.current = true;
+    setCompareOpen(false);
+  };
+  // Closing the compare (Close or Esc) returns focus to the "Compare A/B" button.
+  useEffect(() => {
+    if (compareOpen || !focusCompareButtonNext.current) return;
+    focusCompareButtonNext.current = false;
+    compareButtonRef.current?.focus();
+  }, [compareOpen]);
 
   const select = (takeId: string) => {
     resetFlag();
@@ -125,6 +165,7 @@ export function ShotTakeReview({
     });
   };
   const toggleCompare = (takeId: string) => {
+    setSwapped(false);
     setCompareIds((current) =>
       current.includes(takeId)
         ? current.filter((id) => id !== takeId)
@@ -138,16 +179,22 @@ export function ShotTakeReview({
     if (compareIds.length < 2) setCompareOpen(false);
   }, [compareIds.length]);
 
-  // A saved flag closes its form; the result is reported above the take list.
+  // A saved flag closes its form (focus returns to its button); the result shows above.
   const flagSucceeded = flagMutation.isSuccess;
+  const succeededFlagTakeId = flagSucceeded ? (flagMutation.variables?.takeId ?? null) : null;
   useEffect(() => {
-    if (flagSucceeded) setFlagTakeId(null);
-  }, [flagSucceeded]);
+    if (!flagSucceeded) return;
+    setFlagTakeId((current) => {
+      if (current !== null) focusFlagButtonFor.current = succeededFlagTakeId ?? current;
+      return null;
+    });
+  }, [flagSucceeded, succeededFlagTakeId]);
 
   const refresh = () => void takesQuery.refetch({ cancelRefetch: true });
 
   return (
     <section
+      ref={panelRef}
       aria-labelledby={headingId}
       data-testid={`shot-take-review-${shot.id}`}
       className="mt-4 space-y-4 rounded-lg border border-primary/40 bg-background/60 p-4"
@@ -217,12 +264,12 @@ export function ShotTakeReview({
           onDismiss={resetFlag}
         />
       )}
-      {flagMutation.error && flagTakeId === null && (
+      {flagFeedback && flagTakeId === null && (
         <p
           role="alert"
           className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
         >
-          {takeActionErrorMessage(flagMutation.error, "flag")}
+          {flagFeedback.message}
         </p>
       )}
 
@@ -247,6 +294,7 @@ export function ShotTakeReview({
               type="button"
               size="sm"
               variant="outline"
+              ref={compareButtonRef}
               disabled={compareIds.length !== 2}
               aria-expanded={compareOpen}
               onClick={() => setCompareOpen(true)}
@@ -255,8 +303,8 @@ export function ShotTakeReview({
               Compare A/B
             </Button>
             <span className="text-xs text-muted-foreground" aria-live="polite">
-              {compareIds.length === 2
-                ? `A: ${takeLabelFor(takeById, compareIds[0]!)} · B: ${takeLabelFor(takeById, compareIds[1]!)}`
+              {displayIds.length === 2
+                ? `A: ${takeLabelFor(takeById, displayIds[0]!)} · B: ${takeLabelFor(takeById, displayIds[1]!)}`
                 : `Choose two takes to compare (${compareIds.length}/2).`}
             </span>
           </div>
@@ -284,14 +332,14 @@ export function ShotTakeReview({
                   </Button>
                 </div>
               )}
-              {compareQuery.data && (
+              {comparison && (
                 <TakeCompare
-                  comparison={compareQuery.data}
+                  comparison={comparison}
                   selectingTakeId={selectMutation.isPending ? selectTakeId : null}
                   canSelect={!actionPending}
                   onSelect={select}
-                  onSwap={() => setCompareIds((current) => [...current].reverse())}
-                  onClose={() => setCompareOpen(false)}
+                  onSwap={() => setSwapped((current) => !current)}
+                  onClose={closeCompare}
                 />
               )}
             </div>
@@ -299,7 +347,7 @@ export function ShotTakeReview({
 
           <TakeList
             takes={takes}
-            compareIds={compareIds}
+            compareIds={displayIds}
             previewTakeId={previewTakeId}
             busyTakeId={busyTakeId}
             actionsEnabled={!actionPending}
@@ -313,21 +361,21 @@ export function ShotTakeReview({
             renderTakeDetail={(take) =>
               flagTakeId === take.id ? (
                 <ContinuityFlagForm
+                  projectId={projectId}
                   take={take}
                   shotLabel={shotLabel(shot)}
                   connection={connection}
                   modelId={modelId}
                   regenerateDisabledReason={regenerateDisabledReason}
                   isSubmitting={flagMutation.isPending}
-                  errorMessage={
-                    flagMutation.error ? takeActionErrorMessage(flagMutation.error, "flag") : null
-                  }
+                  error={flagFeedback}
+                  onRefreshTakes={refresh}
                   onSubmit={(request) =>
                     flagMutation.mutate({ shotId: shot.id, takeId: take.id, request })
                   }
                   onCancel={() => {
                     resetFlag();
-                    setFlagTakeId(null);
+                    closeFlagForm(take.id);
                   }}
                 />
               ) : null

@@ -1,13 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { apiGet, apiGetBlob, apiPatch, apiPost, type ApiJsonResponse } from "@/lib/api/client";
+import {
+  ApiError,
+  apiGet,
+  apiGetBlob,
+  apiPatch,
+  apiPost,
+  type ApiJsonResponse,
+} from "@/lib/api/client";
+import { shouldRetryApiRequest } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
 import type {
   BatchLaunchRequest,
   EnqueueTaskRequest,
   ShotUpdate,
 } from "@/features/shot-board/state";
-import type { ContinuityFlagRequest } from "@/features/shot-board/takes";
+import {
+  REGENERATE_REQUEST_TIMEOUT_MS,
+  type ContinuityFlagRequest,
+} from "@/features/shot-board/takes";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 export const SHOT_PATCH_PATH = "/api/v1/projects/{project_id}/shots/{shot_id}";
@@ -131,12 +142,28 @@ export function useCompareTakes(
   });
 }
 
+/** Media failures that repeating unchanged cannot fix, or that would re-download a large body. */
+function retryAssetMedia(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError) {
+    if (error.category === "timeout" || error.category === "too_large") return false;
+    if (error.status === 404) return false;
+  }
+  return shouldRetryApiRequest(failureCount, error);
+}
+
 /**
  * Bytes of one asset for an on-demand preview (`GET /api/v1/assets/{asset_id}/download`).
- * Asset IDs are immutable, so the Blob never goes stale; it is dropped from the cache shortly
- * after the last preview closes to release memory. Over-limit and missing assets are final.
+ * Asset IDs are immutable, so the Blob never goes stale. `gcTime` controls how long the
+ * Blob stays in memory after the last viewer unmounts: video previews use 0 so closing a
+ * preview releases it immediately. Timeouts, over-limit bodies and missing (404) assets
+ * are not retried automatically; the operator can retry explicitly.
  */
-export function useAssetMedia(assetId: string | null, maxBytes: number, enabled = true) {
+export function useAssetMedia(
+  assetId: string | null,
+  maxBytes: number,
+  options: { enabled?: boolean; gcTime?: number } = {},
+) {
+  const { enabled = true, gcTime = 30_000 } = options;
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   return useQuery({
     queryKey: queryKeys.assetMedia(sessionVersion, assetId ?? "", maxBytes),
@@ -148,7 +175,8 @@ export function useAssetMedia(assetId: string | null, maxBytes: number, enabled 
       }),
     enabled: enabled && Boolean(assetId),
     staleTime: Infinity,
-    gcTime: 30_000,
+    gcTime,
+    retry: retryAssetMedia,
   });
 }
 
@@ -220,7 +248,10 @@ export function useFlagTakeContinuity(projectId: string) {
       apiPost(
         "/api/v1/projects/{project_id}/shots/{shot_id}/takes/{take_id}/flag-continuity",
         request,
-        { pathParams: { project_id: scopeProjectId, shot_id: shotId, take_id: takeId } },
+        {
+          pathParams: { project_id: scopeProjectId, shot_id: shotId, take_id: takeId },
+          ...(request.regenerate_now ? { timeoutMs: REGENERATE_REQUEST_TIMEOUT_MS } : {}),
+        },
       ),
     onSettled: (_data, _error, variables) =>
       Promise.all([

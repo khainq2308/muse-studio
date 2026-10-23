@@ -48,9 +48,10 @@ function TakeMediaBody({
   emptyText = "No asset",
   enabled,
 }: TakeMediaProps & { enabled: boolean }) {
-  const query = useAssetMedia(assetId, maxBytes, enabled);
-  const url = useObjectUrl(query.data);
   const frame = variant === "frame";
+  // A closed video preview releases its Blob at once; small frames stay cached briefly.
+  const query = useAssetMedia(assetId, maxBytes, { enabled, gcTime: frame ? 30_000 : 0 });
+  const url = useObjectUrl(query.data);
   const boxClass =
     "flex aspect-video w-full items-center justify-center overflow-hidden rounded-md border border-border bg-muted/40 text-xs text-muted-foreground";
 
@@ -72,16 +73,20 @@ function TakeMediaBody({
 
   if (query.isError) {
     const tooLarge = query.error instanceof ApiError && query.error.category === "too_large";
+    // Over-limit and missing assets are final: retrying cannot change the outcome.
+    const final = tooLarge || (query.error instanceof ApiError && query.error.status === 404);
     return (
       <div className={cn(boxClass, "flex-col gap-2 p-2 text-center")} role="alert">
         <span>
           {frame
             ? tooLarge
               ? "Frame too large to preview"
-              : "Frame unavailable"
+              : query.error instanceof ApiError && query.error.status === 404
+                ? "Frame asset missing"
+                : "Frame unavailable"
             : takeActionErrorMessage(query.error, "preview")}
         </span>
-        {!tooLarge && (
+        {!final && (
           <Button
             type="button"
             size="sm"

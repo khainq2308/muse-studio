@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildContinuityFlagRequest,
   downstreamShotLabels,
+  flagErrorFeedback,
   isPredecessorOutOfOrder,
   sortTakes,
   takeActionErrorMessage,
@@ -47,8 +48,56 @@ describe("buildContinuityFlagRequest", () => {
   });
 });
 
+describe("flagErrorFeedback", () => {
+  it.each([
+    ["client timeout", new ApiError({ status: 0, detail: "t", category: "timeout" })],
+    ["network failure", new TypeError("Failed to fetch")],
+    ["gateway error", new ApiError({ status: 502, detail: "Bad gateway" })],
+    ["server error", new ApiError({ status: 500, detail: "boom" })],
+  ])("reports an unknown outcome for a regenerate request after a %s", (_name, error) => {
+    const feedback = flagErrorFeedback(error, true);
+    expect(feedback.outcomeUnknown).toBe(true);
+    expect(feedback.message).toMatch(/^The outcome is unknown/);
+    expect(feedback.message).not.toMatch(/not saved|Try again/);
+  });
+
+  it("does not claim a 422 after regenerate left the flag unsaved", () => {
+    const feedback = flagErrorFeedback(
+      new ApiError({ status: 422, detail: "Shot has blockers." }),
+      true,
+    );
+    expect(feedback).toEqual({
+      outcomeUnknown: true,
+      message:
+        "The regeneration was refused: Shot has blockers. The continuity flag may already be " +
+        "saved; refresh the take list to check it before retrying.",
+    });
+  });
+
+  it("keeps definite messages for requests without regeneration and for pre-save rejections", () => {
+    expect(
+      flagErrorFeedback(new ApiError({ status: 0, detail: "t", category: "timeout" }), false),
+    ).toEqual({
+      outcomeUnknown: false,
+      message: "The continuity flag was not saved: the request timed out. Try again.",
+    });
+    expect(
+      flagErrorFeedback(new ApiError({ status: 400, detail: "Connection disabled" }), true),
+    ).toEqual({
+      outcomeUnknown: false,
+      message: "The continuity flag was not saved: Connection disabled",
+    });
+  });
+});
+
 describe("isPredecessorOutOfOrder", () => {
   const shot = makeShot({ sequence_index: 3 });
+
+  it("ignores a previous shot in another scene", () => {
+    expect(
+      isPredecessorOutOfOrder(shot, makeShot({ scene_id: "scene-9", sequence_index: 7 })),
+    ).toBe(false);
+  });
 
   it("warns when the previous shot comes at or after the shot", () => {
     expect(isPredecessorOutOfOrder(shot, makeShot({ sequence_index: 5 }))).toBe(true);

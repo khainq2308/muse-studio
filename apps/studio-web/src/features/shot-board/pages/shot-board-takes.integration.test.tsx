@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -351,7 +351,7 @@ describe("Shot Board take review", () => {
     await user.click(within(confirm).getByRole("button", { name: "Confirm and regenerate" }));
 
     expect(await within(form).findByRole("alert")).toHaveTextContent(
-      "The continuity flag was not saved: Shot has Prompt Linter blockers.",
+      "The regeneration was refused: Shot has Prompt Linter blockers. The continuity flag may already be saved",
     );
 
     await user.click(within(form).getByRole("button", { name: "Flag and regenerate" }));
@@ -392,7 +392,12 @@ describe("Shot Board take review", () => {
       baseHandler(({ method, pathname }) =>
         method === "POST" && pathname.endsWith("/takes/take-1/flag-continuity")
           ? { status: 200, body: makeFlagResult({ director_notes: "Wrong prop." }) }
-          : undefined,
+          : method === "GET" && pathname === "/api/v1/queue/shots/shot-1/takes"
+            ? {
+                status: 200,
+                body: [{ ...takeOne, model_id: "studio-custom-video-v3" }, takeTwo],
+              }
+            : undefined,
       ),
     );
     mount();
@@ -415,9 +420,12 @@ describe("Shot Board take review", () => {
         continuity_flagged: true,
         director_notes: "Wrong prop.",
         regenerate_now: false,
-        model_id: "muse-video-mock-v1",
+        // The take's own model, not the server default `muse-video-mock-v1`.
+        model_id: "studio-custom-video-v3",
       },
     );
+    // A saved flag closes the form and returns focus to the take's flag button.
+    expect(within(panel).getByRole("button", { name: "Flag continuity on Take 1" })).toHaveFocus();
   });
 });
 
@@ -433,6 +441,13 @@ describe("Predecessor order warning", () => {
       }),
       makeShot({ id: "shot-2", sequence_index: 2, title: "Chase" }),
       makeShot({ id: "shot-3", sequence_index: 3, title: "Exit" }),
+      makeShot({
+        id: "shot-4",
+        scene_id: "scene-0",
+        sequence_index: 0,
+        title: "Prologue",
+        previous_shot_id: "shot-3",
+      }),
     ];
     const requests = stubApi(({ method, pathname }) => {
       if (pathname === "/api/v1/projects/project-1/shots" && method === "GET") {
@@ -456,6 +471,13 @@ describe("Predecessor order warning", () => {
     });
     mount();
 
+    // shot-4 points at a later shot of another scene: the backend only links shots within a
+    // scene, so no order warning is shown for it.
+    expect(
+      within(await screen.findByTestId("shot-card-shot-4")).queryByTestId(
+        "shot-predecessor-warning",
+      ),
+    ).not.toBeInTheDocument();
     const first = await screen.findByTestId("shot-card-shot-1");
     expect(within(first).getByTestId("shot-predecessor-warning")).toHaveTextContent(
       "Previous shot comes after this shot in the sequence: Shot 2 · Chase is #2; this shot is #1.",
@@ -483,5 +505,197 @@ describe("Predecessor order warning", () => {
         previous_shot_id: "shot-3",
       }),
     );
+  });
+});
+
+describe("Take review: uncertain outcomes, focus and sessions", () => {
+  it("reports an unknown outcome when a regenerate request times out, without inviting a retry", async () => {
+    stubObjectUrls();
+    const requests = stubApi(
+      baseHandler(({ method, pathname }) =>
+        method === "POST" && pathname.endsWith("/takes/take-1/flag-continuity")
+          ? { status: 504, body: { detail: "Gateway timeout" } }
+          : undefined,
+      ),
+    );
+    mount();
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await openReview("Shot 1 · Hero enters");
+    const panel = await screen.findByTestId("shot-take-review-shot-1");
+    await within(panel).findAllByRole("listitem");
+    await user.click(within(panel).getByRole("button", { name: "Flag continuity on Take 1" }));
+    const form = within(panel).getByTestId("continuity-flag-form-take-1");
+    await user.type(within(form).getByLabelText("Director notes"), "Lamp is missing.");
+    await user.click(within(form).getByRole("checkbox", { name: "Regenerate this shot now" }));
+    await user.click(within(form).getByRole("button", { name: "Flag and regenerate" }));
+    await user.click(within(form).getByRole("button", { name: "Confirm and regenerate" }));
+
+    const alert = await within(form).findByRole("alert");
+    expect(alert).toHaveAttribute("data-outcome-unknown", "true");
+    expect(alert).toHaveTextContent(
+      "The outcome is unknown: the continuity flag and a regeneration task may already exist.",
+    );
+    expect(alert).not.toHaveTextContent(/not saved|Try again/);
+    expect(within(alert).getByText("Check the Queue Monitor")).toBeInTheDocument();
+
+    const takeLoads = () =>
+      requests.filter((request) => request.pathname === "/api/v1/queue/shots/shot-1/takes").length;
+    const before = takeLoads();
+    await user.click(within(alert).getByRole("button", { name: "Refresh takes" }));
+    await waitFor(() => expect(takeLoads()).toBeGreaterThan(before));
+    expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
+  });
+
+  it("treats a network failure of a regenerate request as an unknown outcome", async () => {
+    stubObjectUrls();
+    stubApi(baseHandler());
+    const fetchMock = vi.mocked(fetch);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (init?.method === "POST") throw new TypeError("Failed to fetch");
+      return original(input, init);
+    });
+    mount();
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await openReview("Shot 1 · Hero enters");
+    const panel = await screen.findByTestId("shot-take-review-shot-1");
+    await within(panel).findAllByRole("listitem");
+    await user.click(within(panel).getByRole("button", { name: "Flag continuity on Take 1" }));
+    const form = within(panel).getByTestId("continuity-flag-form-take-1");
+    await user.type(within(form).getByLabelText("Director notes"), "Lamp is missing.");
+    await user.click(within(form).getByRole("checkbox", { name: "Regenerate this shot now" }));
+    await user.click(within(form).getByRole("button", { name: "Flag and regenerate" }));
+    await user.click(within(form).getByRole("button", { name: "Confirm and regenerate" }));
+
+    expect(await within(form).findByRole("alert")).toHaveAttribute("data-outcome-unknown", "true");
+  });
+
+  it("closes the compare with Esc, returns focus, and swaps A/B without refetching", async () => {
+    stubObjectUrls();
+    const requests = stubApi(
+      baseHandler(({ pathname }) =>
+        pathname === "/api/v1/projects/project-1/shots/shot-1/compare-takes"
+          ? { status: 200, body: makeComparison(takeOne, takeTwo) }
+          : undefined,
+      ),
+    );
+    mount();
+
+    const user = await openReview("Shot 1 · Hero enters");
+    const panel = await screen.findByTestId("shot-take-review-shot-1");
+    await within(panel).findAllByRole("listitem");
+    await user.click(within(panel).getByRole("checkbox", { name: "Compare Take 1" }));
+    await user.click(within(panel).getByRole("checkbox", { name: "Compare Take 2" }));
+    const compareButton = within(panel).getByRole("button", { name: "Compare A/B" });
+    await user.click(compareButton);
+
+    let compare = await within(panel).findByTestId("take-compare");
+    const heading = within(compare).getByRole("heading", { name: /A\/B compare/ });
+    expect(heading).toHaveFocus();
+    expect(heading).toHaveTextContent("Take 1 vs Take 2");
+
+    const swap = within(compare).getByRole("button", { name: "Swap A/B" });
+    await user.click(swap);
+    expect(within(panel).getByTestId("take-compare")).toBe(compare);
+    expect(heading).toHaveTextContent("Take 2 vs Take 1");
+    expect(within(compare).getByTestId("compare-side-A")).toHaveAccessibleName("Side A: Take 2");
+    expect(swap).toHaveFocus();
+    expect(
+      within(panel).getByRole("checkbox", { name: "Compare Take 2" }).parentElement,
+    ).toHaveTextContent("Compare (A)");
+    expect(requests.filter((request) => request.pathname.endsWith("/compare-takes"))).toHaveLength(
+      1,
+    );
+
+    await user.keyboard("{Escape}");
+    expect(within(panel).queryByTestId("take-compare")).not.toBeInTheDocument();
+    expect(compareButton).toHaveFocus();
+
+    await user.click(compareButton);
+    compare = await within(panel).findByTestId("take-compare");
+    await user.click(within(compare).getByRole("button", { name: "Close compare" }));
+    expect(compareButton).toHaveFocus();
+  });
+
+  it("returns focus from the confirm to the submit button and from the form to its trigger", async () => {
+    stubObjectUrls();
+    stubApi(baseHandler());
+    mount();
+
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await openReview("Shot 1 · Hero enters");
+    const panel = await screen.findByTestId("shot-take-review-shot-1");
+    await within(panel).findAllByRole("listitem");
+    const trigger = within(panel).getByRole("button", { name: "Flag continuity on Take 1" });
+    await user.click(trigger);
+    const form = within(panel).getByTestId("continuity-flag-form-take-1");
+    await user.type(within(form).getByLabelText("Director notes"), "Lamp.");
+    await user.click(within(form).getByRole("checkbox", { name: "Regenerate this shot now" }));
+    await user.click(within(form).getByRole("button", { name: "Flag and regenerate" }));
+
+    await user.click(within(form).getByRole("button", { name: "Back" }));
+    expect(within(form).getByRole("button", { name: "Flag and regenerate" })).toHaveFocus();
+
+    await user.click(within(form).getByRole("button", { name: "Flag and regenerate" }));
+    await user.keyboard("{Escape}");
+    expect(within(form).queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Flag and regenerate" })).toHaveFocus();
+
+    await user.click(within(form).getByRole("button", { name: "Cancel" }));
+    expect(within(panel).queryByTestId("continuity-flag-form-take-1")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("does not show takes loaded for a previous admin session", async () => {
+    stubObjectUrls();
+    let releaseOld: () => void = () => undefined;
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    let takeCalls = 0;
+    const handler = baseHandler();
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/v1/queue/shots/shot-1/takes") {
+        takeCalls += 1;
+        if (takeCalls === 1) {
+          await oldGate;
+          return json(200, [makeTake({ id: "take-old", take_number: 9 })]);
+        }
+        return json(200, [takeOne]);
+      }
+      const response = handler({
+        method: init?.method ?? "GET",
+        pathname: url.pathname,
+        search: url.search,
+        token: null,
+        body: undefined,
+      });
+      if (!response) return json(404, { detail: "Not mocked" });
+      return response instanceof Response ? response : json(response.status, response.body);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mount();
+
+    await openReview("Shot 1 · Hero enters");
+    await screen.findByText("Loading takes...");
+    act(() => useSessionStore.getState().setAdminToken("another-token"));
+    // The page closes take review for the new session.
+    await waitFor(() =>
+      expect(screen.queryByTestId("shot-take-review-shot-1")).not.toBeInTheDocument(),
+    );
+
+    await openReview("Shot 1 · Hero enters");
+    const panel = await screen.findByTestId("shot-take-review-shot-1");
+    await within(panel).findByTestId("take-take-1");
+    releaseOld();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(panel).queryByTestId("take-take-old")).not.toBeInTheDocument();
+    expect(takeCalls).toBe(2);
   });
 });

@@ -29,7 +29,10 @@ import {
   useShotTakes,
   useUpdateShot,
 } from "@/features/shot-board/api";
-import { buildContinuityFlagRequest } from "@/features/shot-board/takes";
+import {
+  REGENERATE_REQUEST_TIMEOUT_MS,
+  buildContinuityFlagRequest,
+} from "@/features/shot-board/takes";
 import { buildBatchLaunchRequest, buildEnqueueRequest } from "@/features/shot-board/state";
 import {
   makeBatchResult,
@@ -283,7 +286,10 @@ describe("Take review hooks", () => {
         connection_id: "conn-live",
         model_id: "muse-video-v1",
       },
-      { pathParams: { project_id: "project-1", shot_id: "shot-1", take_id: "take-1" } },
+      {
+        pathParams: { project_id: "project-1", shot_id: "shot-1", take_id: "take-1" },
+        timeoutMs: REGENERATE_REQUEST_TIMEOUT_MS,
+      },
     );
     expect(result.current.data?.regenerated_task_id).toBe("task-regen");
     for (const queryKey of [
@@ -292,6 +298,98 @@ describe("Take review hooks", () => {
       queryKeys.queueTasksPrefix(sessionVersion, "project-1"),
     ]) {
       expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
+  });
+});
+
+describe("Take review hooks: failures and sessions", () => {
+  it("invalidates shots, takes, comparisons and queue after a failed flag and keeps the default timeout", async () => {
+    mocks.apiPost.mockRejectedValueOnce(new ApiError({ status: 422, detail: "Refused" }));
+    const { invalidate, wrapper } = setup();
+    const { result } = renderHook(() => useFlagTakeContinuity("project-1"), { wrapper });
+
+    act(() =>
+      result.current.mutate({
+        shotId: "shot-1",
+        takeId: "take-1",
+        request: buildContinuityFlagRequest({
+          take: makeTake(),
+          flagged: true,
+          directorNotes: "Wrong prop.",
+        }),
+      }),
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // Without regeneration the request keeps the client default timeout.
+    expect(mocks.apiPost.mock.calls[0]?.[2]).toEqual({
+      pathParams: { project_id: "project-1", shot_id: "shot-1", take_id: "take-1" },
+    });
+    for (const queryKey of [
+      queryKeys.projectShots(sessionVersion, "project-1"),
+      queryKeys.shotTakesPrefix(sessionVersion, "project-1"),
+      queryKeys.shotTakeComparePrefix(sessionVersion, "project-1"),
+      queryKeys.queueTasksPrefix(sessionVersion, "project-1"),
+    ]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
+  });
+
+  it("never exposes a blob still loading from a previous admin session", async () => {
+    let resolveOld: (blob: Blob) => void = () => undefined;
+    const oldBlob = new Blob(["old"], { type: "image/png" });
+    const newBlob = new Blob(["new"], { type: "image/png" });
+    // Hooks rendered by earlier tests in this file stay mounted and refetch on a session
+    // change, so answer by asset ID and count only this asset's requests.
+    let sessionAssetCalls = 0;
+    mocks.apiGetBlob.mockImplementation(
+      (_path: string, options: { pathParams: { asset_id: string } }) => {
+        if (options.pathParams.asset_id !== "asset-session") {
+          return Promise.resolve(new Blob(["other"], { type: "image/png" }));
+        }
+        sessionAssetCalls += 1;
+        if (sessionAssetCalls === 1) {
+          return new Promise<Blob>((resolve) => {
+            resolveOld = resolve;
+          });
+        }
+        return Promise.resolve(newBlob);
+      },
+    );
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useAssetMedia("asset-session", 1024), { wrapper });
+    await waitFor(() => expect(sessionAssetCalls).toBe(1));
+    expect(result.current.data).toBeUndefined();
+
+    act(() => useSessionStore.getState().setAdminToken("next-session-token"));
+    await waitFor(() => expect(result.current.data).toBe(newBlob));
+    act(() => resolveOld(oldBlob));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(result.current.data).toBe(newBlob);
+    expect(sessionAssetCalls).toBe(2);
+    useSessionStore.getState().clearAdminToken();
+    mocks.apiGetBlob.mockReset();
+  });
+
+  it("does not retry media timeouts, over-limit bodies or missing assets", async () => {
+    const queryClient = new QueryClient(); // default retry policy is replaced by the hook's
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    for (const error of [
+      new ApiError({ status: 0, detail: "slow", category: "timeout", retryable: true }),
+      new ApiError({ status: 200, detail: "big", category: "too_large", retryable: false }),
+      new ApiError({ status: 404, detail: "gone" }),
+    ]) {
+      mocks.apiGetBlob.mockReset();
+      mocks.apiGetBlob.mockRejectedValue(error);
+      const { result, unmount } = renderHook(
+        () => useAssetMedia(`asset-${error.status}-${error.category}`, 1024),
+        { wrapper },
+      );
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(mocks.apiGetBlob).toHaveBeenCalledTimes(1);
+      unmount();
     }
   });
 });

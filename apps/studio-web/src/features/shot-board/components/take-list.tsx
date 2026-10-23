@@ -171,6 +171,7 @@ export function TakeList({
                     type="button"
                     size="sm"
                     variant="outline"
+                    data-flag-take={take.id}
                     onClick={() => onFlag(take.id)}
                     disabled={!actionsEnabled}
                     aria-label={`Flag continuity on ${label}`}
