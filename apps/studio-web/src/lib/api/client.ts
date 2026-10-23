@@ -538,6 +538,80 @@ export function apiDelete<T>(
   return apiRequest<T>(path, { ...options, method: "DELETE" });
 }
 
+export interface ApiGetBlobOptions extends Omit<ApiRequestOptions, "method" | "body"> {
+  /**
+   * Reject (category `too_large`) instead of buffering a body larger than this many bytes.
+   * The whole response is held in memory, so callers must choose a bound that fits a
+   * single on-demand preview.
+   */
+  maxBytes: number;
+}
+
+function mediaTooLargeError(status: number, maxBytes: number): ApiError {
+  return new ApiError({
+    status,
+    detail: `The file is larger than the ${Math.floor(maxBytes / (1024 * 1024))} MB in-browser preview limit.`,
+    category: "too_large",
+    retryable: false,
+  });
+}
+
+/** `image/png; charset=binary` -> `image/png`; empty when the server sent no type. */
+function mediaTypeOf(response: Response): string {
+  return (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+/**
+ * Fetch an authenticated binary resource (for example `GET /api/v1/assets/{asset_id}/download`)
+ * into a `Blob` whose `type` is the response media type. The admin token is sent as a header,
+ * which a plain `<img src>`/`<video src>` cannot do; callers turn the Blob into an object URL
+ * and must revoke it. Bodies above `maxBytes` are rejected from `Content-Length` before they
+ * are read, and the stream is cancelled as soon as the running total exceeds the bound when
+ * the length is missing or wrong.
+ */
+export function apiGetBlob(path: string, options: ApiGetBlobOptions): Promise<Blob> {
+  const { maxBytes, ...requestOptions } = options;
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+    return Promise.reject(new Error("apiGetBlob requires a positive maxBytes bound."));
+  }
+  const headers = new Headers(requestOptions.headers);
+  headers.set("Accept", "*/*");
+  return execute(
+    path,
+    { ...requestOptions, method: "GET", headers },
+    LONG_REQUEST_TIMEOUT_MS,
+    async (response) => {
+      if (!response.ok) return throwApiError(response);
+      const type = mediaTypeOf(response);
+      const declared = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > maxBytes) {
+        await response.body?.cancel().catch(() => undefined);
+        throw mediaTooLargeError(response.status, maxBytes);
+      }
+      if (!response.body) {
+        const blob = await response.blob();
+        if (blob.size > maxBytes) throw mediaTooLargeError(response.status, maxBytes);
+        return type && blob.type !== type ? new Blob([blob], { type }) : blob;
+      }
+
+      const reader = response.body.getReader();
+      const chunks: Uint8Array<ArrayBuffer>[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw mediaTooLargeError(response.status, maxBytes);
+        }
+        chunks.push(value as Uint8Array<ArrayBuffer>);
+      }
+      return new Blob(chunks, { type });
+    },
+  );
+}
+
 /** Download a file with the same authentication and error normalization as JSON requests. */
 export async function downloadFile(
   path: string,
