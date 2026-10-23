@@ -45,6 +45,14 @@ With `auto_apply_proposal=true` the existing Story Bible, scenes and shots are r
 - 409 when shots already have generated takes and `replace_existing` is not `true`; with `replace_existing=true`, takes, generation tasks and their dispatch leases are deleted explicitly before the pipeline records are rebuilt;
 - 409 (`retryable: true`) when a concurrent import wins the revision number race.
 
+## Prompt compilation
+
+`services/prompt_compiler.py` builds each shot's video prompt from fixed sections (style, subjects, environment, camera/composition, action, continuity, technical output) and lints it; `PipelineService` recompiles every shot of a project after each pipeline mutation and before batch launch, storing `prompt_final`, `negative_prompt`, `prompt_hash` (SHA-256 over the sections and the negative prompt) and the lint report.
+
+- **Action boundaries:** the ACTION section appends the shot's `action_start` / `action_end` only when they are non-empty, e.g. `Action: Hero watches the street. Starts: Hero crouches at the ledge. Ends: Hero stands and turns away.` A shot with both boundaries empty (or whitespace) produces the same prompt text and hash as before this change. Script-imported shots default to `in position` / `completes motion`, so those defaults now appear in the prompt.
+- **Dialogue is never sent:** `dialogue` stays on the shot for review but is not part of the prompt or its hash: video models do not speak and tend to render dialogue as on-screen text.
+- **Compatibility with older takes:** the compiler also computes the legacy hash (the hash the shot had before boundaries entered the prompt); it is never persisted. Batch launch with `only_changed=true` treats a selected take as current when its `prompt_hash` equals either the shot's current hash or that legacy hash (plus the existing model, connection and conditioning-frame checks), so takes rendered before the upgrade are not all invalidated. Consequence: a take that predates this change stays current until an edit changes the legacy hash (action, camera, composition, continuity notes, subjects, location, style, duration…); an edit that changes **only** `action_start`/`action_end` on such a shot is not detected — use `only_changed=false` or regenerate that shot. Takes rendered after the change carry the new hash, so boundary-only edits are detected for them. The single-shot enqueue (`POST /api/v1/queue/tasks`) does not apply this rule; its default idempotency key uses the current hash.
+
 ## HTTP access control
 
 All product API routers are mounted with the shared `verify_single_admin` dependency (`X-Studio-Admin-Token`, constant-time comparison). `/healthz` (liveness, no dependency checks) and `/readyz` (readiness: database and Redis reachable, 503 with per-check status otherwise) are intentionally public and return no secrets.
