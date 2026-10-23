@@ -94,7 +94,12 @@ async function mockApi(page: Page, replyStatus: 200 | 409) {
             limit: 50,
             offset: 0,
             has_more: false,
-            summary: { total_tasks: 1, active_tasks: 1, failed_tasks: 0 },
+            summary: {
+              total_tasks: 1,
+              active_tasks: 1,
+              failed_tasks: 0,
+              awaiting_input_tasks: answered ? 0 : 1,
+            },
           }
         : pathname === "/api/v1/projects"
           ? [testProject]
@@ -116,7 +121,7 @@ test("an operator answers a provider question with an option", async ({ page }) 
   const task = page.getByTestId("queue-task-task-awaiting-1");
   await expect(task.getByTestId("queue-task-state")).toHaveText("Awaiting input");
   await expect(page.getByTestId("queue-awaiting-input-banner")).toContainText(
-    "1 task on this page is waiting for your answer.",
+    "1 task in this project is waiting for your answer.",
   );
   const question = page.getByRole("region", { name: "Question" });
   await expect(question).toContainText(QUESTION_TEXT);

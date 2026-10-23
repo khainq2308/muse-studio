@@ -5,6 +5,8 @@ import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import { useQueueTaskAction, useQueueTaskReply, useQueueTasks } from "@/features/queue-monitor/api";
 import { QueueTaskList } from "@/features/queue-monitor/components/queue-task-list";
+import { AwaitingInputNotifications } from "@/features/queue-monitor/components/awaiting-input-notifications";
+import { useAwaitingInputAlert } from "@/features/queue-monitor/awaiting-input-alert";
 import {
   QUEUE_TASKS_PAGE_SIZE,
   QUEUE_TASK_STATES,
@@ -48,7 +50,9 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
     () => new Set([...pendingActionTaskIds, ...pendingReplyTaskIds]),
     [pendingActionTaskIds, pendingReplyTaskIds],
   );
-  const awaitingInputCount = tasks.filter((task) => task.state === "awaiting_input").length;
+  // Project-wide, independent of the filter and page being viewed.
+  const awaitingInputCount = summary?.awaiting_input_tasks ?? 0;
+  useAwaitingInputAlert(projectId, summary?.awaiting_input_tasks);
 
   // A new session must not show an action error (or pending state) from the previous one.
   const actionSessionVersion = useRef(sessionVersion);
@@ -145,18 +149,21 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
             <span className="font-medium text-foreground">{projectId}</span>.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={refreshQueue}
-          aria-busy={tasksQuery.isFetching}
-        >
-          <RefreshCw
-            className={cn("mr-2 size-4", tasksQuery.isFetching && "animate-spin")}
-            aria-hidden="true"
-          />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <AwaitingInputNotifications />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={refreshQueue}
+            aria-busy={tasksQuery.isFetching}
+          >
+            <RefreshCw
+              className={cn("mr-2 size-4", tasksQuery.isFetching && "animate-spin")}
+              aria-hidden="true"
+            />
+            Refresh
+          </Button>
+        </div>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-3" role="group" aria-label="Queue summary">
@@ -238,8 +245,8 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           <p className="flex items-center gap-2 font-medium">
             <MessageCircleQuestionMark className="size-4 text-warning" aria-hidden="true" />
             {awaitingInputCount === 1
-              ? "1 task on this page is waiting for your answer."
-              : `${awaitingInputCount} tasks on this page are waiting for your answer.`}
+              ? "1 task in this project is waiting for your answer."
+              : `${awaitingInputCount} tasks in this project are waiting for your answer.`}
           </p>
           {stateFilter !== "awaiting_input" && (
             <Button

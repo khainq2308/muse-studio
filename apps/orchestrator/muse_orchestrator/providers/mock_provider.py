@@ -6,7 +6,7 @@ from muse_orchestrator.providers.base import (
     VideoProvider, ProviderHealth, ModelCapability,
     ImageGenerationRequest, VideoGenerationRequest,
     ProviderTask, ProviderTaskStatus, StoredMedia, classify_http_error,
-    ErrorCategory, ProviderFailure,
+    ErrorCategory, ProviderFailure, CancelOutcome,
 )
 
 # Lưu trạng thái giả lập dùng chung trong tiến trình test để mô phỏng chính xác vòng đời bất đồng bộ
@@ -83,6 +83,13 @@ class MockVideoProvider(VideoProvider):
             409,
             False,
         )
+
+    async def cancel(self, task_id: str) -> CancelOutcome:
+        """No-op: mock tasks are not real upstream jobs, so cancel reports ``unsupported``.
+
+        The local cancel is the whole effect; a canceled task is never polled again.
+        """
+        return CancelOutcome.UNSUPPORTED
 
     async def download_result(self, result_ref: str, dest_dir: str) -> StoredMedia:
         os.makedirs(dest_dir, exist_ok=True)

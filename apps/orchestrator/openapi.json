@@ -3027,9 +3027,14 @@
         "type": "string"
       },
       "QueueTaskSummaryOut": {
+        "description": "Project-wide totals, independent of the state filter and page being viewed.",
         "properties": {
           "active_tasks": {
             "title": "Active Tasks",
+            "type": "integer"
+          },
+          "awaiting_input_tasks": {
+            "title": "Awaiting Input Tasks",
             "type": "integer"
           },
           "failed_tasks": {
@@ -3044,7 +3049,8 @@
         "required": [
           "total_tasks",
           "active_tasks",
-          "failed_tasks"
+          "failed_tasks",
+          "awaiting_input_tasks"
         ],
         "title": "QueueTaskSummaryOut",
         "type": "object"

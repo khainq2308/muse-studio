@@ -17,7 +17,7 @@ from muse_orchestrator.providers.base import (
     VideoProvider, ProviderHealth, ModelCapability,
     ImageGenerationRequest, VideoGenerationRequest,
     ProviderTask, ProviderTaskStatus, StoredMedia, ProviderFailure,
-    ErrorCategory, classify_http_error,
+    ErrorCategory, classify_http_error, CancelOutcome,
     QUESTION_KINDS, QUESTION_TEXT_MAX_CHARS, QUESTION_OPTIONS_MAX_ITEMS,
     QUESTION_OPTION_MAX_CHARS, ANSWER_TEXT_MAX_CHARS, ANSWER_CHOICE_MAX_CHARS,
 )
@@ -311,6 +311,37 @@ _STATUS_MAP = {
 }
 
 
+_CANCELLED_STATUSES = frozenset({"cancelled", "canceled"})
+# Normalised error code of a task the provider reports as cancelled; the queue maps it to
+# the non-retryable ``upstream_cancelled`` category instead of a generation failure.
+CANCELLED_ERROR_CODE = "cancelled"
+# Cancel is best effort and runs after the local cancel is committed: keep it short.
+_CANCEL_TIMEOUT_SECONDS = 10.0
+
+
+def _cancel_outcome_for_error(status_code: int, body_text: str) -> CancelOutcome | None:
+    """Map a cancel-route error response to an outcome, or None for a real failure.
+
+    The gateway answers an unknown task with its error envelope
+    (``{"error": {"code": "not_found", ...}}``) and a terminal task with 409. A gateway
+    without the cancel route answers FastAPI's default ``404 {"detail": "Not Found"}`` (or
+    405), which means cancel is not supported, not that the task is unknown.
+    """
+    if status_code == 409:
+        return CancelOutcome.ALREADY_FINISHED
+    if status_code == 405:
+        return CancelOutcome.UNSUPPORTED
+    if status_code != 404:
+        return None
+    try:
+        data = json.loads(body_text) if body_text else None
+    except (ValueError, RecursionError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        return CancelOutcome.NOT_FOUND
+    return CancelOutcome.UNSUPPORTED
+
+
 # Image and video tasks are polled on different muse2api routes, but the queue stores
 # only an opaque external id; tag image ids so get_task can pick the right route.
 _IMAGE_TASK_PREFIX = "image:"
@@ -583,13 +614,16 @@ class Muse2ApiAdapter(VideoProvider):
         raw_status = _bounded_str(data.get("status", "running"), "status", _MAX_STATUS_CHARS).lower()
         status = _STATUS_MAP.get(raw_status, "running")
         error = data.get("error")
+        error_code = _provider_error_code(error)
+        if raw_status in _CANCELLED_STATUSES and error_code is None:
+            error_code = CANCELLED_ERROR_CODE
         return ProviderTaskStatus(
             external_task_id=task_id,
             status=status,
             result_media_url=_result_media_url(data),
             error_message=_provider_error_message(error),
             account_used=_optional_bounded_str(data.get("account_id"), "account_id", _MAX_ACCOUNT_ID_CHARS),
-            error_code=_provider_error_code(error),
+            error_code=error_code,
             question=_parse_question(data.get("question")) if status == "needs_input" else None,
         )
 
@@ -619,6 +653,45 @@ class Muse2ApiAdapter(VideoProvider):
                 ) from exc
             raise
         return self._status_from_view(task_id, data)
+
+    async def cancel(self, task_id: str) -> CancelOutcome:
+        """Ask the gateway to cancel a task (``POST .../{id}/cancel``, no body).
+
+        200 with ``status: cancelled`` -> CANCELLED; 409 or an already terminal view ->
+        ALREADY_FINISHED; 404 with the gateway error envelope -> NOT_FOUND; a 404 without
+        the envelope or 405 (gateway without the route) -> UNSUPPORTED. Other HTTP errors,
+        network errors and malformed bodies raise ProviderFailure. Image tasks
+        (``image:`` external ids) use the image route. Uses a short timeout because the
+        caller treats cancel as best effort.
+        """
+        url = f"{self._task_route(task_id)}/cancel"
+        secrets = [self.api_key or ""]
+        async with self._client(min(self.timeout, _CANCEL_TIMEOUT_SECONDS)) as client:
+            try:
+                async with client.stream("POST", url, headers=self._headers()) as resp:
+                    status_code = resp.status_code
+                    if status_code >= 400:
+                        err_body = await _read_limited_error_body(resp, limit=4096)
+                        outcome = _cancel_outcome_for_error(status_code, err_body)
+                        if outcome is not None:
+                            return outcome
+                        raise classify_http_error(status_code, SecretRedactor.redact_text(err_body, secrets))
+                    body = await _read_limited_success_body(resp)
+            except httpx.RequestError as exc:
+                safe_msg = SecretRedactor.redact_text(str(exc), secrets)
+                raise ProviderFailure(ErrorCategory.TRANSIENT_NETWORK, safe_msg, retryable=True) from exc
+        data = _json_bytes_or_fail(body, status_code)
+        raw_status = _bounded_str(data.get("status", ""), "status", _MAX_STATUS_CHARS).lower()
+        if raw_status in _CANCELLED_STATUSES:
+            return CancelOutcome.CANCELLED
+        if _STATUS_MAP.get(raw_status) in ("succeeded", "failed"):
+            return CancelOutcome.ALREADY_FINISHED
+        raise ProviderFailure(
+            ErrorCategory.INVALID_REQUEST,
+            "Provider did not confirm the cancellation.",
+            status_code,
+            False,
+        )
 
     def _is_provider_origin(self, url: str) -> bool:
         origin = _origin(url)

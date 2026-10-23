@@ -20,7 +20,12 @@ import pytest
 
 from muse_orchestrator.core.config import settings
 from muse_orchestrator.providers import muse2api_adapter
-from muse_orchestrator.providers.base import ImageGenerationRequest, VideoGenerationRequest
+from muse_orchestrator.providers.base import (
+    CancellableProvider,
+    CancelOutcome,
+    ImageGenerationRequest,
+    VideoGenerationRequest,
+)
 from muse_orchestrator.providers.muse2api_adapter import Muse2ApiAdapter
 
 BASE = "http://muse2api.test"
@@ -241,6 +246,132 @@ async def test_reply_rejects_malformed_answers_before_sending(answer) -> None:
     assert seen == []
 
 
+async def test_reply_returning_follow_up_question_is_still_parsed() -> None:
+    """Older gateways answered a reply with ``needs_input``; a follow-up question is kept."""
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_NEEDS_INPUT), [])
+    status = await adapter.reply("task_v1", {"text": "hi"})
+    assert status.status == "needs_input" and status.question == QUESTION
+
+
+# --- task cancel --------------------------------------------------------------------------
+
+VIDEO_TASK_CANCELLED = {
+    **VIDEO_TASK_QUEUED, "status": "cancelled", "question": None,
+    "error": {"message": "cancelled by client", "code": "cancelled"},
+}
+NOT_FOUND_ENVELOPE = {"error": {"message": "Task not found.", "type": "invalid_request_error",
+                                "code": "not_found"}}
+
+
+def test_adapter_and_mock_implement_the_optional_cancel_capability() -> None:
+    from muse_orchestrator.providers.mock_provider import MockVideoProvider
+
+    assert isinstance(Muse2ApiAdapter(BASE), CancellableProvider)
+    assert isinstance(MockVideoProvider(), CancellableProvider)
+
+
+async def test_mock_provider_cancel_is_unsupported() -> None:
+    from muse_orchestrator.providers.mock_provider import MockVideoProvider
+
+    assert await MockVideoProvider().cancel("mock_vid_1") == CancelOutcome.UNSUPPORTED
+
+
+async def test_cancel_posts_without_body_to_video_route() -> None:
+    seen: list[httpx.Request] = []
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_CANCELLED), seen)
+    assert await adapter.cancel("task_v1") == CancelOutcome.CANCELLED
+    assert seen[0].method == "POST" and seen[0].url.path == "/v1/videos/task_v1/cancel"
+    assert seen[0].content == b""
+    assert seen[0].headers["Authorization"] == "Bearer contract-key"
+
+
+async def test_cancel_routes_image_tasks_to_image_cancel_route() -> None:
+    seen: list[httpx.Request] = []
+    view = {**IMAGE_TASK_QUEUED, "status": "cancelled", "question": None,
+            "error": {"message": "cancelled by client", "code": "cancelled"}}
+    adapter = _adapter(lambda _r: httpx.Response(200, json=view), seen)
+    assert await adapter.cancel("image:task_i1") == CancelOutcome.CANCELLED
+    assert seen[0].url.path == "/v1/images/generations/task_i1/cancel"
+
+
+@pytest.mark.parametrize(("status_code", "body", "expected"), [
+    (409, {"error": {"message": "Task already finished.", "code": "conflict"}}, CancelOutcome.ALREADY_FINISHED),
+    (404, NOT_FOUND_ENVELOPE, CancelOutcome.NOT_FOUND),
+    # Gateways without the cancel route (public upstream 949f326): FastAPI default 404 / 405.
+    (404, {"detail": "Not Found"}, CancelOutcome.UNSUPPORTED),
+    (404, None, CancelOutcome.UNSUPPORTED),
+    (405, {"detail": "Method Not Allowed"}, CancelOutcome.UNSUPPORTED),
+])
+async def test_cancel_error_responses_map_to_outcomes(status_code, body, expected) -> None:
+    def handler(_r: httpx.Request) -> httpx.Response:
+        if body is None:
+            return httpx.Response(status_code, text="<html>Not Found</html>")
+        return httpx.Response(status_code, json=body)
+
+    adapter = _adapter(handler, [])
+    assert await adapter.cancel("task_v1") == expected
+
+
+async def test_cancel_of_an_already_terminal_view_is_already_finished() -> None:
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_DONE), [])
+    assert await adapter.cancel("task_v1") == CancelOutcome.ALREADY_FINISHED
+
+
+async def test_cancel_unconfirmed_status_is_a_non_retryable_failure() -> None:
+    adapter = _adapter(lambda _r: httpx.Response(200, json={**VIDEO_TASK_QUEUED, "status": "running"}), [])
+    with pytest.raises(Exception) as excinfo:
+        await adapter.cancel("task_v1")
+    assert excinfo.value.category.value == "invalid_request"
+    assert excinfo.value.retryable is False
+
+
+@pytest.mark.parametrize(("status_code", "category"), [
+    (401, "auth_failed"), (500, "upstream_5xx"), (400, "invalid_request"),
+])
+async def test_cancel_other_http_errors_raise_classified_failures(status_code, category) -> None:
+    adapter = _adapter(lambda _r: httpx.Response(status_code, json={"error": {"code": "x"}}), [])
+    with pytest.raises(Exception) as excinfo:
+        await adapter.cancel("task_v1")
+    assert excinfo.value.category.value == category
+
+
+async def test_cancel_network_error_is_redacted_transient_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused for contract-key", request=request)
+
+    adapter = _adapter(handler, [])
+    with pytest.raises(Exception) as excinfo:
+        await adapter.cancel("task_v1")
+    assert excinfo.value.category.value == "transient_network"
+    assert "contract-key" not in str(excinfo.value)
+
+
+async def test_cancel_uses_a_short_timeout() -> None:
+    seen: list[httpx.Request] = []
+    adapter = Muse2ApiAdapter(BASE, "contract-key", timeout=120.0, transport=httpx.MockTransport(
+        lambda r: (seen.append(r), httpx.Response(200, json=VIDEO_TASK_CANCELLED))[1]
+    ))
+    await adapter.cancel("task_v1")
+    assert seen[0].extensions["timeout"]["read"] <= 10.0
+
+
+@pytest.mark.parametrize("raw_status", ["cancelled", "canceled"])
+async def test_polled_cancelled_task_is_failed_with_cancelled_code(raw_status) -> None:
+    view = {**VIDEO_TASK_QUEUED, "status": raw_status, "question": None, "error": None}
+    adapter = _adapter(lambda _r: httpx.Response(200, json=view), [])
+    status = await adapter.get_task("task_v1")
+    assert status.status == "failed"
+    assert status.error_code == "cancelled"
+
+
+async def test_polled_cancelled_task_keeps_gateway_error_code_and_message() -> None:
+    adapter = _adapter(lambda _r: httpx.Response(200, json=VIDEO_TASK_CANCELLED), [])
+    status = await adapter.get_task("task_v1")
+    assert status.status == "failed"
+    assert status.error_code == "cancelled"
+    assert status.error_message == "cancelled by client"
+
+
 # --- live gateway -------------------------------------------------------------------------
 
 LIVE_URL = os.environ.get("MUSE2API_CONTRACT_URL", "").rstrip("/")
@@ -308,6 +439,15 @@ async def test_live_video_round_trip(www222fff, tmp_path) -> None:
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_streams", media.local_path],
                                capture_output=True, text=True, timeout=60)
         assert probe.returncode == 0, probe.stderr[:500]
+
+
+@live
+async def test_live_cancel_of_unknown_task_never_claims_success() -> None:
+    """CI pins public upstream 949f326, which has no cancel route (``unsupported``); a
+    gateway with the route answers an unknown id with its ``not_found`` envelope."""
+    adapter = Muse2ApiAdapter(LIVE_URL, LIVE_KEY)
+    outcome = await adapter.cancel("musestudio-contract-unknown-task")
+    assert outcome in (CancelOutcome.UNSUPPORTED, CancelOutcome.NOT_FOUND)
 
 
 @live

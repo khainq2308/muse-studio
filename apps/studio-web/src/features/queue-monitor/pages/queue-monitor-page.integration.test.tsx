@@ -43,7 +43,7 @@ const page: QueueTaskPage = {
   limit: 50,
   offset: 0,
   has_more: false,
-  summary: { total_tasks: 1, active_tasks: 1, failed_tasks: 0 },
+  summary: { total_tasks: 1, active_tasks: 1, failed_tasks: 0, awaiting_input_tasks: 0 },
 };
 
 function json(body: unknown, status = 200): Response {

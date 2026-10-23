@@ -6,6 +6,8 @@ driver is not available in CI, so no test here talks to a live muse2api.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import tempfile
 from typing import Any
@@ -31,6 +33,7 @@ from muse_orchestrator.models.domain import (  # noqa: E402
     ShotRecord,
 )
 from muse_orchestrator.providers.base import (  # noqa: E402
+    CancelOutcome,
     ErrorCategory,
     ProviderFailure,
     ProviderTaskStatus,
@@ -70,6 +73,11 @@ class FakeGateway:
         self.replies: list[tuple[str, dict[str, str]]] = []
         self.reply_error: ProviderFailure | None = None
         self.after_reply = ProviderTaskStatus(external_task_id="ext_1", status="running")
+        self.cancels: list[str] = []
+        # CancelOutcome to return, an exception to raise, or "hang" to never answer.
+        self.cancel_result: Any = CancelOutcome.CANCELLED
+        self.local_state_at_cancel: QueueTaskState | None = None
+        self.cancel_task_id: str | None = None
 
     def ask(self, question: dict[str, Any] | None = QUESTION) -> None:
         self.status = ProviderTaskStatus(
@@ -79,6 +87,18 @@ class FakeGateway:
 
     async def get_task(self, task_id: str) -> ProviderTaskStatus:
         return self.status
+
+    async def cancel(self, task_id: str) -> CancelOutcome:
+        self.cancels.append(task_id)
+        if self.cancel_task_id is not None:
+            # The local cancel must already be committed when the provider is contacted.
+            async with STATE["maker"]() as db:
+                self.local_state_at_cancel = (await db.get(GenerationTaskRecord, self.cancel_task_id)).state
+        if self.cancel_result == "hang":
+            await asyncio.sleep(3600)
+        if isinstance(self.cancel_result, BaseException):
+            raise self.cancel_result
+        return self.cancel_result
 
     async def reply(self, task_id: str, answer: dict[str, str]) -> ProviderTaskStatus:
         self.replies.append((task_id, dict(answer)))
@@ -210,6 +230,11 @@ async def test_poll_needs_input_stores_question_without_consuming_polls(client: 
     assert listed["total"] == 1
     assert listed["items"][0]["pending_input"] == QUESTION
     assert listed["summary"]["active_tasks"] == 1
+    assert listed["summary"]["awaiting_input_tasks"] == 1
+    # The summary is project-wide: a filter that hides the task does not hide the count.
+    other = (await client.get("/api/v1/queue/tasks", params={"state": "failed"})).json()
+    assert other["items"] == []
+    assert other["summary"]["awaiting_input_tasks"] == 1
 
 
 async def test_answered_elsewhere_returns_task_to_running(client: AsyncClient) -> None:
@@ -398,6 +423,112 @@ async def test_cancel_awaiting_task_is_allowed_and_pause_is_not(client: AsyncCli
     assert again.status_code == 409
     missing = await client.post("/api/v1/queue/tasks/tsk_missing/cancel")
     assert missing.status_code == 404
+
+
+# --- cancel propagation -------------------------------------------------------------------
+
+
+async def test_cancel_awaiting_task_propagates_to_provider_after_local_commit(client: AsyncClient) -> None:
+    task_id, _cid, _shot = await _awaiting_task(client)
+    gateway: FakeGateway = STATE["gateway"]
+    gateway.cancel_task_id = task_id
+    response = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["state"] == "canceled"
+    assert gateway.cancels == ["ext_1"]
+    assert gateway.local_state_at_cancel == QueueTaskState.CANCELED
+    assert body["history_log"][-2:] == ["Canceled by operator.", "Provider cancel: cancelled"]
+
+
+@pytest.mark.parametrize(("result", "label"), [
+    (CancelOutcome.UNSUPPORTED, "unsupported"),
+    (CancelOutcome.ALREADY_FINISHED, "already finished"),
+    (CancelOutcome.NOT_FOUND, "not found"),
+    (ProviderFailure(ErrorCategory.UPSTREAM_5XX, "boom", 502, True), "failed (upstream_5xx)"),
+    (ProviderFailure(ErrorCategory.AUTH_FAILED, "bad key", 401, False), "failed (auth_failed)"),
+    (RuntimeError("unexpected"), "failed (RuntimeError)"),
+])
+async def test_cancel_running_task_records_provider_outcome(client: AsyncClient, result, label) -> None:
+    task_id, _cid, shot_id = await _running_task(client)
+    STATE["gateway"].cancel_result = result
+    response = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "canceled"
+    assert response.json()["history_log"][-1] == f"Provider cancel: {label}"
+    assert (await _load(task_id)).state == QueueTaskState.CANCELED
+    assert await _shot_state(shot_id) == ShotGenerationState.CANCELED
+
+
+async def test_provider_cancel_failure_is_logged_redacted(client: AsyncClient, caplog) -> None:
+    task_id, _cid, _shot = await _running_task(client)
+    STATE["gateway"].cancel_result = ProviderFailure(
+        ErrorCategory.UPSTREAM_5XX, f"gateway echoed {SECRET_KEY}", 500, True
+    )
+    with caplog.at_level(logging.WARNING, logger="muse_orchestrator.services.generation_queue"):
+        response = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert response.status_code == 200
+    assert "Provider cancel for task" in caplog.text
+    assert SECRET_KEY not in caplog.text
+    assert SECRET_KEY not in str(response.json())
+
+
+async def test_provider_cancel_timeout_does_not_block_the_local_cancel(client: AsyncClient, monkeypatch) -> None:
+    monkeypatch.setattr(generation_queue, "PROVIDER_CANCEL_TIMEOUT_SECONDS", 0.05)
+    task_id, _cid, _shot = await _running_task(client)
+    STATE["gateway"].cancel_result = "hang"
+    response = await asyncio.wait_for(client.post(f"/api/v1/queue/tasks/{task_id}/cancel"), timeout=5)
+    assert response.status_code == 200
+    assert response.json()["state"] == "canceled"
+    assert response.json()["history_log"][-1] == "Provider cancel: failed (timeout)"
+
+
+async def test_provider_without_cancel_capability_is_recorded_as_unsupported(
+    client: AsyncClient, monkeypatch
+) -> None:
+    task_id, _cid, _shot = await _running_task(client)
+
+    class NoCancel:
+        async def get_task(self, task_id: str) -> ProviderTaskStatus:
+            return ProviderTaskStatus(external_task_id=task_id, status="running")
+
+    monkeypatch.setattr(generation_queue, "build_provider", lambda conn, account=None: NoCancel())
+    response = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert response.status_code == 200
+    assert response.json()["history_log"][-1] == "Provider cancel: unsupported"
+
+
+async def test_cancel_without_provider_job_does_not_contact_provider(client: AsyncClient) -> None:
+    pid, cid, shots = await _setup(client)
+    task_id = (await client.post(
+        "/api/v1/queue/tasks", json={"shot_id": shots[0]["id"], "connection_id": cid}
+    )).json()["id"]
+    response = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert response.status_code == 200
+    assert STATE["gateway"].cancels == []
+    assert not any(line.startswith("Provider cancel:") for line in response.json()["history_log"])
+
+
+async def test_cancel_paused_task_stays_local(client: AsyncClient) -> None:
+    task_id, _cid, _shot = await _running_task(client)
+    assert (await client.post(f"/api/v1/queue/tasks/{task_id}/pause")).status_code == 200
+    response = await client.post(f"/api/v1/queue/tasks/{task_id}/cancel")
+    assert response.status_code == 200
+    assert STATE["gateway"].cancels == []
+
+
+async def test_polled_upstream_cancel_is_terminal_and_not_a_generation_failure(client: AsyncClient) -> None:
+    task_id, _cid, shot_id = await _awaiting_task(client)
+    STATE["gateway"].status = ProviderTaskStatus(
+        external_task_id="ext_1", status="failed",
+        error_message="cancelled by client", error_code="cancelled",
+    )
+    task = await _step(task_id)
+    assert task.state == QueueTaskState.FAILED
+    assert task.error_category == ErrorCategory.UPSTREAM_CANCELLED.value == "upstream_cancelled"
+    assert task.retryable is False
+    assert task.pending_input_json is None
+    assert await _shot_state(shot_id) == ShotGenerationState.FAILED
 
 
 async def test_recovery_reschedules_awaiting_tasks(client: AsyncClient) -> None:

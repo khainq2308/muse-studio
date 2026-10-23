@@ -21,6 +21,9 @@ class ErrorCategory(str, enum.Enum):
     INPUT_NOT_PENDING = "input_not_pending"
     # The provider asked the operator a question and gave up waiting for an answer.
     INPUT_TIMEOUT = "input_timeout"
+    # The provider reports the task as cancelled (by a client, an operator or a gateway
+    # restart). Terminal and not retryable; never reported as a generation failure.
+    UPSTREAM_CANCELLED = "upstream_cancelled"
 
 
 @dataclass
@@ -132,6 +135,30 @@ class InteractiveProvider(Protocol):
     """
 
     async def reply(self, task_id: str, answer: dict[str, str]) -> ProviderTaskStatus: ...
+
+
+class CancelOutcome(str, enum.Enum):
+    """Result of asking a provider to cancel one of its tasks (best effort)."""
+
+    CANCELLED = "cancelled"
+    # The provider has no cancel route (older/upstream gateway, mock provider).
+    UNSUPPORTED = "unsupported"
+    # The provider task already reached a terminal state.
+    ALREADY_FINISHED = "already_finished"
+    # The provider does not know the task id.
+    NOT_FOUND = "not_found"
+
+
+@runtime_checkable
+class CancellableProvider(Protocol):
+    """Optional capability: cancel a provider task.
+
+    Kept separate from :class:`VideoProvider` so existing providers and test doubles stay
+    valid. Returns a :class:`CancelOutcome`; transport and unexpected HTTP failures raise
+    :class:`ProviderFailure`. Callers treat it as best effort.
+    """
+
+    async def cancel(self, task_id: str) -> CancelOutcome: ...
 
 
 def classify_http_error(status_code: int, body_text: str = "") -> ProviderFailure:

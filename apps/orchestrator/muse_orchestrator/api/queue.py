@@ -88,9 +88,13 @@ class EnqueuedQueueTaskOut(QueueTaskOut):
 
 
 class QueueTaskSummaryOut(BaseModel):
+    """Project-wide totals, independent of the state filter and page being viewed."""
+
     total_tasks: int
     active_tasks: int
     failed_tasks: int
+    # Tasks waiting for an operator answer (a subset of active_tasks).
+    awaiting_input_tasks: int
 
 
 class QueueTaskPageOut(BaseModel):
