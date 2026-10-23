@@ -394,6 +394,7 @@ class StudioRepository:
             "total_tasks": sum(by_state.values()),
             "active_tasks": active,
             "failed_tasks": failed,
+            "awaiting_input_tasks": by_state.get(QueueTaskState.AWAITING_INPUT.value, 0),
         }
 
     async def save_queue_task(

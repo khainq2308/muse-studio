@@ -31,6 +31,7 @@ from muse_orchestrator.models.domain import (
 from muse_orchestrator.providers.base import (
     VideoProvider, ImageGenerationRequest, VideoGenerationRequest,
     ProviderFailure, ErrorCategory, StoredMedia, ProviderTaskStatus, InteractiveProvider,
+    CancellableProvider, CancelOutcome,
 )
 from muse_orchestrator.services.arq_dispatch import generation_step_token
 from muse_orchestrator.services.asset_storage import (
@@ -74,6 +75,23 @@ AWAITING_INPUT_POLL_SECONDS = 15.0
 # After an answer the provider resumes quickly; poll soon to pick up the new status.
 AFTER_REPLY_POLL_SECONDS = 2.0
 _GATEWAY_INPUT_TIMEOUT_CODE = "input_timeout"
+# Error code of a task the provider reports as cancelled (see the muse2api adapter).
+_GATEWAY_CANCELLED_CODE = "cancelled"
+_UPSTREAM_FAILURE_CATEGORIES = {
+    _GATEWAY_INPUT_TIMEOUT_CODE: ErrorCategory.INPUT_TIMEOUT.value,
+    _GATEWAY_CANCELLED_CODE: ErrorCategory.UPSTREAM_CANCELLED.value,
+}
+
+# Operator cancel is propagated to the provider best effort, after the local cancel is
+# committed, and only for tasks that own a live provider job.
+PROVIDER_CANCEL_TIMEOUT_SECONDS = 12.0
+_PROVIDER_CANCEL_STATES = (QueueTaskState.RUNNING, QueueTaskState.AWAITING_INPUT)
+_CANCEL_OUTCOME_LABELS = {
+    CancelOutcome.CANCELLED: "cancelled",
+    CancelOutcome.UNSUPPORTED: "unsupported",
+    CancelOutcome.ALREADY_FINISHED: "already finished",
+    CancelOutcome.NOT_FOUND: "not found",
+}
 _HISTORY_TEXT_MAX_CHARS = 500
 
 # Dispatch/poll leases protect one in-flight provider call. Connection timeouts are
@@ -1553,10 +1571,8 @@ class GenerationQueueService:
             if lease is not None:
                 await db.delete(lease)
             task.state = QueueTaskState.FAILED
-            task.error_category = (
-                ErrorCategory.INPUT_TIMEOUT.value
-                if p_status.error_code == _GATEWAY_INPUT_TIMEOUT_CODE
-                else "upstream_generation_failed"
+            task.error_category = _UPSTREAM_FAILURE_CATEGORIES.get(
+                p_status.error_code or "", "upstream_generation_failed"
             )
             task.retryable = False
             task.error_message_redacted = SecretRedactor.redact_text(p_status.error_message or "Upstream reported generation failed.", [raw_secret])
@@ -1645,6 +1661,32 @@ class GenerationQueueService:
         return task
 
     @staticmethod
+    async def _task_provider(
+        db: AsyncSession, task: GenerationTaskRecord
+    ) -> tuple[VideoProvider, str] | None:
+        """Provider bound to the account that owns ``task``'s provider job, plus its secret.
+
+        Returns None when the connection no longer exists; raises LookupError when the
+        pinned account cannot be resolved.
+        """
+        conn = await db.get(ProviderConnection, task.connection_id)
+        if conn is None:
+            return None
+        accounts = list((
+            await db.execute(
+                select(ConnectionAccount).where(ConnectionAccount.connection_id == conn.id)
+            )
+        ).scalars().all())
+        account = resolve_task_account(accounts, task.account_id_used, True)
+        provider = build_provider(conn, account)
+        raw_secret = (
+            vault.decrypt(account.encrypted_api_key)
+            if account is not None
+            else vault.decrypt(conn.encrypted_api_key)
+        ) or ""
+        return provider, raw_secret
+
+    @staticmethod
     async def reply_to_task(
         db: AsyncSession, task_id: str, answer: dict[str, str]
     ) -> GenerationTaskRecord:
@@ -1677,27 +1719,16 @@ class GenerationQueueService:
                 await db.rollback()
                 raise InvalidOperatorAnswerError("choice must be one of the pending question's options.")
 
-        conn = await db.get(ProviderConnection, task.connection_id)
-        if conn is None:
-            await db.rollback()
-            raise TaskNotFoundError(task_id)
-        accounts = list((
-            await db.execute(
-                select(ConnectionAccount).where(ConnectionAccount.connection_id == conn.id)
-            )
-        ).scalars().all())
         try:
             # The answer must reach the account that owns the provider task.
-            account = resolve_task_account(accounts, task.account_id_used, True)
+            loaded = await GenerationQueueService._task_provider(db, task)
         except LookupError as exc:
             await db.rollback()
             raise ProviderFailure(ErrorCategory.INVALID_REQUEST, str(exc), retryable=False) from exc
-        provider = build_provider(conn, account)
-        raw_secret = (
-            vault.decrypt(account.encrypted_api_key)
-            if account is not None
-            else vault.decrypt(conn.encrypted_api_key)
-        ) or ""
+        if loaded is None:
+            await db.rollback()
+            raise TaskNotFoundError(task_id)
+        provider, raw_secret = loaded
         external_task_id = task.external_task_id
         # Release the row lock before network I/O.
         await db.commit()
@@ -1751,10 +1782,12 @@ class GenerationQueueService:
 
     @staticmethod
     async def cancel_task(db: AsyncSession, task_id: str) -> GenerationTaskRecord:
-        """Cancel a non-terminal task locally (QUEUED/RUNNING/PAUSED/AWAITING_INPUT).
+        """Cancel a non-terminal task (QUEUED/RUNNING/PAUSED/AWAITING_INPUT).
 
-        Raises TaskNotFoundError, or TaskStateConflictError for a terminal task. The provider job is not contacted; a pending provider question
-        simply times out upstream.
+        Raises TaskNotFoundError, or TaskStateConflictError for a terminal task. The local
+        cancel is committed first; then, for a RUNNING/AWAITING_INPUT task with a provider
+        job, the provider is asked to cancel it best effort (see
+        ``_propagate_cancel_to_provider``), which never fails or undoes the local cancel.
         """
         task = await db.get(GenerationTaskRecord, task_id)
         if task is None:
@@ -1766,6 +1799,7 @@ class GenerationQueueService:
             QueueTaskState.POLL_TIMEOUT,
         ):
             raise TaskStateConflictError(f"Cannot cancel a task in terminal state '{task.state.value}'.")
+        previous_state = task.state
         task.state = QueueTaskState.CANCELED
         task.pending_input_json = None
         task.finished_at = datetime.now(timezone.utc)
@@ -1779,7 +1813,63 @@ class GenerationQueueService:
         task.history_log = list(task.history_log or []) + ["Canceled by operator."]
         await db.commit()
         await db.refresh(task)
+        if previous_state in _PROVIDER_CANCEL_STATES and task.external_task_id:
+            await GenerationQueueService._propagate_cancel_to_provider(db, task)
         return task
+
+    @staticmethod
+    async def _propagate_cancel_to_provider(db: AsyncSession, task: GenerationTaskRecord) -> None:
+        """Best-effort provider cancel for an already committed local cancel.
+
+        Never raises (except for the caller's own cancellation): every outcome is recorded
+        as ``Provider cancel: cancelled | unsupported | already finished | not found |
+        failed (<category>)`` in the task history, and failures are logged redacted.
+        """
+        raw_secret = ""
+        try:
+            loaded = await GenerationQueueService._task_provider(db, task)
+            external_task_id = task.external_task_id or ""
+            # End the read transaction before network I/O.
+            await db.commit()
+            if loaded is None:
+                label = f"failed ({ErrorCategory.INVALID_REQUEST.value})"
+                logger.warning("Provider cancel for task %s skipped: connection not found", task.id)
+            else:
+                provider, raw_secret = loaded
+                if not isinstance(provider, CancellableProvider):
+                    label = _CANCEL_OUTCOME_LABELS[CancelOutcome.UNSUPPORTED]
+                else:
+                    outcome = await asyncio.wait_for(
+                        provider.cancel(external_task_id), timeout=PROVIDER_CANCEL_TIMEOUT_SECONDS
+                    )
+                    label = _CANCEL_OUTCOME_LABELS.get(outcome, f"unexpected outcome ({outcome})")
+        except ProviderFailure as exc:
+            label = f"failed ({exc.category.value})"
+            logger.warning(
+                "Provider cancel for task %s failed [%s]: %s",
+                task.id,
+                exc.category.value,
+                SecretRedactor.redact_text(exc.message, [raw_secret])[:_HISTORY_TEXT_MAX_CHARS],
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            label = "failed (timeout)"
+            logger.warning("Provider cancel for task %s timed out", task.id)
+        except LookupError:
+            label = f"failed ({ErrorCategory.INVALID_REQUEST.value})"
+            logger.warning("Provider cancel for task %s skipped: task account not found", task.id)
+        except Exception as exc:  # noqa: BLE001 - best effort; the local cancel stands
+            label = f"failed ({type(exc).__name__})"
+            logger.warning("Provider cancel for task %s failed unexpectedly (%s)", task.id, type(exc).__name__)
+        try:
+            await db.refresh(task)
+            task.history_log = list(task.history_log or []) + [f"Provider cancel: {label}"]
+            await db.commit()
+            await db.refresh(task)
+        except Exception as exc:  # noqa: BLE001 - the history entry is informational
+            logger.warning(
+                "Could not record the provider cancel outcome for task %s (%s)", task.id, type(exc).__name__
+            )
+            await db.rollback()
 
     @staticmethod
     async def _finalize_media(

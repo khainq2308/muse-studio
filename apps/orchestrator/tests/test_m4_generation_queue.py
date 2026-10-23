@@ -354,6 +354,7 @@ async def test_queue_task_pagination_summary_and_admin_read_access(client: Async
             "total_tasks": 3,
             "active_tasks": 3,
             "failed_tasks": 0,
+            "awaiting_input_tasks": 0,
         }
 
         second_response = await client.get(
