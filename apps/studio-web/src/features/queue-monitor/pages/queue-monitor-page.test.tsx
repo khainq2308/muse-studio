@@ -1,18 +1,21 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueueTask, QueueTaskFilter, QueueTaskPage } from "@/features/queue-monitor/state";
 
 const mocks = vi.hoisted(() => ({
   useQueueTasks: vi.fn(),
   useQueueTaskAction: vi.fn(),
+  useQueueTaskReply: vi.fn(),
 }));
 
 vi.mock("@/features/queue-monitor/api", () => ({
   useQueueTasks: mocks.useQueueTasks,
   useQueueTaskAction: mocks.useQueueTaskAction,
+  useQueueTaskReply: mocks.useQueueTaskReply,
 }));
 
 import { QueueMonitorPage } from "@/features/queue-monitor/pages/queue-monitor-page";
+import { ApiError } from "@/lib/api/client";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 function makeTask(): QueueTask {
@@ -88,8 +91,34 @@ function setup(
 
 afterEach(() => cleanup());
 
+function makeReplyMutation(overrides: Record<string, unknown> = {}) {
+  return {
+    isPending: false,
+    error: null,
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    pendingTaskIds: new Set<string>(),
+    ...overrides,
+  };
+}
+
+function makeAwaitingTask(id = "task-awaiting-1"): QueueTask {
+  return {
+    ...makeTask(),
+    id,
+    state: "awaiting_input",
+    pending_input: {
+      kind: "question",
+      text: "Which style should the shot use?",
+      options: ["Cinematic", "Anime"],
+      asked_at: 1761200000.5,
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.useQueueTaskReply.mockReturnValue(makeReplyMutation());
 });
 
 describe("QueueMonitorPage", () => {
@@ -107,7 +136,7 @@ describe("QueueMonitorPage", () => {
 
     expect(screen.getByRole("group", { name: "Queue summary" })).toBeTruthy();
     expect(screen.getByText("Tasks in project")).toBeTruthy();
-    expect(screen.getByText("Queued / running")).toBeTruthy();
+    expect(screen.getByText("Active (queued, running, awaiting input)")).toBeTruthy();
     expect(screen.getByText("Failed / timed out")).toBeTruthy();
     expect(screen.getByText("80")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
@@ -275,6 +304,104 @@ describe("QueueMonitorPage", () => {
     expect(mutation.mutate).toHaveBeenCalledWith({
       taskId: "task-running-1",
       action: "pause",
+    });
+  });
+
+  describe("operator questions", () => {
+    function setupAwaiting(items: QueueTask[] = [makeAwaitingTask(), makeTask()]) {
+      const reply = makeReplyMutation();
+      mocks.useQueueTaskReply.mockReturnValue(reply);
+      const result = setup({ query: { data: makePage({ items, total: items.length }) } });
+      return { ...result, reply };
+    }
+
+    it("counts tasks awaiting input on the page and offers the awaiting filter", () => {
+      setupAwaiting();
+      render(<QueueMonitorPage projectId="project-1" />);
+
+      expect(screen.getByTestId("queue-awaiting-input-banner")).toHaveTextContent(
+        "1 task on this page is waiting for your answer.",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Show only awaiting input" }));
+      expect(mocks.useQueueTasks).toHaveBeenLastCalledWith("project-1", "awaiting_input", 0);
+      expect(screen.getByLabelText("Filter by state")).toHaveValue("awaiting_input");
+    });
+
+    it("hides the banner when no task on the page awaits input", () => {
+      setup();
+      render(<QueueMonitorPage projectId="project-1" />);
+      expect(screen.queryByTestId("queue-awaiting-input-banner")).toBeNull();
+    });
+
+    it("sends a chosen option through the reply hook", () => {
+      const { reply } = setupAwaiting();
+      render(<QueueMonitorPage projectId="project-1" />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Cinematic" }));
+      expect(reply.mutate).toHaveBeenCalledWith(
+        { taskId: "task-awaiting-1", reply: { choice: "Cinematic" } },
+        expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+      );
+    });
+
+    it("disables the question while its reply is in flight", () => {
+      const reply = makeReplyMutation({ pendingTaskIds: new Set(["task-awaiting-1"]) });
+      mocks.useQueueTaskReply.mockReturnValue(reply);
+      setup({ query: { data: makePage({ items: [makeAwaitingTask()] }) } });
+      render(<QueueMonitorPage projectId="project-1" />);
+
+      expect(screen.getByRole("button", { name: "Cinematic" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Cancel task task-awaiting-1" })).toBeDisabled();
+    });
+
+    it("shows a 422 validation error next to the still-pending question", () => {
+      const { reply } = setupAwaiting();
+      render(<QueueMonitorPage projectId="project-1" />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Anime" }));
+      const callbacks = reply.mutate.mock.calls[0][1] as { onError: (error: unknown) => void };
+      act(() =>
+        callbacks.onError(
+          new ApiError({ status: 422, detail: "Choice is not one of the pending options." }),
+        ),
+      );
+
+      const question = screen.getByTestId("queue-task-question-task-awaiting-1");
+      expect(within(question).getByRole("alert")).toHaveTextContent(
+        "The answer was rejected: Choice is not one of the pending options.",
+      );
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+    });
+
+    it("explains a 409 at page level once the task is no longer awaiting input", () => {
+      const { reply, query } = setupAwaiting();
+      const { rerender } = render(<QueueMonitorPage projectId="project-1" />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Anime" }));
+      const callbacks = reply.mutate.mock.calls[0][1] as { onError: (error: unknown) => void };
+      // The hook invalidates the queue on settle; the refreshed task is running again.
+      query.data = makePage({
+        items: [{ ...makeAwaitingTask(), state: "running", pending_input: null }],
+      });
+      act(() =>
+        callbacks.onError(
+          new ApiError({
+            status: 409,
+            detail: "Task is not awaiting input.",
+            category: "input_not_pending",
+            retryable: false,
+          }),
+        ),
+      );
+      rerender(<QueueMonitorPage projectId="project-1" />);
+
+      expect(screen.queryByTestId("queue-task-question-task-awaiting-1")).toBeNull();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "This question is no longer waiting for an answer. The queue was refreshed",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      expect(screen.queryByRole("alert")).toBeNull();
     });
   });
 });

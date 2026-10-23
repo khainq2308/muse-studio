@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { RefreshCw } from "lucide-react";
+import { MessageCircleQuestionMark, RefreshCw } from "lucide-react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
-import { useQueueTaskAction, useQueueTasks } from "@/features/queue-monitor/api";
+import { useQueueTaskAction, useQueueTaskReply, useQueueTasks } from "@/features/queue-monitor/api";
 import { QueueTaskList } from "@/features/queue-monitor/components/queue-task-list";
 import {
   QUEUE_TASKS_PAGE_SIZE,
@@ -11,7 +11,9 @@ import {
   QUEUE_TASK_STATE_LABELS,
   type QueueTaskAction,
   type QueueTaskFilter,
+  type QueueTaskReply,
 } from "@/features/queue-monitor/state";
+import { queueReplyErrorMessage } from "@/features/queue-monitor/reply-errors";
 import { authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 
@@ -27,13 +29,26 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const tasksQuery = useQueueTasks(projectId, stateFilter, offset);
   const actionMutation = useQueueTaskAction(projectId, tasksQuery.resetPollingWindow);
+  const replyMutation = useQueueTaskReply(projectId, tasksQuery.resetPollingWindow);
+  const [replyError, setReplyError] = useState<{
+    taskId: string;
+    message: string;
+    sessionVersion: number;
+    projectId: string;
+  } | null>(null);
   const tasks = tasksQuery.data?.items ?? [];
   const total = tasksQuery.data?.total ?? 0;
   const summary = tasksQuery.data?.summary;
   const isPageOutOfRange = Boolean(tasksQuery.data && offset >= total && offset > 0);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const { reset: resetAction } = actionMutation;
-  const { pendingTaskIds } = actionMutation;
+  const { pendingTaskIds: pendingActionTaskIds } = actionMutation;
+  const { pendingTaskIds: pendingReplyTaskIds } = replyMutation;
+  const pendingTaskIds = useMemo<ReadonlySet<string>>(
+    () => new Set([...pendingActionTaskIds, ...pendingReplyTaskIds]),
+    [pendingActionTaskIds, pendingReplyTaskIds],
+  );
+  const awaitingInputCount = tasks.filter((task) => task.state === "awaiting_input").length;
 
   // A new session must not show an action error (or pending state) from the previous one.
   const actionSessionVersion = useRef(sessionVersion);
@@ -50,8 +65,13 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
     setPageState({ scope, offset: lastValidOffset });
   }, [isPageOutOfRange, scope, tasksQuery.data, total]);
 
-  const setPageOffset = (nextOffset: number) => {
+  const clearFeedback = () => {
     actionMutation.reset();
+    setReplyError(null);
+  };
+
+  const setPageOffset = (nextOffset: number) => {
+    clearFeedback();
     setPageState({ scope, offset: Math.max(0, nextOffset) });
   };
 
@@ -59,8 +79,42 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
     actionMutation.mutate({ taskId, action });
   };
 
+  const handleReply = (taskId: string, reply: QueueTaskReply, onSuccess: () => void) => {
+    setReplyError(null);
+    const startedSession = sessionVersion;
+    replyMutation.mutate(
+      { taskId, reply },
+      {
+        onSuccess,
+        onError: (error) =>
+          setReplyError({
+            taskId,
+            message: queueReplyErrorMessage(error),
+            sessionVersion: startedSession,
+            projectId,
+          }),
+      },
+    );
+  };
+
+  // A reply error from a previous admin session or another project must not leak into this view.
+  const visibleReplyError =
+    replyError && replyError.sessionVersion === sessionVersion && replyError.projectId === projectId
+      ? replyError
+      : null;
+  // Show the reply error next to its question while it is still visible; otherwise (for
+  // example after a 409 the task moved on) show it at page level so it is not lost.
+  const replyErrorInline = Boolean(
+    visibleReplyError &&
+    tasks.some(
+      (task) =>
+        task.id === visibleReplyError.taskId &&
+        task.state === "awaiting_input" &&
+        task.pending_input,
+    ),
+  );
   const refreshQueue = () => {
-    actionMutation.reset();
+    clearFeedback();
     tasksQuery.resetPollingWindow();
     // Cancel a slow or hung in-flight request instead of waiting behind it.
     void tasksQuery.refetch({ cancelRefetch: true });
@@ -111,7 +165,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           <p className="mt-1 text-2xl font-semibold tabular-nums">{summary?.total_tasks ?? 0}</p>
         </article>
         <article className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Queued / running</p>
+          <p className="text-sm text-muted-foreground">Active (queued, running, awaiting input)</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{summary?.active_tasks ?? 0}</p>
         </article>
         <article className="rounded-xl border border-border bg-card p-4">
@@ -129,7 +183,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           value={stateFilter}
           onChange={(event) => {
             const nextFilter = event.target.value as QueueTaskFilter;
-            actionMutation.reset();
+            clearFeedback();
             setStateFilter(nextFilter);
             setPageState({ scope: projectId + ":" + nextFilter, offset: 0 });
           }}
@@ -159,6 +213,51 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
         </div>
       )}
 
+      {visibleReplyError && !replyErrorInline && (
+        <div
+          role="alert"
+          className={cn(
+            "rounded-lg border border-destructive/30 bg-destructive/5 p-4",
+            "text-sm text-destructive",
+          )}
+        >
+          Answer for task <span className="break-all font-medium">{visibleReplyError.taskId}</span>{" "}
+          was not sent: {visibleReplyError.message}
+        </div>
+      )}
+
+      {awaitingInputCount > 0 && (
+        <div
+          role="status"
+          data-testid="queue-awaiting-input-banner"
+          className={cn(
+            "flex flex-col gap-3 rounded-lg border border-warning/50 bg-warning/10 p-4",
+            "text-sm sm:flex-row sm:items-center sm:justify-between",
+          )}
+        >
+          <p className="flex items-center gap-2 font-medium">
+            <MessageCircleQuestionMark className="size-4 text-warning" aria-hidden="true" />
+            {awaitingInputCount === 1
+              ? "1 task on this page is waiting for your answer."
+              : `${awaitingInputCount} tasks on this page are waiting for your answer.`}
+          </p>
+          {stateFilter !== "awaiting_input" && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                clearFeedback();
+                setStateFilter("awaiting_input");
+                setPageState({ scope: projectId + ":awaiting_input", offset: 0 });
+              }}
+            >
+              Show only awaiting input
+            </Button>
+          )}
+        </div>
+      )}
+
       <section aria-label="Queue tasks" className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-semibold">Generation tasks</h3>
@@ -182,7 +281,13 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
           }
           onRetry={refreshQueue}
         >
-          <QueueTaskList tasks={tasks} busyTaskIds={pendingTaskIds} onAction={handleAction} />
+          <QueueTaskList
+            tasks={tasks}
+            busyTaskIds={pendingTaskIds}
+            onAction={handleAction}
+            replyError={replyErrorInline ? visibleReplyError : null}
+            onReply={handleReply}
+          />
         </QueryState>
 
         {tasksQuery.data && !isPageOutOfRange && (total > QUEUE_TASKS_PAGE_SIZE || offset > 0) && (

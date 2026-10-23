@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  QUEUE_TASK_STATES,
   getQueuePollIntervalMs,
+  pendingInputAcceptsText,
+  pendingInputAskedAt,
+  queueTaskStateLabel,
+  replyableOptions,
   getQueueRefetchInterval,
   QUEUE_POLL_WINDOW_MS,
 } from "@/features/queue-monitor/state";
@@ -41,5 +46,45 @@ describe("queue monitor polling policy", () => {
   it("continues polling active tasks even when they are on another page", () => {
     expect(getQueueRefetchInterval(["succeeded"], 15_000, "success", 4)).toBe(2_000);
     expect(getQueueRefetchInterval(["running"], 15_000, "success", 0)).toBe(false);
+  });
+
+  it("keeps polling a task that awaits operator input", () => {
+    expect(getQueueRefetchInterval(["awaiting_input"], 10_000)).toBe(2_000);
+    expect(getQueueRefetchInterval(["awaiting_input", "paused"], 90_000)).toBe(5_000);
+  });
+});
+
+describe("awaiting-input helpers", () => {
+  it("labels and filters the awaiting_input state", () => {
+    expect(QUEUE_TASK_STATES).toContain("awaiting_input");
+    expect(queueTaskStateLabel("awaiting_input")).toBe("Awaiting input");
+  });
+
+  it("offers free text except for an approval that has options", () => {
+    const base = { text: "?", asked_at: null };
+    expect(pendingInputAcceptsText({ ...base, kind: "question", options: ["a"] })).toBe(true);
+    expect(pendingInputAcceptsText({ ...base, kind: "stalled", options: ["a"] })).toBe(true);
+    expect(pendingInputAcceptsText({ ...base, kind: "approval", options: ["Yes"] })).toBe(false);
+    expect(pendingInputAcceptsText({ ...base, kind: "approval", options: [] })).toBe(true);
+  });
+
+  it("only offers options the backend accepts as a choice", () => {
+    expect(
+      replyableOptions({
+        kind: "question",
+        text: "?",
+        asked_at: null,
+        options: ["", "ok", "x".repeat(200), "x".repeat(201)],
+      }),
+    ).toEqual(["ok", "x".repeat(200)]);
+  });
+
+  it("converts asked_at seconds to a date and ignores missing or invalid values", () => {
+    expect(pendingInputAskedAt(1761200000.5)?.toISOString()).toBe(
+      new Date(1761200000500).toISOString(),
+    );
+    expect(pendingInputAskedAt(null)).toBeNull();
+    expect(pendingInputAskedAt(0)).toBeNull();
+    expect(pendingInputAskedAt(Number.NaN)).toBeNull();
   });
 });
