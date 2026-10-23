@@ -437,6 +437,9 @@ class GenerationDispatchLeaseRecord(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Random token of the holder (worker step or operator reply); a holder releases the
+    # lease only while the token still matches. NULL for leases written before 0004.
+    owner_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ShotTakeRecord(Base):

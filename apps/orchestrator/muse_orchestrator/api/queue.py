@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime
 from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, model_validator
@@ -120,6 +121,7 @@ class ShotTakeOut(BaseModel):
     continuity_flagged: bool
     director_notes: str
     is_selected: bool
+    created_at: datetime
 
 
 class ShotTakeSelectionOut(BaseModel):
@@ -351,21 +353,21 @@ async def list_shot_takes(
             "continuity_flagged": t.continuity_flagged,
             "director_notes": t.director_notes,
             "is_selected": t.is_selected,
+            "created_at": t.created_at,
         }
         for t in rows
     ]
 
 
 @router.post("/shots/{shot_id}/takes/{take_id}/select", response_model=ShotTakeSelectionOut)
-async def select_shot_take(shot_id: str, take_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> ShotTakeSelectionOut:
-    shot = await repository.get_shot(shot_id)
-    if not shot:
-        raise HTTPException(status_code=404, detail="Shot không tồn tại.")
-
-    try:
-        unlocked = await GenerationQueueService.select_shot_take(repository, shot, take_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail="Take không thuộc về Shot này.") from exc
+async def select_shot_take(
+    shot_id: str,
+    take_id: str,
+    service: QueueTaskService = Depends(get_queue_task_service),
+    actor: str = Depends(verify_single_admin),
+) -> ShotTakeSelectionOut:
+    """Select a take. The take must belong to this shot and to the shot's project (404)."""
+    shot, unlocked = await service.select_shot_take(shot_id, take_id)
     return {
         "shot_id": shot_id,
         "selected_take_id": take_id,

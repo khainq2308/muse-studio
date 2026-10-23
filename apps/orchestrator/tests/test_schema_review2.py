@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
-HEAD_REVISION = "0003_awaiting_input"
+HEAD_REVISION = "0004_lease_owner_token"
 
 
 def _config(database_path: Path) -> Config:
@@ -297,5 +297,55 @@ def test_0003_awaiting_input_holds_the_active_slot_and_downgrades_to_running(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one() == HEAD_REVISION
             assert "AWAITING_INPUT" in _index_sql(connection)
+    finally:
+        engine.dispose()
+
+
+def _lease_columns(connection: Connection) -> set[str]:
+    return {row[1] for row in connection.execute(text("PRAGMA table_info(generation_dispatch_leases)"))}
+
+
+def test_0004_lease_owner_token_round_trip_keeps_existing_leases(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    database_path = tmp_path / "review-0004.sqlite3"
+    config = _config(database_path)
+    command.upgrade(config, "0003_awaiting_input")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            assert "owner_token" not in _lease_columns(connection)
+            _seed_parents(connection, CurrentBase.metadata.tables)
+            connection.execute(insert(CurrentBase.metadata.tables["generation_tasks"]), [
+                _task("tsk_lease", "shot_a", "RUNNING"),
+            ])
+            # A lease written by pre-0004 code: the table has no owner token column yet.
+            connection.execute(text(
+                "INSERT INTO generation_dispatch_leases (task_id, connection_id, expires_at, created_at) "
+                "VALUES ('tsk_lease', 'conn_a', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            ))
+
+        command.upgrade(config, "head")
+        with engine.begin() as connection:
+            assert "owner_token" in _lease_columns(connection)
+            assert connection.execute(text(
+                "SELECT owner_token FROM generation_dispatch_leases WHERE task_id = 'tsk_lease'"
+            )).scalar_one() is None
+            connection.execute(text(
+                "UPDATE generation_dispatch_leases SET owner_token = 'tok' WHERE task_id = 'tsk_lease'"
+            ))
+
+        command.downgrade(config, "0003_awaiting_input")
+        with engine.begin() as connection:
+            assert "owner_token" not in _lease_columns(connection)
+            assert connection.execute(text(
+                "SELECT count(*) FROM generation_dispatch_leases"
+            )).scalar_one() == 1
+
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == HEAD_REVISION
+            assert "owner_token" in _lease_columns(connection)
     finally:
         engine.dispose()

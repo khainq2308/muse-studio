@@ -133,7 +133,7 @@ def test_legacy_duplicate_take_numbers_are_repaired_by_the_real_migration_path(
 
         with engine.begin() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-                "0003_awaiting_input"
+                "0004_lease_owner_token"
             )
             task_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(generation_tasks)"))}
             assert "account_id_used" in task_columns

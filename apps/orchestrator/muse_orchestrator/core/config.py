@@ -167,16 +167,6 @@ settings = Settings()
 MAX_REDACTION_INPUT_CHARS = 16_384
 _TRUNCATION_BACKOFF_CHARS = 2_048
 
-_SECRET_KEY_NAMES = (
-    r"x-admin-key|x-api-key|x-goog-api-key|x-studio-admin-token|api[-_]?key|access[-_]?token"
-    r"|refresh[-_]?token|id[-_]?token|auth[-_]?token|client[-_]?secret|private[-_]?key"
-    r"|secret[-_]?key|password|passwd|secret|token"
-)
-
-_KEY_NAME_PATTERN = re.compile(
-    r"(?i)([\"']?\b(?:" + _SECRET_KEY_NAMES + r")[\"']?\s*[:=]\s*[\"']?)[^\s,'\"}&]+"
-)
-
 # Every pattern below is anchored on a literal keyword and uses only non-overlapping
 # quantifiers, so each match attempt is linear in the length of the scanned token.
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -185,7 +175,8 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(
             # The whole header value up to the end of the line or field is the credential,
             # whatever the scheme (Bearer, ApiKey, none, ...): never guess where it ends.
-            r"(?i)(authorization[\"']?[ \t]*[:=][ \t]*[\"']?)[^\r\n\"',}]+"
+            # Quotes may be escaped (JSON embedded in a JSON string: \"authorization\": \"x\").
+            r"(?i)(\bauthorization(?:\\?[\"'])?[ \t]*[:=][ \t]*(?:\\?[\"'])?)(?:[^\r\n\"',}\\]|\\(?![\"']))+"
         ),
         r"\1[REDACTED]",
     ),
@@ -203,9 +194,11 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         ),
         r"\1[REDACTED]",
     ),
-    # key: value / key=value, including quoted keys such as "api_key": "x" or 'password': 'x'.
-    (_KEY_NAME_PATTERN, r"\1[REDACTED]"),
-    (re.compile(r"(?i)((?:set-)?cookie\s*[:=]\s*['\"]?)[^\r\n\"']+"), r"\1[REDACTED_COOKIE]"),
+    # Cookie headers carry name=value pairs; "Fortune cookie: yes" is not a header.
+    (
+        re.compile(r"(?i)(\b(?:set-)?cookie\s*[:=]\s*['\"]?)(?=[^\r\n\"'=]{0,256}=)[^\r\n\"']+"),
+        r"\1[REDACTED_COOKIE]",
+    ),
 ]
 
 # Any key: value / key=value pair in free text. The key is judged by the same rule as
@@ -213,18 +206,30 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # on aliases such as passphrase, pwd or secret_pin. Keys start with a letter and are at most
 # 64 characters, so a failed match backtracks over at most 64 characters (linear overall).
 _KEY_VALUE_PATTERN = re.compile(
-    r"([\"']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1[ \t]*([:=])[ \t]*"
-    # Value: a quoted string (backslash escapes allowed), a bare token, or an unterminated
-    # quote (e.g. cut by the input bound), which is redacted up to the end of the line.
-    r"(\"(?:[^\"\\\r\n]|\\.)*\"|'(?:[^'\\\r\n]|\\.)*'|[^\s,'\"}&;]+|[\"'][^\r\n]*)"
+    # The key may be quoted, also with escaped quotes (JSON embedded in a JSON string).
+    # At most one line break between separator and value ("password:\n  hunter2").
+    r"(\\?[\"']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1[ \t]*([:=])[ \t]*(?:\r?\n[ \t]*)?"
+    # Value: an escaped-quote string (\"...\"), a quoted string (backslash escapes allowed),
+    # a bare token (stops at "=" and ":" so a nested "key=value" starts a new match), or an
+    # unterminated quote (e.g. cut by the input bound), redacted up to the end of the line.
+    r"(\\\"(?:[^\"\\\r\n]|\\[^\"\r\n])*\\\"|\"(?:[^\"\\\r\n]|\\.)*\""
+    # A bare value may start with "=" or ":" ("password==abc", "token=:abc").
+    r"|'(?:[^'\\\r\n]|\\.)*'|[^\s,'\"}&;][^\s,'\"}&;=:]*|\\?[\"'][^\r\n]*)"
 )
 _REDACTION_MARKERS = frozenset({"[REDACTED]", "[REDACTED_COOKIE]", "[REDACTED_PROXY_CRED]"})
+# End of an unquoted value under a sensitive key: the next field delimiter. An apostrophe
+# does not end it ("password=it's my secret" is hidden whole); a double quote does, so
+# a value embedded in a JSON string keeps the closing quote.
+_FIELD_END_PATTERN = re.compile(r"[,;&}\"\r\n]")
 
 # Proxy/provider URLs with userinfo. The scheme is located with a fixed alternation and
 # the rest of the whitespace-delimited token is parsed with str methods, so the work is
 # linear even for inputs such as "http://" * 300_000.
 _URL_SCHEME_PATTERN = re.compile(r"(?i)\b(?:https?|socks4a?|socks5h?|ftp)://")
 _URL_TOKEN_END_PATTERN = re.compile(r"[\s<>]")
+# A proxy URL kept for diagnostics ends at the first field delimiter too, so the next
+# field of compact JSON or a comma list is still scanned.
+_PROXY_URL_END_PATTERN = re.compile(r"[\s<>\"',;}&]")
 
 
 def _redact_url_userinfo(text: str) -> str:
@@ -320,21 +325,65 @@ class SecretRedactor:
         sanitized = _redact_url_userinfo(sanitized)
         for pattern, replacement in _SENSITIVE_PATTERNS:
             sanitized = pattern.sub(replacement, sanitized)
-        return _KEY_VALUE_PATTERN.sub(SecretRedactor._redact_key_value_match, sanitized)
+        return SecretRedactor._redact_key_values(sanitized)
 
     @staticmethod
-    def _redact_key_value_match(match: re.Match[str]) -> str:
+    def _redact_key_values(text: str) -> str:
+        """Apply _KEY_VALUE_PATTERN left to right; a sensitive bare value may extend the match.
+
+        Linear: every search resumes at or after the end of the previous match, and the
+        extension of a sensitive bare value is one scan for the next field delimiter over
+        text that is then consumed (never scanned again).
+        """
+        parts: list[str] = []
+        cursor = 0
+        while (match := _KEY_VALUE_PATTERN.search(text, cursor)) is not None:
+            replacement, end = SecretRedactor._redact_key_value_match(match, text)
+            parts.append(text[cursor : match.start()])
+            parts.append(replacement)
+            cursor = end
+        parts.append(text[cursor:])
+        return "".join(parts)
+
+    @staticmethod
+    def _redact_key_value_match(match: re.Match[str], text: str) -> tuple[str, int]:
+        """Return the replacement for ``match`` and the index where scanning resumes."""
         key, value = match.group(2), match.group(4)
+        whole = match.group(0)
+        quote = value[:2] if value[:2] in ("\\\"", "\\'") else value[:1] if value[:1] in ("\"", "'") else ""
         if not SecretRedactor.is_sensitive_key(key):
-            return match.group(0)
-        if SecretRedactor._is_proxy_key(key) and "://" in value:
-            return match.group(0)  # userinfo was already stripped by _redact_url_userinfo
-        if value.strip("\"'") in _REDACTION_MARKERS:
+            # Keep the pair but scan inside its value: "Auth failed: passphrase=x" or
+            # {"error": "bad pwd=x"} hide a sensitive pair in an ordinary value.
+            prefix = whole[: match.start(4) - match.start(0)]
+            if not quote:
+                # A bare value cannot contain field delimiters: resume at its start.
+                return prefix, match.start(4)
+            # A quoted value is scanned on its own, so a pair inside it can never reach
+            # past the closing quote into the next field. Each nesting level uses another
+            # (or escaped) quote, so the recursion depth is small and the work linear.
+            closing = value[-len(quote):] if len(value) >= 2 * len(quote) and value.endswith(quote) else ""
+            inner = value[len(quote) : len(value) - len(closing)]
+            return prefix + quote + SecretRedactor._redact_key_values(inner) + closing, match.end()
+        if SecretRedactor._is_proxy_key(key) and _URL_SCHEME_PATTERN.match(text, match.start(4) + len(quote)):
+            # A proxy URL keeps its host for diagnostics; _redact_url_userinfo already
+            # stripped its credentials. Skip the whole URL token.
+            url_end = _PROXY_URL_END_PATTERN.search(text, match.start(4) + len(quote))
+            end = url_end.start() if url_end is not None else len(text)
+            return text[match.start() : end], end
+        prefix = whole[: match.start(4) - match.start(0)]
+        if not quote:
+            # A bare value runs to the next field delimiter, spaces included, so
+            # "password=my secret value, user=bob" never leaks "secret value".
+            field_end = _FIELD_END_PATTERN.search(text, match.end())
+            end = field_end.start() if field_end is not None else len(text)
+            if value in _REDACTION_MARKERS:
+                return whole, end
+            return prefix + "[REDACTED]", end
+        if value.strip("\"'\\") in _REDACTION_MARKERS:
             # Fully redacted by an earlier pattern. A partial "[REDACTED] rest" (an earlier
-            # pattern stopped at a space or delimiter) is redacted again as a whole.
-            return match.group(0)
-        quote = value[0] if value[:1] in ("\"", "'") else ""
-        return match.group(0)[: match.start(4) - match.start(0)] + f"{quote}[REDACTED]{quote}"
+            # pattern stopped at a delimiter) is redacted again as a whole.
+            return whole, match.end()
+        return prefix + f"{quote}[REDACTED]{quote}", match.end()
 
     @staticmethod
     def redact_credentials(text: str, explicit_secrets: list[str] | None = None) -> str:
@@ -353,8 +402,7 @@ class SecretRedactor:
                 sanitized = sanitized.replace(secret, "[REDACTED]")
         sanitized = _redact_url_userinfo(_bound_redaction_input(sanitized))
         for pattern, replacement in _SENSITIVE_PATTERNS:
-            if pattern is not _KEY_NAME_PATTERN:
-                sanitized = pattern.sub(replacement, sanitized)
+            sanitized = pattern.sub(replacement, sanitized)
         return sanitized
 
     @classmethod

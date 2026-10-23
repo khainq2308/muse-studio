@@ -3343,6 +3343,11 @@
             "title": "Continuity Flagged",
             "type": "boolean"
           },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
           "director_notes": {
             "title": "Director Notes",
             "type": "string"
@@ -3411,7 +3416,8 @@
           "last_frame_asset_id",
           "continuity_flagged",
           "director_notes",
-          "is_selected"
+          "is_selected",
+          "created_at"
         ],
         "title": "ShotTakeOut",
         "type": "object"
@@ -13076,6 +13082,7 @@
     },
     "/api/v1/queue/shots/{shot_id}/takes/{take_id}/select": {
       "post": {
+        "description": "Select a take. The take must belong to this shot and to the shot's project (404).",
         "operationId": "select_shot_take_api_v1_queue_shots__shot_id__takes__take_id__select_post",
         "parameters": [
           {

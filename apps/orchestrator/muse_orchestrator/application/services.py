@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,7 +26,6 @@ from muse_orchestrator.models.domain import (
     StoryBibleEntry,
     ExportJobRecord,
     TimelineClipRecord,
-    TimelineSequenceRecord,
     TimelineTrackRecord,
 )
 from muse_orchestrator.providers.base import ErrorCategory, ProviderFailure
@@ -387,25 +387,34 @@ class AssetService:
         """Timeline clips, legacy track clip lists and export outputs that use the asset.
 
         These columns carry no FK, so a delete would otherwise leave dangling ids (an
-        export reported as succeeded with a download link that 404s).
+        export reported as succeeded with a download link that 404s). Clip rows and track
+        clip lists are both searched within the asset's project (see the repository).
         """
-        session = self.repository.session
-        clips = list((await session.execute(
-            select(TimelineClipRecord).where(TimelineClipRecord.asset_id == asset.id)
-        )).scalars().all())
-        project_tracks = (await session.execute(
-            select(TimelineTrackRecord)
-            .join(TimelineSequenceRecord, TimelineSequenceRecord.id == TimelineTrackRecord.sequence_id)
-            .where(TimelineSequenceRecord.project_id == asset.project_id)
-        )).scalars().all()
-        tracks = [
-            track for track in project_tracks
-            if any(isinstance(c, dict) and c.get("asset_id") == asset.id for c in (track.clips_json or []))
-        ]
-        exports = list((await session.execute(
-            select(ExportJobRecord).where(ExportJobRecord.output_asset_id == asset.id)
-        )).scalars().all())
-        return clips, tracks, exports
+        return await self.repository.find_project_timeline_references_to_asset(
+            asset.project_id, asset.id
+        )
+
+    async def _find_active_exports_using_asset(
+        self, asset: Asset, asset_paths: set[str]
+    ) -> list[ExportJobRecord]:
+        """QUEUED/RUNNING exports whose render plan reads this asset's file.
+
+        The worker renders only from ``manifest_snapshot_json["resolved_clips"]`` (absolute
+        paths resolved inside MEDIA_ROOT at launch), not from the live timeline rows, so
+        that snapshot is the authoritative list of inputs. Export inputs always belong to
+        the export's project (launch rejects other projects' assets).
+        """
+        active: list[ExportJobRecord] = []
+        for job in await self.repository.list_active_project_export_jobs(asset.project_id):
+            clips = (job.manifest_snapshot_json or {}).get("resolved_clips") or []
+            if any(
+                isinstance(clip, dict)
+                and isinstance(clip.get("path"), str)
+                and os.path.normpath(clip["path"]) in asset_paths
+                for clip in clips
+            ):
+                active.append(job)
+        return active
 
     @staticmethod
     def _detach_timeline_references(
@@ -459,13 +468,39 @@ class AssetService:
         asset = await self.repository.get_asset(asset_id)
         if asset is None:
             raise ApplicationError(404, "Asset không tồn tại.")
-        if asset.is_locked_reference and not force:
-            raise ApplicationError(409, "Asset đang được khoá làm Reference.")
         candidate = (self.storage.root_path / asset.storage_rel_path).resolve()
         try:
             candidate.relative_to(self.storage.root_path)
         except ValueError as exc:
             raise ApplicationError(500, "Stored asset path escaped the media root.") from exc
+        asset_paths = {os.path.normpath(str(candidate))}
+        try:
+            asset_paths.add(os.path.normpath(str(self.storage.resolve_safe_path(asset.storage_rel_path))))
+        except AssetStorageError:
+            pass
+        shared_path = await self.repository.has_other_asset_with_storage_path(
+            asset.storage_rel_path, asset.id
+        )
+        # Only a delete that unlinks the file can break a render that reads it; a file kept
+        # for another asset row stays. (A render launched between this check and the
+        # commit below fails honestly; it never reports a false success.)
+        active_exports = (
+            [] if shared_path else await self._find_active_exports_using_asset(asset, asset_paths)
+        )
+        if active_exports:
+            # Not even force=true: the queued/running render reads this file and would fail
+            # (or have its input removed mid-render). Retry once the export has finished.
+            shown = ", ".join(job.id for job in active_exports[:20])
+            raise ApplicationError(
+                409,
+                f"Asset '{asset.id}' is an input of active export job(s) [{shown}] "
+                "(queued or running); it cannot be deleted, even with force=true, "
+                "until those exports finish, fail or are cancelled.",
+                category="conflict",
+                retryable=True,
+            )
+        if asset.is_locked_reference and not force:
+            raise ApplicationError(409, "Asset đang được khoá làm Reference.")
 
         takes, shots, bible = await self._find_asset_references(asset)
         clips, tracks, exports = await self._find_timeline_references(asset)
@@ -476,9 +511,6 @@ class AssetService:
         if clips or tracks or exports:
             self._detach_timeline_references(asset.id, clips, tracks, exports)
 
-        shared_path = await self.repository.has_other_asset_with_storage_path(
-            asset.storage_rel_path, asset.id
-        )
         session = self.repository.session
         if takes or shots or bible:
             await self._detach_asset_references(asset, takes, shots, bible)

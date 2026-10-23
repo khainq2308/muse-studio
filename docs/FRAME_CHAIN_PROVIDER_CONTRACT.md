@@ -66,7 +66,7 @@ Queue:
 - The gateway reports `running` again (answered elsewhere) → task `RUNNING`, question cleared. `failed` with `input_timeout` → `FAILED`, `error_category = input_timeout`, non-retryable.
 - Cancel is allowed while awaiting input; pause is refused with 409. See "Provider cancel" below.
 - Successful polls while waiting are free, but **failed** polls (gateway unreachable, 5xx) count against `max_polls`, so an outage ends in `POLL_TIMEOUT` instead of polling forever.
-- An answer takes the same task lease as a worker poll before the row lock is released for the provider call; a concurrent answer or poll is retried briefly by the API and otherwise answered with a retryable 409 (`category: conflict`). Recovery re-schedules awaiting tasks; batch tick polls them with the running tasks.
+- An answer takes the same task lease as a worker poll before the row lock is released for the provider call, with its own owner token: on success, failure or interruption it releases only that lease, never one a worker poll took over after the answer's lease expired; a concurrent answer or poll is retried briefly by the API and otherwise answered with a retryable 409 (`category: conflict`). Recovery re-schedules awaiting tasks; batch tick polls them with the running tasks.
 
 ### Provider cancel
 

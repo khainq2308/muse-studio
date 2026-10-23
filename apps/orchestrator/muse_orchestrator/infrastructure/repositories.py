@@ -124,6 +124,51 @@ class StudioRepository:
         )
         return list(result.scalars().all())
 
+    async def list_active_project_export_jobs(self, project_id: str) -> list[ExportJobRecord]:
+        """QUEUED/RUNNING exports of one project, i.e. jobs whose render may still read inputs."""
+        result = await self.session.execute(
+            select(ExportJobRecord)
+            .where(
+                ExportJobRecord.project_id == project_id,
+                ExportJobRecord.state.in_((ExportJobState.QUEUED, ExportJobState.RUNNING)),
+            )
+            .order_by(ExportJobRecord.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def find_project_timeline_references_to_asset(
+        self, project_id: str, asset_id: str
+    ) -> tuple[list[TimelineClipRecord], list[TimelineTrackRecord], list[ExportJobRecord]]:
+        """Clip rows and legacy track clip lists of the project's sequences, plus export outputs.
+
+        Clips and tracks are both scoped to the asset's project: assembly validates that
+        every clip/audio asset belongs to the project and restore remaps ids per project,
+        so a cross-project reference cannot be created through the API.
+        """
+        clips = list((await self.session.execute(
+            select(TimelineClipRecord)
+            .join(TimelineSequenceRecord, TimelineSequenceRecord.id == TimelineClipRecord.sequence_id)
+            .where(
+                TimelineSequenceRecord.project_id == project_id,
+                TimelineClipRecord.asset_id == asset_id,
+            )
+        )).scalars().all())
+        project_tracks = (await self.session.execute(
+            select(TimelineTrackRecord)
+            .join(TimelineSequenceRecord, TimelineSequenceRecord.id == TimelineTrackRecord.sequence_id)
+            .where(TimelineSequenceRecord.project_id == project_id)
+        )).scalars().all()
+        tracks = [
+            track for track in project_tracks
+            if any(isinstance(c, dict) and c.get("asset_id") == asset_id for c in (track.clips_json or []))
+        ]
+        exports = list((await self.session.execute(
+            select(ExportJobRecord).where(
+                ExportJobRecord.output_asset_id == asset_id, ExportJobRecord.project_id == project_id
+            )
+        )).scalars().all())
+        return clips, tracks, exports
+
     async def update_export_job(self, job: ExportJobRecord) -> ExportJobRecord:
         self.session.add(job)
         await self.session.commit()

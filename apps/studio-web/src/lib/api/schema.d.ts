@@ -771,7 +771,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Select Shot Take */
+        /**
+         * Select Shot Take
+         * @description Select a take. The take must belong to this shot and to the shot's project (404).
+         */
         post: operations["select_shot_take_api_v1_queue_shots__shot_id__takes__take_id__select_post"];
         delete?: never;
         options?: never;
@@ -2233,6 +2236,11 @@ export interface components {
             asset_id: string;
             /** Continuity Flagged */
             continuity_flagged: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Director Notes */
             director_notes: string;
             /** First Frame Asset Id */
