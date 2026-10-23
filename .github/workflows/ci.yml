@@ -151,6 +151,50 @@ jobs:
             exit 1
           fi
 
+  arq-e2e:
+    name: Real Redis/ARQ worker end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.10.0"
+          enable-cache: true
+          cache-dependency-glob: |
+            apps/orchestrator/pyproject.toml
+            apps/orchestrator/uv.lock
+            apps/media-engine/pyproject.toml
+      - name: Sync locked orchestrator and media-engine dependencies
+        working-directory: apps/orchestrator
+        run: uv sync --locked --project . --extra dev
+      - name: Run API + ARQ worker processes against real Redis (enqueue, dedupe, cancel, reply, recovery cron)
+        working-directory: apps/orchestrator
+        env:
+          TEST_REDIS_URL: redis://127.0.0.1:6379/0
+          # A missing TEST_REDIS_URL fails the module instead of skipping it.
+          REQUIRE_ARQ_E2E: "1"
+        run: |
+          uv run --locked --project . --extra dev python -m pytest -q -p no:cacheprovider \
+            tests/test_arq_e2e.py -rsx --junitxml="$RUNNER_TEMP/arq-e2e.xml"
+          if grep -q '<skipped' "$RUNNER_TEMP/arq-e2e.xml"; then
+            echo "Real Redis/ARQ end-to-end tests were skipped; failing." >&2
+            exit 1
+          fi
+
   muse2api-contract:
     name: muse2api gateway contract (mock driver)
     runs-on: ubuntu-latest
