@@ -283,6 +283,18 @@ class PipelineService:
 
         try:
             await self._lock_project(project_id)
+            if auto_apply_proposal:
+                # Enqueue serialises on the shot row, not the project row: lock every shot
+                # of the project, then re-check under those locks so a task created after
+                # the early guard above is either seen here or cannot be inserted.
+                await self.repository.session.execute(
+                    select(ShotRecord.id).where(ShotRecord.project_id == project_id).with_for_update()
+                )
+                try:
+                    await self._guard_destructive_reimport(project_id, replace_existing)
+                except ApplicationError:
+                    await self.repository.session.rollback()
+                    raise
             max_version = (
                 await self.repository.session.execute(
                     select(func.max(ScriptRevision.version_number)).where(

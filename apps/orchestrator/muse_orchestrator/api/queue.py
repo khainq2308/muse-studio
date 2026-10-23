@@ -16,7 +16,7 @@ from muse_orchestrator.providers.base import (
     ANSWER_TEXT_MAX_CHARS,
     QUESTION_KINDS,
 )
-from muse_orchestrator.services.generation_queue import GenerationQueueService
+from muse_orchestrator.services.generation_queue import GenerationQueueService, IdempotencyKeyConflictError
 
 router = APIRouter(prefix="/api/v1/queue", tags=["M4 Generation Queue & Takes"])
 
@@ -199,6 +199,8 @@ async def enqueue_generation_task(
             idempotency_key=payload.idempotency_key,
             force_retry=payload.force_retry,
         )
+    except IdempotencyKeyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

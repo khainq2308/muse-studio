@@ -1219,6 +1219,7 @@ class BackupService:
 
         # Late references are non-FK columns; they are written as UPDATEs at commit.
         self._remap_late_references(id_maps, restored_rows)
+        self._validate_shot_continuity_graph(restored_rows)
         # _load_restore_payload guarantees exactly one projects row matching the manifest.
         project_rows = restored_rows.get("projects", [])
         if len(project_rows) != 1 or project_rows[0][0].get("id") != manifest.get("project_id"):
@@ -1226,6 +1227,30 @@ class BackupService:
         project = project_rows[0][1]
         await db.commit()
         return project, report
+
+    @staticmethod
+    def _validate_shot_continuity_graph(
+        restored_rows: dict[str, list[tuple[dict[str, Any], Any]]],
+    ) -> None:
+        """Reject an archive whose ``previous_shot_id`` links form a cycle.
+
+        The shot API refuses cycles; a restore must not commit one either (frame-chain
+        resolution and batch ordering walk these links).
+        """
+        previous = {
+            obj.id: obj.previous_shot_id
+            for _row, obj in restored_rows.get("shots", [])
+        }
+        for start in previous:
+            seen: set[str] = set()
+            current: str | None = start
+            while current is not None:
+                if current in seen:
+                    raise ApplicationError(
+                        422, "Backup contains a cycle in shot continuity links (previous_shot_id)."
+                    )
+                seen.add(current)
+                current = previous.get(current)
 
     @staticmethod
     def _remap_late_references(

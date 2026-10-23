@@ -584,9 +584,14 @@ class Muse2ApiAdapter(VideoProvider):
                 body["image"] = request.first_frame_url
             if profile in ("compat", "czg86389-hub"):
                 body["first_frame_image"] = request.first_frame_url
-        if request.reference_image_urls:
+        if request.reference_image_urls and self.supports_video_references:
             body["reference_images"] = request.reference_image_urls
         return body
+
+    @property
+    def supports_video_references(self) -> bool:
+        """www222fff's video schema has no reference field (unknown fields are ignored)."""
+        return settings.video_payload_profile != "www222fff"
 
     async def generate_video(self, request: VideoGenerationRequest) -> ProviderTask:
         body = self._build_video_payload(request)
