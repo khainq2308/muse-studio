@@ -162,8 +162,13 @@ async def test_live_health_and_models() -> None:
     assert health.healthy and health.ready, health
     modalities = {m.modality for m in await adapter.list_models()}
     assert {"video", "image"} <= modalities
-    # The pinned gateway advertises first-frame support (False for its mock driver).
-    assert isinstance(await adapter.first_frame_capability(), bool)
+    capability = await adapter.first_frame_capability()
+    if os.environ.get("MUSE2API_CONTRACT_EXPECT_FIRST_FRAME") == "1":
+        # Set when probing the patched personal gateway with its browser driver.
+        assert capability is True
+    else:
+        # Upstream gateways do not advertise it (None); patched mock drivers say False.
+        assert capability in (True, False, None)
 
 
 @live
