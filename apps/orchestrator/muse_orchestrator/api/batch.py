@@ -422,6 +422,7 @@ async def retry_failed_project_tasks(
 
     new_task_ids: list[str] = []
     created_tasks: list[GenerationTaskRecord] = []
+    refused: tuple[str, str] | None = None
     for s, conn, model_id in plan:
         try:
             t, _ = await GenerationQueueService.enqueue_shot_generation(
@@ -433,12 +434,25 @@ async def retry_failed_project_tasks(
                 force_retry=True,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            # The guard refused after the pre-check (state changed concurrently). Earlier
+            # tasks are already committed: stop here, but still publish them below.
+            refused = (s.id, str(exc))
+            break
         new_task_ids.append(t.id)
         created_tasks.append(t)
 
-    # Publish only after every retry task exists, so a Redis failure cannot skip shots.
+    # Publish only after the loop, so a Redis failure cannot skip shots; tasks created
+    # before a refusal are published too instead of waiting for the recovery cron.
     await schedule_generation_tasks(request, created_tasks)
+    if refused is not None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "retry_partially_applied",
+                "message": f"Shot {refused[0]} could not be re-enqueued: {refused[1]}",
+                "new_task_ids": new_task_ids,
+            },
+        )
     return {"retried_count": len(new_task_ids), "new_task_ids": new_task_ids}
 
 

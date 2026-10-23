@@ -942,13 +942,18 @@ class GenerationQueueService:
             or existing.project_id != shot.project_id
             or existing.task_type != task_type
             or existing.connection_id != conn.id
+            # A client key names one request: the same key with another model or prompt
+            # is a different generation, not a replay of the stored one.
+            or (idempotency_key is not None and (
+                existing.model_id != model_id or existing.prompt_hash != shot.prompt_hash
+            ))
         ):
             # A client-supplied key is unique across the whole database; never hand back
             # (or sync this shot with) a task that belongs to a different request.
             await db.rollback()
             raise IdempotencyKeyConflictError(
                 "idempotency_key is already used by a different generation request "
-                "(another shot, task type or connection)."
+                "(another shot, task type, connection, model or prompt)."
             )
 
         if existing is not None and not force_retry:
@@ -1540,6 +1545,11 @@ class GenerationQueueService:
         await db.commit()
         lease_state["dispatch_in_flight"] = False
         await db.refresh(task)
+        if task.state == QueueTaskState.CANCELED:
+            # The operator canceled while the request was in flight, before an external id
+            # existed to cancel: now that the provider job is known, stop it (best effort)
+            # instead of letting it render and consume quota for a task nobody polls.
+            await GenerationQueueService._propagate_cancel_to_provider(db, task)
         return task
 
     @staticmethod
