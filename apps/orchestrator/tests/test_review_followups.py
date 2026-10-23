@@ -548,3 +548,27 @@ async def test_selecting_a_take_ignores_a_last_frame_from_another_project(client
 
     assert selected.status_code == 200, selected.text
     assert (await _shots(client, pid))[s1["id"]]["last_frame_asset_id"] is None
+
+
+@pytest.mark.parametrize("text, secret", [
+    # A non-sensitive value ending in "secret=" must not swallow the next field's quote.
+    ('{"prompt": "x secret=", "api_key": "sk-live-1"}', "sk-live-1"),
+    ("{'msg': 'bad token: ', 'token': 'abc123'}", "abc123"),
+    # A kept proxy URL ends at the field delimiter, so later fields are still scanned.
+    ('{"proxy_url":"http://h:8080","api_key":"sk-live-2","password":"p4ss"}', "sk-live-2"),
+    ('{"proxy_url":"http://h:8080","api_key":"sk-live-2","password":"p4ss"}', "p4ss"),
+    ("proxy_url=http://h:8080,token=abc987", "abc987"),
+    # Values starting with "=" or ":" and values on the next line.
+    ("password==abc456", "abc456"),
+    ("token=:abc654", "abc654"),
+    ("password: =Pa55word", "Pa55word"),
+    ("password:\n  hunter2", "hunter2"),
+])
+def test_reaudit_leaks_are_redacted(text, secret):
+    assert secret not in SecretRedactor.redact_text(text)
+
+
+def test_cookie_lookahead_is_bounded():
+    started = time.perf_counter()
+    SecretRedactor.redact_text("cookie:" * 2340)
+    assert time.perf_counter() - started < 5.0

@@ -196,7 +196,7 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     # Cookie headers carry name=value pairs; "Fortune cookie: yes" is not a header.
     (
-        re.compile(r"(?i)(\b(?:set-)?cookie\s*[:=]\s*['\"]?)(?=[^\r\n\"'=]*=)[^\r\n\"']+"),
+        re.compile(r"(?i)(\b(?:set-)?cookie\s*[:=]\s*['\"]?)(?=[^\r\n\"'=]{0,256}=)[^\r\n\"']+"),
         r"\1[REDACTED_COOKIE]",
     ),
 ]
@@ -207,12 +207,14 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # 64 characters, so a failed match backtracks over at most 64 characters (linear overall).
 _KEY_VALUE_PATTERN = re.compile(
     # The key may be quoted, also with escaped quotes (JSON embedded in a JSON string).
-    r"(\\?[\"']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1[ \t]*([:=])[ \t]*"
+    # At most one line break between separator and value ("password:\n  hunter2").
+    r"(\\?[\"']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1[ \t]*([:=])[ \t]*(?:\r?\n[ \t]*)?"
     # Value: an escaped-quote string (\"...\"), a quoted string (backslash escapes allowed),
     # a bare token (stops at "=" and ":" so a nested "key=value" starts a new match), or an
     # unterminated quote (e.g. cut by the input bound), redacted up to the end of the line.
     r"(\\\"(?:[^\"\\\r\n]|\\[^\"\r\n])*\\\"|\"(?:[^\"\\\r\n]|\\.)*\""
-    r"|'(?:[^'\\\r\n]|\\.)*'|[^\s,'\"}&;=:]+|\\?[\"'][^\r\n]*)"
+    # A bare value may start with "=" or ":" ("password==abc", "token=:abc").
+    r"|'(?:[^'\\\r\n]|\\.)*'|[^\s,'\"}&;][^\s,'\"}&;=:]*|\\?[\"'][^\r\n]*)"
 )
 _REDACTION_MARKERS = frozenset({"[REDACTED]", "[REDACTED_COOKIE]", "[REDACTED_PROXY_CRED]"})
 # End of an unquoted value under a sensitive key: the next field delimiter. An apostrophe
@@ -225,6 +227,9 @@ _FIELD_END_PATTERN = re.compile(r"[,;&}\"\r\n]")
 # linear even for inputs such as "http://" * 300_000.
 _URL_SCHEME_PATTERN = re.compile(r"(?i)\b(?:https?|socks4a?|socks5h?|ftp)://")
 _URL_TOKEN_END_PATTERN = re.compile(r"[\s<>]")
+# A proxy URL kept for diagnostics ends at the first field delimiter too, so the next
+# field of compact JSON or a comma list is still scanned.
+_PROXY_URL_END_PATTERN = re.compile(r"[\s<>\"',;}&]")
 
 
 def _redact_url_userinfo(text: str) -> str:
@@ -348,13 +353,21 @@ class SecretRedactor:
         quote = value[:2] if value[:2] in ("\\\"", "\\'") else value[:1] if value[:1] in ("\"", "'") else ""
         if not SecretRedactor.is_sensitive_key(key):
             # Keep the pair but scan inside its value: "Auth failed: passphrase=x" or
-            # {"error": "bad pwd=x"} hide a sensitive pair in an ordinary value. Resuming
-            # just after the key keeps the scan linear (the value is short or consumed).
-            return whole[: match.start(4) - match.start(0)] + quote, match.start(4) + len(quote)
+            # {"error": "bad pwd=x"} hide a sensitive pair in an ordinary value.
+            prefix = whole[: match.start(4) - match.start(0)]
+            if not quote:
+                # A bare value cannot contain field delimiters: resume at its start.
+                return prefix, match.start(4)
+            # A quoted value is scanned on its own, so a pair inside it can never reach
+            # past the closing quote into the next field. Each nesting level uses another
+            # (or escaped) quote, so the recursion depth is small and the work linear.
+            closing = value[-len(quote):] if len(value) >= 2 * len(quote) and value.endswith(quote) else ""
+            inner = value[len(quote) : len(value) - len(closing)]
+            return prefix + quote + SecretRedactor._redact_key_values(inner) + closing, match.end()
         if SecretRedactor._is_proxy_key(key) and _URL_SCHEME_PATTERN.match(text, match.start(4) + len(quote)):
             # A proxy URL keeps its host for diagnostics; _redact_url_userinfo already
             # stripped its credentials. Skip the whole URL token.
-            url_end = _URL_TOKEN_END_PATTERN.search(text, match.start(4))
+            url_end = _PROXY_URL_END_PATTERN.search(text, match.start(4) + len(quote))
             end = url_end.start() if url_end is not None else len(text)
             return text[match.start() : end], end
         prefix = whole[: match.start(4) - match.start(0)]
