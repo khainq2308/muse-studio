@@ -179,8 +179,9 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Authorization / Proxy-Authorization headers, plain or as quoted JSON/dict keys.
     (
         re.compile(
-            # Any scheme word (Bearer, Basic, ApiKey, ...) or none: the credential is redacted.
-            r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?(?:[A-Za-z][A-Za-z0-9_-]*\s+)?)[^\s,'\"}]+"
+            # The whole header value up to the end of the line or field is the credential,
+            # whatever the scheme (Bearer, ApiKey, none, ...): never guess where it ends.
+            r"(?i)(authorization[\"']?[ \t]*[:=][ \t]*[\"']?)[^\r\n\"',}]+"
         ),
         r"\1[REDACTED]",
     ),
@@ -279,6 +280,7 @@ _NON_SECRET_KEY_NAMES = frozenset(
     }
 )
 _SENSITIVE_KEY_FRAGMENTS = (
+    "passphrase",
     "token",
     "secret",
     "password",
@@ -326,6 +328,9 @@ class SecretRedactor:
             "cookie",
             "cookies",
             "password",
+            "passphrase",
+            "pwd",
+            "proxy_pass",
             "proxy_url",
             "authorization",
             "secret",
@@ -358,7 +363,7 @@ class SecretRedactor:
         Display-only derivatives such as ``api_key_masked`` and well-known non-secret
         identifiers such as ``cache_key`` / ``idempotency_key`` are not treated as secrets.
         """
-        lowered = str(key).strip().lower()
+        lowered = cls._key_text(key).strip().lower()
         if lowered in cls._SENSITIVE_KEYS:
             return True
         normalized = re.sub(r"[-_\s.]", "", lowered)
@@ -391,14 +396,27 @@ class SecretRedactor:
             return cls.redact_text(value, explicit_secrets)
         if isinstance(value, dict):
             return cls._redact_mapping(value, explicit_secrets, sensitive)
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, (list, tuple, set, frozenset)):
             items = [cls._redact_value(item, explicit_secrets, sensitive, key=key) for item in value]
             return tuple(items) if isinstance(value, tuple) else items
+        if isinstance(value, (bytes, bytearray)) and not sensitive:
+            return cls.redact_text(bytes(value).decode("utf-8", errors="replace"), explicit_secrets)
         if sensitive and value is not None:
             # Numbers, bytes, booleans ... under a secret key are secrets too.
             return "[REDACTED]"
         return value
 
+    # Keys whose value is a proxy URL: its host is kept for diagnostics (credentials stripped).
+    _PROXY_URL_KEYS = frozenset(
+        {"proxy", "proxies", "proxyurl", "proxyuri", "httpproxy", "httpsproxy", "allproxy"}
+    )
+
+    @classmethod
+    def _is_proxy_key(cls, key: object) -> bool:
+        return re.sub(r"[-_\s.]", "", cls._key_text(key).lower()) in cls._PROXY_URL_KEYS
+
     @staticmethod
-    def _is_proxy_key(key: object) -> bool:
-        return "proxy" in str(key or "").lower() and "auth" not in str(key or "").lower()
+    def _key_text(key: object) -> str:
+        if isinstance(key, (bytes, bytearray)):
+            return bytes(key).decode("utf-8", errors="replace")
+        return str(key)
