@@ -270,34 +270,22 @@ async def step_generation_task(
 
 
 @router.post("/tasks/{task_id}/pause", response_model=QueueTaskOut)
-async def pause_task(task_id: str, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> QueueTaskOut:
-    task = await repository.get_generation_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task không tồn tại.")
-    if task.state not in (QueueTaskState.QUEUED, QueueTaskState.RUNNING):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot pause a task in state '{task.state.value}'.",
-        )
-    task.state = QueueTaskState.PAUSED
-    task.history_log = list(task.history_log or []) + ["Paused by operator."]
-    await repository.save_queue_task(task)
-    return _serialize_task(task)
+async def pause_task(
+    task_id: str,
+    service: QueueTaskService = Depends(get_queue_task_service),
+    actor: str = Depends(verify_single_admin),
+) -> QueueTaskOut:
+    return _serialize_task(await service.pause_task(task_id))
 
 
 @router.post("/tasks/{task_id}/resume", response_model=QueueTaskOut)
-async def resume_task(task_id: str, request: Request, repository: StudioRepository = Depends(get_studio_repository), actor: str = Depends(verify_single_admin)) -> QueueTaskOut:
-    task = await repository.get_generation_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task không tồn tại.")
-    if task.state != QueueTaskState.PAUSED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot resume a task in state '{task.state.value}'.",
-        )
-    task.state = QueueTaskState.RUNNING if task.external_task_id else QueueTaskState.QUEUED
-    task.history_log = list(task.history_log or []) + ["Resumed by operator."]
-    await repository.save_queue_task(task)
+async def resume_task(
+    task_id: str,
+    request: Request,
+    service: QueueTaskService = Depends(get_queue_task_service),
+    actor: str = Depends(verify_single_admin),
+) -> QueueTaskOut:
+    task = await service.resume_task(task_id)
     await schedule_generation_task(request, task)
     return _serialize_task(task)
 

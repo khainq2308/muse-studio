@@ -1,6 +1,7 @@
 """Queue task use cases that must not live in route handlers (reply, cancel)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from muse_orchestrator.application.services import ApplicationError
@@ -34,6 +35,11 @@ class InputNotPendingError(ApplicationError):
         self.task = task
 
 
+# A busy task (poll or answer in flight) is retried briefly before answering 409.
+_REPLY_BUSY_ATTEMPTS = 10
+_REPLY_BUSY_RETRY_SECONDS = 0.5
+
+
 class QueueTaskService:
     def __init__(self, repository: StudioRepository) -> None:
         self.repository = repository
@@ -47,7 +53,17 @@ class QueueTaskService:
         answer = {"text": text} if text is not None else {"choice": choice or ""}
         session = self.repository.session
         try:
-            return await GenerationQueueService.reply_to_task(session, task_id, answer)
+            for attempt in range(_REPLY_BUSY_ATTEMPTS):
+                try:
+                    return await GenerationQueueService.reply_to_task(session, task_id, answer)
+                except TaskStateConflictError:
+                    # A worker poll (seconds) or another answer holds the task lease.
+                    if attempt == _REPLY_BUSY_ATTEMPTS - 1:
+                        raise
+                    await asyncio.sleep(_REPLY_BUSY_RETRY_SECONDS)
+            raise AssertionError("unreachable")
+        except TaskStateConflictError as exc:
+            raise ApplicationError(409, str(exc), category="conflict", retryable=True) from exc
         except TaskNotFoundError as exc:
             raise ApplicationError(404, TASK_NOT_FOUND_MESSAGE) from exc
         except TaskNotAwaitingInputError as exc:
@@ -72,6 +88,22 @@ class QueueTaskService:
                 type(exc).__name__,
             )
             return None
+
+    async def pause_task(self, task_id: str) -> GenerationTaskRecord:
+        try:
+            return await GenerationQueueService.pause_task(self.repository.session, task_id)
+        except TaskNotFoundError as exc:
+            raise ApplicationError(404, TASK_NOT_FOUND_MESSAGE) from exc
+        except TaskStateConflictError as exc:
+            raise ApplicationError(409, str(exc)) from exc
+
+    async def resume_task(self, task_id: str) -> GenerationTaskRecord:
+        try:
+            return await GenerationQueueService.resume_task(self.repository.session, task_id)
+        except TaskNotFoundError as exc:
+            raise ApplicationError(404, TASK_NOT_FOUND_MESSAGE) from exc
+        except TaskStateConflictError as exc:
+            raise ApplicationError(409, str(exc)) from exc
 
     async def cancel_task(self, task_id: str) -> GenerationTaskRecord:
         try:
