@@ -241,7 +241,12 @@ EXCLUDED_TABLES = [
 # (api/timeline.py ClipEditItemIn/AudioTrackItemIn, api/projects.py, api/pipeline.py).
 _MAX_TIMELINE_START_SECONDS = 86_400.0
 _MAX_CLIP_SECONDS = 600.0
-_MAX_SEQUENCE_SECONDS = _MAX_TIMELINE_START_SECONDS + _MAX_CLIP_SECONDS + 60.0
+# api/timeline.py MAX_TIMELINE_CLIPS: clips laid out back to back can end far past the
+# latest explicit start, so the sequence bound must cover both layouts.
+_MAX_TIMELINE_CLIPS = 500
+_MAX_SEQUENCE_SECONDS = (
+    max(_MAX_TIMELINE_START_SECONDS + _MAX_CLIP_SECONDS, _MAX_TIMELINE_CLIPS * _MAX_CLIP_SECONDS) + 60.0
+)
 _ASPECT_RATIOS = frozenset({"16:9", "9:16", "1:1", "21:9"})
 _RESOLUTION_RE = re.compile(r"^\d{2,4}x\d{2,4}$")
 _FPS_BOUNDS = (12, 60)
@@ -1042,7 +1047,7 @@ class BackupService:
         )).first()
         if name_taken is not None:
             name = f"{_RESTORED_PLACEHOLDER_CONNECTION_NAME} [{uuid.uuid4().hex[:8]}]"
-        db.add(ProviderConnection(
+        placeholder = ProviderConnection(
             id=RESTORED_PLACEHOLDER_CONNECTION_ID,
             name=name,
             provider_type="restored_placeholder",
@@ -1056,8 +1061,15 @@ class BackupService:
                 "Placeholder for restored history whose original provider connection "
                 "does not exist on this instance. It cannot dispatch work."
             ),
-        ))
-        await db.flush()
+        )
+        try:
+            # A concurrent restore may create the same placeholder first; that is fine.
+            async with db.begin_nested():
+                db.add(placeholder)
+                await db.flush()
+        except IntegrityError:
+            if await db.get(ProviderConnection, RESTORED_PLACEHOLDER_CONNECTION_ID) is None:
+                raise
         return RESTORED_PLACEHOLDER_CONNECTION_ID
 
     @staticmethod
@@ -1220,6 +1232,7 @@ class BackupService:
         # Late references are non-FK columns; they are written as UPDATEs at commit.
         self._remap_late_references(id_maps, restored_rows)
         self._validate_shot_continuity_graph(restored_rows)
+        self._settle_restored_shot_states(restored_rows)
         # _load_restore_payload guarantees exactly one projects row matching the manifest.
         project_rows = restored_rows.get("projects", [])
         if len(project_rows) != 1 or project_rows[0][0].get("id") != manifest.get("project_id"):
@@ -1227,6 +1240,25 @@ class BackupService:
         project = project_rows[0][1]
         await db.commit()
         return project, report
+
+    @staticmethod
+    def _settle_restored_shot_states(
+        restored_rows: dict[str, list[tuple[dict[str, Any], Any]]],
+    ) -> None:
+        """Make each restored shot's state agree with the take it still has selected.
+
+        - A shot that was in flight keeps its finished work: SUCCEEDED when its selected
+          take survived, FAILED (interrupted, never resumed) otherwise.
+        - A SUCCEEDED shot whose selected take was skipped (media missing) is NOT_STARTED.
+        """
+        in_flight = {state.value for state in _IN_FLIGHT_SHOT_STATES}
+        for original_row, obj in restored_rows.get("shots", []):
+            if original_row.get("generation_state") in in_flight:
+                obj.generation_state = (
+                    ShotGenerationState.SUCCEEDED if obj.selected_take_id else ShotGenerationState.FAILED
+                )
+            elif obj.generation_state == ShotGenerationState.SUCCEEDED and not obj.selected_take_id:
+                obj.generation_state = ShotGenerationState.NOT_STARTED
 
     @staticmethod
     def _validate_shot_continuity_graph(

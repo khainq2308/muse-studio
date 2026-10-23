@@ -192,7 +192,9 @@ async def test_same_instance_restore_neutralizes_in_flight_work_and_keeps_histor
         assert "/etc/shadow" not in json.dumps(job.manifest_snapshot_json)
 
         shot = (await db.execute(select(ShotRecord).where(ShotRecord.project_id == new_project))).scalar_one()
-        assert shot.generation_state == ShotGenerationState.FAILED
+        # The interrupted task is never resumed, but the shot keeps its finished, selected take.
+        assert shot.selected_take_id is not None
+        assert shot.generation_state == ShotGenerationState.SUCCEEDED
 
 
 async def test_restore_keeps_takes_and_selected_take_when_connection_is_missing(env) -> None:
