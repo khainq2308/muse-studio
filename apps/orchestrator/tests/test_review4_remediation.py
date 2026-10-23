@@ -648,3 +648,39 @@ async def test_client_key_reused_with_another_prompt_is_a_conflict(client: Async
     changed = await client.post("/api/v1/queue/tasks", json=body)
 
     assert changed.status_code == 409, changed.text
+
+
+@pytest.mark.parametrize("text, secret", [
+    ('"password": "correct horse battery"', "horse battery"),
+    ('"client_secret": "a,b&c"', ",b&c"),
+    ("password='p}ss'", "}ss"),
+    ('{"pwd": "a\\"bc", "x": 1}', "bc"),
+    ('{"pwd": "unterminated secret', "unterminated secret"),
+])
+def test_partially_redacted_and_escaped_values_are_redacted_whole(text, secret):
+    assert secret not in SecretRedactor.redact_text(text)
+
+
+@pytest.mark.asyncio
+async def test_question_options_keep_ordinary_key_value_labels(client: AsyncClient, monkeypatch):
+    _pid, cid, s1, _ = await _setup(client)
+    gateway = _Gateway(["needs_input"])
+    question = {"kind": "approval", "text": "Pick", "asked_at": None,
+                "options": ["Key: C major", "tokens: 4096", "Authorization: Bearer abcdefghijklmnopqrstuvwxyz"]}
+
+    async def ask(task_id):
+        return ProviderTaskStatus(external_task_id=task_id, status="needs_input", question=question)
+
+    gateway.get_task = ask
+    monkeypatch.setattr(generation_queue, "build_provider", lambda conn, account=None: gateway)
+    tid = (await client.post("/api/v1/queue/tasks", json={"shot_id": s1["id"], "connection_id": cid})).json()["id"]
+    await _drive_until_dispatched(tid)
+    task = await _step(tid)
+
+    options = task.pending_input_json["options"]
+    # Options are sent back verbatim as the operator's choice: only credential-shaped values go.
+    assert options[:2] == ["Key: C major", "tokens: 4096"]
+    assert "abcdefghijklmnopqrstuvwxyz" not in options[2]
+    replied = await client.post(f"/api/v1/queue/tasks/{tid}/reply", json={"choice": "Key: C major"})
+    assert replied.status_code == 200, replied.text
+    assert gateway.replies == [{"choice": "Key: C major"}]

@@ -1771,7 +1771,7 @@ class GenerationQueueService:
             "kind": raw_question.get("kind", "question"),
             "text": SecretRedactor.redact_text(str(raw_question.get("text") or ""), [raw_secret]),
             "options": [
-                SecretRedactor.redact_text(str(option), [raw_secret])
+                SecretRedactor.redact_credentials(str(option), [raw_secret])
                 for option in (raw_question.get("options") or [])
             ],
             "asked_at": raw_question.get("asked_at"),
@@ -1967,15 +1967,17 @@ class GenerationQueueService:
         else:
             task.history_log = list(task.history_log or []) + [entry]
             follow_up = p_status.question if p_status.status == "needs_input" else None
-            if follow_up is not None and follow_up != task.pending_input_json:
-                task.pending_input_json = {
-                    **follow_up,
-                    "text": SecretRedactor.redact_text(str(follow_up.get("text") or ""), [raw_secret]),
-                    "options": [
-                        SecretRedactor.redact_text(str(option), [raw_secret])
-                        for option in (follow_up.get("options") or [])
-                    ],
-                }
+            stored_follow_up = None if follow_up is None else {
+                **follow_up,
+                "text": SecretRedactor.redact_text(str(follow_up.get("text") or ""), [raw_secret]),
+                "options": [
+                    SecretRedactor.redact_credentials(str(option), [raw_secret])
+                    for option in (follow_up.get("options") or [])
+                ],
+            }
+            # Compare what would be stored with what is stored (both redacted).
+            if stored_follow_up is not None and stored_follow_up != task.pending_input_json:
+                task.pending_input_json = stored_follow_up
                 task.next_poll_delay_seconds = AWAITING_INPUT_POLL_SECONDS
                 task.history_log = list(task.history_log) + [
                     f"Provider asked a follow-up ({follow_up.get('kind')}): "

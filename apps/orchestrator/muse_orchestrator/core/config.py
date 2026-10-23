@@ -173,6 +173,10 @@ _SECRET_KEY_NAMES = (
     r"|secret[-_]?key|password|passwd|secret|token"
 )
 
+_KEY_NAME_PATTERN = re.compile(
+    r"(?i)([\"']?\b(?:" + _SECRET_KEY_NAMES + r")[\"']?\s*[:=]\s*[\"']?)[^\s,'\"}&]+"
+)
+
 # Every pattern below is anchored on a literal keyword and uses only non-overlapping
 # quantifiers, so each match attempt is linear in the length of the scanned token.
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -200,12 +204,7 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         r"\1[REDACTED]",
     ),
     # key: value / key=value, including quoted keys such as "api_key": "x" or 'password': 'x'.
-    (
-        re.compile(
-            r"(?i)([\"']?\b(?:" + _SECRET_KEY_NAMES + r")[\"']?\s*[:=]\s*[\"']?)[^\s,'\"}&]+"
-        ),
-        r"\1[REDACTED]",
-    ),
+    (_KEY_NAME_PATTERN, r"\1[REDACTED]"),
     (re.compile(r"(?i)((?:set-)?cookie\s*[:=]\s*['\"]?)[^\r\n\"']+"), r"\1[REDACTED_COOKIE]"),
 ]
 
@@ -215,8 +214,11 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # 64 characters, so a failed match backtracks over at most 64 characters (linear overall).
 _KEY_VALUE_PATTERN = re.compile(
     r"([\"']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1[ \t]*([:=])[ \t]*"
-    r"(\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,'\"}&;]+)"
+    # Value: a quoted string (backslash escapes allowed), a bare token, or an unterminated
+    # quote (e.g. cut by the input bound), which is redacted up to the end of the line.
+    r"(\"(?:[^\"\\\r\n]|\\.)*\"|'(?:[^'\\\r\n]|\\.)*'|[^\s,'\"}&;]+|[\"'][^\r\n]*)"
 )
+_REDACTION_MARKERS = frozenset({"[REDACTED]", "[REDACTED_COOKIE]", "[REDACTED_PROXY_CRED]"})
 
 # Proxy/provider URLs with userinfo. The scheme is located with a fixed alternation and
 # the rest of the whitespace-delimited token is parsed with str methods, so the work is
@@ -323,12 +325,37 @@ class SecretRedactor:
     @staticmethod
     def _redact_key_value_match(match: re.Match[str]) -> str:
         key, value = match.group(2), match.group(4)
-        if not SecretRedactor.is_sensitive_key(key) or SecretRedactor._is_proxy_key(key):
+        if not SecretRedactor.is_sensitive_key(key):
             return match.group(0)
-        if value.strip("\"'").startswith("[REDACTED"):
+        if SecretRedactor._is_proxy_key(key) and "://" in value:
+            return match.group(0)  # userinfo was already stripped by _redact_url_userinfo
+        if value.strip("\"'") in _REDACTION_MARKERS:
+            # Fully redacted by an earlier pattern. A partial "[REDACTED] rest" (an earlier
+            # pattern stopped at a space or delimiter) is redacted again as a whole.
             return match.group(0)
         quote = value[0] if value[:1] in ("\"", "'") else ""
         return match.group(0)[: match.start(4) - match.start(0)] + f"{quote}[REDACTED]{quote}"
+
+    @staticmethod
+    def redact_credentials(text: str, explicit_secrets: list[str] | None = None) -> str:
+        """Remove credentials by value shape only (known secrets, URL userinfo, Authorization,
+        bearer tokens, credential query parameters, cookies), not by key names.
+
+        For text that must stay usable as-is, such as the options of a provider question
+        that are validated and sent back: key-name heuristics would turn "Key: C major"
+        into an option the provider no longer recognises.
+        """
+        if not text:
+            return text
+        sanitized = text
+        for secret in explicit_secrets or []:
+            if secret and len(secret) >= 4:
+                sanitized = sanitized.replace(secret, "[REDACTED]")
+        sanitized = _redact_url_userinfo(_bound_redaction_input(sanitized))
+        for pattern, replacement in _SENSITIVE_PATTERNS:
+            if pattern is not _KEY_NAME_PATTERN:
+                sanitized = pattern.sub(replacement, sanitized)
+        return sanitized
 
     @classmethod
     def redact_dict(cls, data: dict[str, Any], explicit_secrets: list[str] | None = None) -> dict[str, Any]:
