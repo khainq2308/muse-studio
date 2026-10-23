@@ -11,18 +11,34 @@ import { cn } from "@/lib/utils";
 interface ReferenceAssetPreviewProps {
   assetId: string;
   label: string;
+  variant?: "thumb" | "cover";
+  className?: string;
 }
 
 /**
  * Lazy-loaded authenticated thumbnail for a Story Bible reference asset.
  * Fetches bytes via `apiGetBlob` only when near the viewport and revokes the object URL on unmount.
  */
-export function ReferenceAssetPreview({ assetId, label }: ReferenceAssetPreviewProps) {
+export function ReferenceAssetPreview({
+  assetId,
+  label,
+  variant = "thumb",
+  className,
+}: ReferenceAssetPreviewProps) {
   const [element, setElement] = useState<HTMLDivElement | null>(null);
   const inView = useInView(element);
   return (
-    <div ref={setElement} data-asset-id={assetId} className="w-28 shrink-0">
-      <ReferenceAssetPreviewBody assetId={assetId} label={label} enabled={inView} />
+    <div
+      ref={setElement}
+      data-asset-id={assetId}
+      className={cn(variant === "cover" ? "h-full w-full" : "w-28 shrink-0", className)}
+    >
+      <ReferenceAssetPreviewBody
+        assetId={assetId}
+        label={label}
+        variant={variant}
+        enabled={inView}
+      />
     </div>
   );
 }
@@ -30,6 +46,7 @@ export function ReferenceAssetPreview({ assetId, label }: ReferenceAssetPreviewP
 function ReferenceAssetPreviewBody({
   assetId,
   label,
+  variant = "thumb",
   enabled,
 }: ReferenceAssetPreviewProps & { enabled: boolean }) {
   const query = useReferenceAssetMedia(assetId, REFERENCE_PREVIEW_MAX_BYTES, {
@@ -37,8 +54,10 @@ function ReferenceAssetPreviewBody({
     gcTime: 30_000,
   });
   const url = useObjectUrl(query.data);
-  const boxClass =
-    "flex aspect-square w-full items-center justify-center overflow-hidden rounded-md border border-border bg-muted/40 text-xs text-muted-foreground";
+  const boxClass = cn(
+    "flex w-full items-center justify-center overflow-hidden bg-muted/40 text-xs text-muted-foreground",
+    variant === "cover" ? "h-full" : "aspect-square rounded-md border border-border",
+  );
 
   if (query.isError) {
     const tooLarge = query.error instanceof ApiError && query.error.category === "too_large";
@@ -78,7 +97,10 @@ function ReferenceAssetPreviewBody({
         src={url}
         alt={label}
         data-testid={`reference-asset-image-${assetId}`}
-        className="aspect-square w-full rounded-md border border-border bg-black object-cover"
+        className={cn(
+          "w-full bg-black object-cover",
+          variant === "cover" ? "h-full" : "aspect-square rounded-md border border-border",
+        )}
       />
     );
   }

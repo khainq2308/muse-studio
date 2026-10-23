@@ -1,4 +1,12 @@
-import { RefreshCw } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import {
+  BookOpenText,
+  Clapperboard,
+  FolderCog,
+  LayoutGrid,
+  RefreshCw,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
@@ -58,6 +66,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
   const [generateShotId, setGenerateShotId] = useState<string | null>(null);
   const [reviewShotId, setReviewShotId] = useState<string | null>(null);
+  const [boardMode, setBoardMode] = useState<"storyboard" | "shot-editor">("storyboard");
 
   const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
   const sceneIds = useMemo(() => groupShotsByScene(shots).map((group) => group.sceneId), [shots]);
@@ -115,10 +124,12 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
     resetUpdate();
     setGenerateShotId(null);
     setEditingShotId(shotId);
+    setBoardMode("shot-editor");
   };
   const closeEditor = () => {
     resetUpdate();
     setEditingShotId(null);
+    setBoardMode("storyboard");
   };
   const saveShot = (shotId: string, update: ShotUpdate) => {
     updateMutation.mutate({ shotId, update });
@@ -217,35 +228,126 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
       data-testid="shot-board-page"
       data-project-id={projectId}
       aria-labelledby="shot-board-heading"
-      className="space-y-6"
+      className="space-y-5"
     >
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-primary">Project shots</p>
-          <h2 id="shot-board-heading" className="mt-1 text-2xl font-semibold tracking-tight">
-            Shot Board
-          </h2>
-          <p className="mt-2 break-all text-sm text-muted-foreground">
-            Review, edit and generate shots for project{" "}
-            <span className="font-medium text-foreground">{projectId}</span>.
-          </p>
+      {/* LTX Studio-inspired Top Bar + Secondary Studio Ribbon */}
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-2xs">
+        <header className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-3.5">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary">
+              <LayoutGrid className="size-5" aria-hidden="true" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded bg-primary px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-primary-foreground">
+                  STUDIO
+                </span>
+                <h2
+                  id="shot-board-heading"
+                  className="text-xl font-bold tracking-tight sm:text-2xl"
+                >
+                  Shot Board
+                </h2>
+                <span className="rounded-full bg-secondary px-2.5 py-0.5 font-mono text-xs text-muted-foreground">
+                  {projectId}
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
+                Review, edit and generate shots for project{" "}
+                <span className="font-medium text-foreground">{projectId}</span>.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Segmented Mode Switcher: Storyboard | Shot Editor */}
+            <div className="inline-flex rounded-xl border border-border bg-secondary/60 p-1">
+              <button
+                type="button"
+                onClick={() => setBoardMode("storyboard")}
+                className={cn(
+                  "rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all",
+                  boardMode === "storyboard"
+                    ? "bg-foreground text-background shadow-xs"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Storyboard
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBoardMode("shot-editor");
+                  if (!editingShotId && shots[0]) {
+                    openEditor(shots[0].id);
+                  }
+                }}
+                className={cn(
+                  "rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all",
+                  boardMode === "shot-editor"
+                    ? "bg-foreground text-background shadow-xs"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Shot Editor
+              </button>
+            </div>
+
+            <QueueMonitorLink projectId={projectId} />
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={refresh}
+              aria-busy={shotsQuery.isFetching}
+            >
+              <RefreshCw
+                className={cn("size-4", shotsQuery.isFetching && "animate-spin")}
+                aria-hidden="true"
+              />
+              Refresh
+            </Button>
+          </div>
+        </header>
+
+        {/* Secondary Studio Quick-Links Bar (LTX Studio Project Settings / Soundtrack / Characters ribbon) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-secondary/35 px-5 py-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-4">
+            <Link
+              to="/projects/$projectId/$module"
+              params={{ projectId, module: "projects" }}
+              className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <FolderCog className="size-3.5 text-primary" aria-hidden="true" />
+              Project settings
+            </Link>
+            <Link
+              to="/projects/$projectId/$module"
+              params={{ projectId, module: "timeline-editor" }}
+              className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Clapperboard className="size-3.5 text-primary" aria-hidden="true" />
+              Soundtrack &amp; Timeline
+            </Link>
+            <Link
+              to="/projects/$projectId/$module"
+              params={{ projectId, module: "script-studio" }}
+              className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <BookOpenText className="size-3.5 text-primary" aria-hidden="true" />
+              Characters &amp; Story Bible
+            </Link>
+          </div>
+
+          <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+            <SlidersHorizontal className="size-3.5 text-primary" aria-hidden="true" />
+            <span>
+              {sceneIds.length} {sceneIds.length === 1 ? "Scene" : "Scenes"} · {shotStats.total}{" "}
+              {shotStats.total === 1 ? "Shot" : "Shots"}
+            </span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <QueueMonitorLink projectId={projectId} />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={refresh}
-            aria-busy={shotsQuery.isFetching}
-          >
-            <RefreshCw
-              className={cn("size-4", shotsQuery.isFetching && "animate-spin")}
-              aria-hidden="true"
-            />
-            Refresh
-          </Button>
-        </div>
-      </header>
+      </div>
 
       <GenerationSettings
         connections={connectionsQuery.data ?? []}
@@ -264,27 +366,27 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
       {shots.length > 0 && (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
               <p className="text-xs font-medium text-muted-foreground">Total Shots</p>
               <p className="mt-0.5 text-lg font-bold tabular-nums">{shotStats.total}</p>
             </div>
-            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
               <p className="text-xs font-medium text-muted-foreground">Scenes</p>
               <p className="mt-0.5 text-lg font-bold tabular-nums">{sceneIds.length}</p>
             </div>
-            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
               <p className="text-xs font-medium text-muted-foreground">Rendered / Succeeded</p>
               <p className="mt-0.5 text-lg font-bold tabular-nums text-success">
                 {shotStats.succeeded}
               </p>
             </div>
-            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
               <p className="text-xs font-medium text-muted-foreground">Frame-Chained</p>
               <p className="mt-0.5 text-lg font-bold tabular-nums text-primary">
                 {shotStats.frameChained}
               </p>
             </div>
-            <div className="rounded-xl border border-border bg-secondary/35 px-3.5 py-2.5">
+            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
               <p className="text-xs font-medium text-muted-foreground">Blocked / Needs Lock</p>
               <p className="mt-0.5 text-lg font-bold tabular-nums text-destructive">
                 {shotStats.blocked}

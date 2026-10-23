@@ -294,26 +294,45 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
       />
 
       <section aria-labelledby="story-bible-section-heading" className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 id="story-bible-section-heading" className="text-lg font-semibold">
-              Story Bible ({entries.length})
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Characters, locations, style rules and props compiled into downstream shot prompts.
-            </p>
+        {/* Nucanon-inspired Worldbuilding Gallery Header */}
+        <div className="relative overflow-hidden rounded-xl border border-border/80 bg-card px-6 py-5 shadow-xs">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 w-64 opacity-40"
+            style={{
+              backgroundImage: "radial-gradient(rgba(79, 70, 229, 0.25) 1px, transparent 1px)",
+              backgroundSize: "14px 14px",
+            }}
+          />
+          <div className="relative flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="font-mono text-[11px] font-semibold tracking-[0.22em] text-primary uppercase">
+                Worldbuilding &amp; Continuity Vault
+              </p>
+              <h3
+                id="story-bible-section-heading"
+                className="mt-1 text-xl font-bold tracking-tight text-foreground"
+              >
+                Story Bible ({entries.length})
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                You have {entries.length} canonical {entries.length === 1 ? "entity" : "entities"}{" "}
+                (characters, locations, style rules and props) compiled into downstream shot
+                prompts.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={creatingNewEntry ? "secondary" : "default"}
+              disabled={isEditorBusy}
+              aria-expanded={creatingNewEntry}
+              onClick={openNewEditor}
+            >
+              <Plus className="size-4" aria-hidden="true" />
+              New Bible entry
+            </Button>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant={creatingNewEntry ? "secondary" : "default"}
-            disabled={isEditorBusy}
-            aria-expanded={creatingNewEntry}
-            onClick={openNewEditor}
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            New Bible entry
-          </Button>
         </div>
 
         {creatingNewEntry &&
