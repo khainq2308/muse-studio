@@ -245,6 +245,15 @@ class PipelineService:
                 continue
             if any(i.code == "BLOCKED_REFERENCE" for i in compiled.lint_issues):
                 s.generation_state = ShotGenerationState.BLOCKED_REFERENCE
+            elif s.generation_state == ShotGenerationState.BLOCKED_UPSTREAM_FRAME and not (
+                s.continuity_mode == "frame_chain" and s.previous_shot_id
+            ):
+                # The shot no longer waits on an upstream frame (continuity changed).
+                s.generation_state = (
+                    ShotGenerationState.SUCCEEDED
+                    if s.selected_take_id
+                    else ShotGenerationState.NOT_STARTED
+                )
             elif s.generation_state == ShotGenerationState.BLOCKED_REFERENCE and not compiled.has_blockers:
                 # Only unblock once no linter blocker remains; restore SUCCEEDED when the
                 # shot still has a selected take instead of discarding finished work.
