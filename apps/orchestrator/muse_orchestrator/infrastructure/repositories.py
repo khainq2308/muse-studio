@@ -163,7 +163,9 @@ class StudioRepository:
             if any(isinstance(c, dict) and c.get("asset_id") == asset_id for c in (track.clips_json or []))
         ]
         exports = list((await self.session.execute(
-            select(ExportJobRecord).where(ExportJobRecord.output_asset_id == asset_id)
+            select(ExportJobRecord).where(
+                ExportJobRecord.output_asset_id == asset_id, ExportJobRecord.project_id == project_id
+            )
         )).scalars().all())
         return clips, tracks, exports
 

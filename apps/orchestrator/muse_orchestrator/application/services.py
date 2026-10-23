@@ -478,7 +478,15 @@ class AssetService:
             asset_paths.add(os.path.normpath(str(self.storage.resolve_safe_path(asset.storage_rel_path))))
         except AssetStorageError:
             pass
-        active_exports = await self._find_active_exports_using_asset(asset, asset_paths)
+        shared_path = await self.repository.has_other_asset_with_storage_path(
+            asset.storage_rel_path, asset.id
+        )
+        # Only a delete that unlinks the file can break a render that reads it; a file kept
+        # for another asset row stays. (A render launched between this check and the
+        # commit below fails honestly; it never reports a false success.)
+        active_exports = (
+            [] if shared_path else await self._find_active_exports_using_asset(asset, asset_paths)
+        )
         if active_exports:
             # Not even force=true: the queued/running render reads this file and would fail
             # (or have its input removed mid-render). Retry once the export has finished.
@@ -503,9 +511,6 @@ class AssetService:
         if clips or tracks or exports:
             self._detach_timeline_references(asset.id, clips, tracks, exports)
 
-        shared_path = await self.repository.has_other_asset_with_storage_path(
-            asset.storage_rel_path, asset.id
-        )
         session = self.repository.session
         if takes or shots or bible:
             await self._detach_asset_references(asset, takes, shots, bible)

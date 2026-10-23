@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.util import identity_key
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from muse_media.boundary_frames import BoundaryFrames, extract_boundary_frames
@@ -125,15 +126,21 @@ async def release_owned_lease(db: AsyncSession, task_id: str, owner_token: str |
     """
     if not owner_token:
         return
-    await db.execute(
+    result = await db.execute(
         delete(GenerationDispatchLeaseRecord).where(
             GenerationDispatchLeaseRecord.task_id == task_id,
             GenerationDispatchLeaseRecord.owner_token == owner_token,
         )
-        # "fetch" also evicts our own (possibly expired-after-rollback) lease object from
-        # the identity map, so a later get() in this session cannot see a deleted row.
+        # "fetch" evicts our lease object from the identity map when the row is deleted.
         .execution_options(synchronize_session="fetch")
     )
+    if result.rowcount == 0:
+        # The lease was taken over: the row is gone or belongs to a newer holder, so
+        # "fetch" evicted nothing. Drop our stale object so a later add() of a lease with
+        # the same primary key in this session cannot collide with it.
+        stale = db.identity_map.get(identity_key(GenerationDispatchLeaseRecord, task_id))
+        if stale is not None and stale.owner_token == owner_token:
+            db.expunge(stale)
 
 
 def dispatch_lease_seconds(conn: ProviderConnection) -> float:
@@ -694,7 +701,15 @@ class GenerationQueueService:
         for take in takes:
             take.is_selected = take.id == take_id
         shot.selected_take_id = take_id
-        shot.last_frame_asset_id = selected.last_frame_asset_id
+        # Defense in depth: only a frame asset of the shot's own project becomes its last frame.
+        frame = (
+            await repository.session.get(Asset, selected.last_frame_asset_id)
+            if selected.last_frame_asset_id
+            else None
+        )
+        shot.last_frame_asset_id = (
+            frame.id if frame is not None and frame.project_id == shot.project_id else None
+        )
         await repository.save_selected_take(shot, takes)
         return await GenerationQueueService.propagate_frame_chain_downstream(repository.session, shot)
 
@@ -1203,12 +1218,6 @@ class GenerationQueueService:
             raise
 
     @staticmethod
-    async def _release_lease_after_cancel(db: AsyncSession, task_id: str, lease_token: str) -> None:
-        await GenerationQueueService._handle_cancelled_step(
-            db, task_id, outcome_unknown=False, lease_token=lease_token
-        )
-
-    @staticmethod
     async def _fail_dispatch_outcome_unknown(
         db: AsyncSession, task: GenerationTaskRecord, reason: str
     ) -> GenerationTaskRecord:
@@ -1494,10 +1503,14 @@ class GenerationQueueService:
             expires_at=now + timedelta(seconds=dispatch_lease_seconds(conn)),
             owner_token=lease_state["token"],
         ))
+        # Mark ownership before the commit: a cancellation between commit and assignment
+        # would otherwise leave a committed lease nobody releases (and a later step would
+        # misread it as an interrupted dispatch). Releasing is token-filtered, so releasing
+        # a lease that never got committed is harmless.
+        lease_state["owned"] = True
         # expire_on_commit=False keeps the claimed task snapshot available without opening a
         # new DB transaction while the provider request is in flight.
         await db.commit()
-        lease_state["owned"] = True
 
         dispatch_markers: list[str] = []
         try:
@@ -1690,8 +1703,8 @@ class GenerationQueueService:
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=dispatch_lease_seconds(conn)),
             owner_token=lease_state["token"],
         ))
+        lease_state["owned"] = True  # before the commit, see _dispatch_new_task
         await db.commit()
-        lease_state["owned"] = True
         lease_token: str = lease_state["token"]
         try:
             p_status = await provider.get_task(task.external_task_id)
