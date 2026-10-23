@@ -285,7 +285,83 @@ describe("TimelineEditorPage assemble", () => {
   });
 });
 
+describe("TimelineEditorPage audio and subtitle limits", () => {
+  it("does not reserve a BGM track by default and edits subtitles in a multi-line field", async () => {
+    const fetchMock = stubApi({
+      [`GET ${TIMELINE_PATH}`]: () => json({ detail: "Timeline not found" }, 404),
+      [`POST ${ASSEMBLE_PATH}`]: () => json({ detail: "not under test" }, 500),
+    });
+    mount();
+    await advance(0);
+
+    const subtitles = screen.getByLabelText(/Subtitle cues/i);
+    expect(subtitles.tagName).toBe("TEXTAREA");
+    fireEvent.change(subtitles, { target: { value: "1\n00:00:00,000 --> 00:00:02,000\nHi" } });
+    fireEvent.click(screen.getByRole("button", { name: /Assemble \/ Refresh Timeline/i }));
+    await advance(0);
+
+    const [call] = callsTo(fetchMock, "POST", ASSEMBLE_PATH);
+    const body = JSON.parse(String(call![1]!.body)) as Record<string, unknown>;
+    expect(body.audio_tracks).toEqual([]);
+    expect(body.subtitle_content).toBe("1\n00:00:00,000 --> 00:00:02,000\nHi");
+
+    fireEvent.click(screen.getByLabelText(/Reserve a background music track/i));
+    expect(screen.getByText(/does not mix audio tracks/i)).toBeInTheDocument();
+  });
+
+  it("lists features the exporter will skip before the export is launched", async () => {
+    const timeline = makeTimeline();
+    timeline.manifest.has_subtitles = true;
+    timeline.manifest.audio_tracks = [
+      {
+        name: "Main Score Track",
+        track_type: "music",
+        volume: 0.8,
+        fade_in_seconds: 0.5,
+        fade_out_seconds: 1,
+        muted: false,
+        asset_id: null,
+      },
+    ];
+    const fetchMock = stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(timeline) });
+    mount();
+    await advance(0);
+
+    const skipped = screen.getByTestId("export-skipped-features");
+    expect(skipped).toHaveTextContent(/clip audio/);
+    expect(skipped).toHaveTextContent(/subtitles/);
+    expect(skipped).toHaveTextContent(/audio tracks/);
+    expect(skipped).not.toHaveTextContent(/title card/);
+    expect(callsTo(fetchMock, "POST", EXPORTS_PATH)).toHaveLength(0);
+  });
+});
+
 describe("TimelineEditorPage export", () => {
+  it("keeps the resolution consistent with the selected aspect ratio", async () => {
+    const fetchMock = stubApi({
+      [`GET ${TIMELINE_PATH}`]: () => json(makeTimeline()),
+      [`POST ${EXPORTS_PATH}`]: () => json({ detail: "not under test" }, 500),
+    });
+    mount();
+    await advance(0);
+
+    fireEvent.change(screen.getByLabelText("Aspect ratio"), { target: { value: "9:16" } });
+    const resolution = screen.getByLabelText("Resolution");
+    expect(resolution).toHaveValue("1080x1920");
+    const offered = Array.from(resolution.querySelectorAll("option")).map((o) => o.value);
+    expect(offered).toEqual(["1080x1920", "720x1280"]);
+
+    fireEvent.change(resolution, { target: { value: "720x1280" } });
+    fireEvent.click(screen.getByRole("button", { name: /Launch Verified MP4 Export/i }));
+    await advance(0);
+
+    const [call] = callsTo(fetchMock, "POST", EXPORTS_PATH);
+    expect(JSON.parse(String(call![1]!.body))).toMatchObject({
+      resolution: "720x1280",
+      aspect_ratio: "9:16",
+    });
+  });
+
   it("posts the export request for the loaded sequence", async () => {
     const { fetchMock, queryClient } = await launchExport([
       () => json(makeExportStatus({ state: "succeeded" })),

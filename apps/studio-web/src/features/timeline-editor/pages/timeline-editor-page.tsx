@@ -20,6 +20,14 @@ import {
   useProjectTimeline,
   useTimelineExportStatus,
 } from "@/features/timeline-editor/api";
+import {
+  EXPORT_ASPECT_RATIOS,
+  RESOLUTIONS_BY_ASPECT,
+  defaultResolutionFor,
+  isExportAspectRatio,
+  skippedExportFeatures,
+  type ExportAspectRatio,
+} from "@/features/timeline-editor/export-options";
 import { ApiError } from "@/lib/api/client";
 import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
@@ -56,11 +64,11 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
   const [subtitleContent, setSubtitleContent] = useState("");
   const [bgmName, setBgmName] = useState("Main Score Track");
   const [bgmVolume, setBgmVolume] = useState(0.8);
-  const [includeBgm, setIncludeBgm] = useState(true);
+  const [includeBgm, setIncludeBgm] = useState(false);
 
-  const [exportResolution, setExportResolution] = useState("1920x1080");
+  const [exportAspectRatio, setExportAspectRatio] = useState<ExportAspectRatio>("16:9");
+  const [exportResolution, setExportResolution] = useState(defaultResolutionFor("16:9"));
   const [exportFps, setExportFps] = useState(24);
-  const [exportAspectRatio, setExportAspectRatio] = useState("16:9");
   const [activeExportId, setActiveExportId] = useState<string | null>(null);
 
   const exportStatusQuery = useTimelineExportStatus(projectId, activeExportId);
@@ -75,6 +83,7 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
   const audioTracks = timeline?.manifest.audio_tracks ?? [];
   const warnings = timeline?.warnings ?? [];
   const exportStatus = exportStatusQuery.data;
+  const skippedFeatures = timeline ? skippedExportFeatures(timeline) : [];
 
   return (
     <div data-testid="timeline-editor-page" data-project-id={projectId} className="space-y-6">
@@ -87,8 +96,9 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
             </h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Assemble selected shot takes into an NLE sequence, configure transitions, audio tracks,
-            and SRT/VTT subtitles, and launch FFprobe-verified MP4 exports.
+            Assemble selected shot takes into a sequence, configure transitions and launch
+            FFprobe-verified MP4 exports. Audio tracks and subtitles are stored with the timeline
+            but are not rendered into the MP4 yet.
           </p>
         </div>
 
@@ -211,9 +221,16 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                   onChange={(event) => setIncludeBgm(event.target.checked)}
                   className="rounded border-input"
                 />
-                <span>Attach background music track ({bgmName})</span>
+                <span>Reserve a background music track (metadata only)</span>
               </label>
             </div>
+
+            {includeBgm && (
+              <p className="mt-2 text-xs text-warning">
+                No audio file can be attached yet, and MP4 export does not mix audio tracks. This
+                only records a track entry in the timeline manifest.
+              </p>
+            )}
 
             {includeBgm && (
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -257,14 +274,18 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
               </label>
               <label className="space-y-1 text-xs font-medium sm:col-span-3">
                 <span>Subtitle cues (optional SRT / VTT content)</span>
-                <input
+                <textarea
+                  rows={5}
                   value={subtitleContent}
                   onChange={(event) => setSubtitleContent(event.target.value)}
-                  placeholder="1&#10;00:00:00,000 --> 00:00:04,000&#10;Opening scene dialogue..."
-                  className="h-9 w-full rounded-lg border border-input bg-background px-3 font-mono text-xs"
+                  placeholder={"1\n00:00:00,000 --> 00:00:04,000\nOpening scene dialogue..."}
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs"
                 />
               </label>
             </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Subtitles are saved with the timeline; MP4 export does not burn in or embed them yet.
+            </p>
           </section>
 
           <section
@@ -424,33 +445,44 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
             </p>
 
             <div className="grid gap-3">
-              <label className="space-y-1 text-xs font-medium">
-                <span>Resolution</span>
-                <select
-                  value={exportResolution}
-                  onChange={(event) => setExportResolution(event.target.value)}
-                  className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
-                >
-                  <option value="1920x1080">1920x1080 (Full HD)</option>
-                  <option value="1280x720">1280x720 (HD)</option>
-                  <option value="1080x1920">1080x1920 (Vertical 9:16)</option>
-                </select>
-              </label>
-
               <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1 text-xs font-medium">
                   <span>Aspect ratio</span>
                   <select
                     value={exportAspectRatio}
-                    onChange={(event) => setExportAspectRatio(event.target.value)}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      if (!isExportAspectRatio(next)) return;
+                      setExportAspectRatio(next);
+                      setExportResolution(defaultResolutionFor(next));
+                    }}
                     className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
                   >
-                    <option value="16:9">16:9</option>
-                    <option value="9:16">9:16</option>
-                    <option value="1:1">1:1</option>
+                    {EXPORT_ASPECT_RATIOS.map((aspect) => (
+                      <option key={aspect} value={aspect}>
+                        {aspect}
+                      </option>
+                    ))}
                   </select>
                 </label>
 
+                <label className="space-y-1 text-xs font-medium">
+                  <span>Resolution</span>
+                  <select
+                    value={exportResolution}
+                    onChange={(event) => setExportResolution(event.target.value)}
+                    className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
+                  >
+                    {RESOLUTIONS_BY_ASPECT[exportAspectRatio].map((resolution) => (
+                      <option key={resolution} value={resolution}>
+                        {resolution}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1 text-xs font-medium">
                   <span>FPS</span>
                   <select
@@ -465,6 +497,20 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                 </label>
               </div>
             </div>
+
+            {skippedFeatures.length > 0 && (
+              <div
+                data-testid="export-skipped-features"
+                className="rounded-lg border border-warning/35 bg-warning/10 p-2.5 text-xs"
+              >
+                <p className="font-semibold text-warning">This export will not include:</p>
+                <ul className="mt-1 list-inside list-disc">
+                  {skippedFeatures.map((feature) => (
+                    <li key={feature}>{feature}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {launchExportMutation.isError && (
               <p role="alert" className="text-xs text-destructive">
