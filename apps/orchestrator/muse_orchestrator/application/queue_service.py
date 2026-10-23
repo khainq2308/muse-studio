@@ -6,7 +6,7 @@ import logging
 
 from muse_orchestrator.application.services import ApplicationError
 from muse_orchestrator.infrastructure.repositories import StudioRepository
-from muse_orchestrator.models.domain import GenerationTaskRecord
+from muse_orchestrator.models.domain import GenerationTaskRecord, ShotRecord
 from muse_orchestrator.providers.base import ErrorCategory, ProviderFailure
 from muse_orchestrator.services.generation_queue import (
     GenerationQueueService,
@@ -88,6 +88,22 @@ class QueueTaskService:
                 type(exc).__name__,
             )
             return None
+
+    async def select_shot_take(self, shot_id: str, take_id: str) -> tuple[ShotRecord, list[str]]:
+        """Select a take of a shot; returns the shot and the re-pointed downstream shots.
+
+        404 when the shot is missing, or when the take is not a take of this shot in the
+        shot's project (``take.shot_id == shot_id`` and ``take.project_id ==
+        shot.project_id``).
+        """
+        shot = await self.repository.get_shot(shot_id)
+        if shot is None:
+            raise ApplicationError(404, "Shot không tồn tại.")
+        try:
+            unlocked = await GenerationQueueService.select_shot_take(self.repository, shot, take_id)
+        except LookupError as exc:
+            raise ApplicationError(404, "Take không thuộc về Shot này.") from exc
+        return shot, unlocked
 
     async def pause_task(self, task_id: str) -> GenerationTaskRecord:
         try:

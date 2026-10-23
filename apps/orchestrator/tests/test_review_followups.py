@@ -22,6 +22,7 @@ from muse_orchestrator.models.domain import (
     GenerationTaskRecord,
     Project,
     QueueTaskState,
+    ShotTakeRecord,
     TimelineClipRecord,
     TimelineSequenceRecord,
     TimelineTrackRecord,
@@ -36,8 +37,10 @@ from muse_orchestrator.services import generation_queue
 from muse_orchestrator.services.asset_storage import LocalAssetStorage
 from tests.test_queue_review2 import (  # noqa: F401 - `client` is a pytest fixture
     STATE,
+    _chain_and_render,
     _drive_until_dispatched,
     _setup,
+    _shots,
     _step,
     client,
 )
@@ -381,3 +384,39 @@ def test_redaction_stays_fast_on_adversarial_bounded_input(shape):
     SecretRedactor.redact_text(shape)
     SecretRedactor.redact_text(shape * 4)  # truncated to the bound first
     assert time.perf_counter() - started < 1.0
+
+
+# --- 4. Shot Board take API gaps --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_takes_expose_created_at_and_selection_respects_shot_and_project(client: AsyncClient):
+    pid, _cid, s1, s2 = await _chain_and_render(client)
+    takes = (await client.get(f"/api/v1/queue/shots/{s1['id']}/takes")).json()
+    assert takes and all(datetime.fromisoformat(t["created_at"]) for t in takes)
+    other_take = (await client.get(f"/api/v1/queue/shots/{s2['id']}/takes")).json()[0]
+
+    # A take of another shot cannot be selected through this shot.
+    wrong_shot = await client.post(f"/api/v1/queue/shots/{s1['id']}/takes/{other_take['id']}/select")
+    assert wrong_shot.status_code == 404, wrong_shot.text
+
+    # A take row whose project differs from the shot's project is refused as well.
+    async with STATE["maker"]() as db:
+        db.add(Project(id="prj_take_other", name="other"))
+        await db.flush()
+        take = await db.get(ShotTakeRecord, takes[0]["id"])
+        take.project_id = "prj_take_other"
+        await db.commit()
+    foreign = await client.post(f"/api/v1/queue/shots/{s1['id']}/takes/{takes[0]['id']}/select")
+    assert foreign.status_code == 404, foreign.text
+    assert (await _shots(client, pid))[s1["id"]]["selected_take_id"] == takes[0]["id"]
+
+    async with STATE["maker"]() as db:
+        take = await db.get(ShotTakeRecord, takes[0]["id"])
+        take.project_id = pid
+        await db.commit()
+    selected = await client.post(f"/api/v1/queue/shots/{s1['id']}/takes/{takes[0]['id']}/select")
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["selected_take_id"] == takes[0]["id"]
+    missing = await client.post(f"/api/v1/queue/shots/sht_missing/takes/{takes[0]['id']}/select")
+    assert missing.status_code == 404

@@ -682,12 +682,14 @@ class GenerationQueueService:
     ) -> list[str]:
         """Select a take; the shot's last frame mirrors it (cleared when the take has none).
 
-        Raises LookupError when the take does not belong to the shot. Returns the
-        downstream shots re-pointed at the new last frame.
+        Raises LookupError when the take does not belong to the shot: its ``shot_id`` must
+        be the shot and its ``project_id`` the shot's project (the route carries no project
+        id, so the boundary is checked on the rows themselves). Returns the downstream
+        shots re-pointed at the new last frame.
         """
         takes = await repository.list_shot_takes(shot.id)
         selected = next((t for t in takes if t.id == take_id), None)
-        if selected is None:
+        if selected is None or selected.project_id != shot.project_id:
             raise LookupError("Take không thuộc về Shot này.")
         for take in takes:
             take.is_selected = take.id == take_id

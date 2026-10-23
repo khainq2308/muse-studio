@@ -143,6 +143,7 @@ export function makeTake(overrides: Partial<ShotTake> = {}): ShotTake {
     continuity_flagged: false,
     director_notes: "",
     is_selected: false,
+    created_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }
