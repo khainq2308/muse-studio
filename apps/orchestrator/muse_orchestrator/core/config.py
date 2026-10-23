@@ -179,7 +179,8 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Authorization / Proxy-Authorization headers, plain or as quoted JSON/dict keys.
     (
         re.compile(
-            r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic|token|digest)\s+)[^\s,'\"}]+"
+            # Any scheme word (Bearer, Basic, ApiKey, ...) or none: the credential is redacted.
+            r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?(?:[A-Za-z][A-Za-z0-9_-]*\s+)?)[^\s,'\"}]+"
         ),
         r"\1[REDACTED]",
     ),
@@ -259,6 +260,15 @@ def _bound_redaction_input(text: str) -> str:
 
 _NON_SECRET_KEY_NAMES = frozenset(
     {
+        # Token counts of LLM usage/limits, not credentials.
+        "maxtokens",
+        "maxnewtokens",
+        "tokencount",
+        "totaltokens",
+        "prompttokens",
+        "completiontokens",
+        "inputtokens",
+        "outputtokens",
         "cachekey",
         "idempotencykey",
         "sortkey",
@@ -365,19 +375,30 @@ class SecretRedactor:
         result: dict[str, Any] = {}
         for key, value in data.items():
             sensitive = inherited or cls.is_sensitive_key(key)
-            result[key] = cls._redact_value(value, explicit_secrets, sensitive)
+            result[key] = cls._redact_value(value, explicit_secrets, sensitive, key=key)
         return result
 
     @classmethod
-    def _redact_value(cls, value: Any, explicit_secrets: list[str] | None, sensitive: bool) -> Any:
+    def _redact_value(
+        cls, value: Any, explicit_secrets: list[str] | None, sensitive: bool, key: object = None
+    ) -> Any:
         if isinstance(value, str):
             if sensitive:
-                # Preserve a proxy URL’s diagnostic host, but never its credentials.
-                return cls.redact_text(value, explicit_secrets) if "://" in value else "[REDACTED]"
+                if cls._is_proxy_key(key) and "://" in value:
+                    # Preserve a proxy URL's diagnostic host, but never its credentials.
+                    return cls.redact_text(value, explicit_secrets)
+                return "[REDACTED]"
             return cls.redact_text(value, explicit_secrets)
         if isinstance(value, dict):
             return cls._redact_mapping(value, explicit_secrets, sensitive)
         if isinstance(value, (list, tuple)):
-            items = [cls._redact_value(item, explicit_secrets, sensitive) for item in value]
+            items = [cls._redact_value(item, explicit_secrets, sensitive, key=key) for item in value]
             return tuple(items) if isinstance(value, tuple) else items
+        if sensitive and value is not None:
+            # Numbers, bytes, booleans ... under a secret key are secrets too.
+            return "[REDACTED]"
         return value
+
+    @staticmethod
+    def _is_proxy_key(key: object) -> bool:
+        return "proxy" in str(key or "").lower() and "auth" not in str(key or "").lower()
