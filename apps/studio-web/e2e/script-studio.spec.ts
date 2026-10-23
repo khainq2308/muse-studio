@@ -172,6 +172,10 @@ test("imports a script with replace_existing confirmation and edits a Story Bibl
 
   const importPanel = page.getByTestId("script-import-panel");
   await importPanel.getByRole("button", { name: "Insert sample script" }).click();
+  await importPanel
+    .getByRole("checkbox", { name: /Apply changes directly to Story Bible & shots/ })
+    .check();
+  await expect(importPanel.getByTestId("existing-pipeline-overwrite-warning")).toBeVisible();
   await importPanel.getByRole("button", { name: "Import & apply script" }).click();
 
   await expect(

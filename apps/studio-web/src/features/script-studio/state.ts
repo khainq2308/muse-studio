@@ -172,13 +172,14 @@ export interface BibleEntryFormValues {
 
 export function bibleEntryFormDefaults(entry?: StoryBibleEntry | null): BibleEntryFormValues {
   const attrs = entry?.mutable_attributes;
+  const isCharacter = entry ? entry.entry_type === "character" : true;
   return {
     entry_type:
       entry && isKnownStoryBibleEntryType(entry.entry_type) ? entry.entry_type : "character",
     code_name: entry?.code_name ?? "",
     display_name: entry?.display_name ?? "",
     immutable_traits: entry?.immutable_traits ?? "",
-    requires_reference_lock: entry?.requires_reference_lock ?? false,
+    requires_reference_lock: isCharacter ? (entry?.requires_reference_lock ?? false) : false,
     reference_asset_ids: [...(entry?.reference_asset_ids ?? [])],
     current_outfit: readStringAttr(attrs, "current_outfit"),
     time_of_day: readStringAttr(attrs, "time_of_day"),
@@ -237,7 +238,8 @@ export function buildBibleEntryCreateRequest(
     reference_asset_ids: values.reference_asset_ids
       .map((id) => id.trim())
       .filter((id) => id.length > 0),
-    requires_reference_lock: values.requires_reference_lock,
+    requires_reference_lock:
+      values.entry_type === "character" ? values.requires_reference_lock : false,
   };
 }
 

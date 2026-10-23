@@ -94,7 +94,9 @@ export function StoryBibleList({
           {visibleEntries.map((entry) => {
             const attributes = summarizeMutableAttributes(entry);
             const missingRequiredReference =
-              entry.requires_reference_lock && entry.reference_asset_ids.length === 0;
+              entry.entry_type === "character" &&
+              entry.requires_reference_lock &&
+              entry.reference_asset_ids.length === 0;
             const isEditing = editingCodeName === entry.code_name;
 
             return (
@@ -119,7 +121,7 @@ export function StoryBibleList({
                         <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
                           {entry.code_name}
                         </code>
-                        {entry.requires_reference_lock && (
+                        {entry.entry_type === "character" && entry.requires_reference_lock && (
                           <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                             <Lock className="size-3" aria-hidden="true" />
                             Reference lock required

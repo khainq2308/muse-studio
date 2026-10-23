@@ -75,6 +75,7 @@ const inputClass = cn(
 
 interface ScriptImportPanelProps {
   projectId: string;
+  existingEntriesCount?: number;
   isImporting: boolean;
   fieldErrors: Partial<Record<ScriptImportField, string>>;
   formError: string | null;
@@ -86,6 +87,7 @@ interface ScriptImportPanelProps {
 
 export function ScriptImportPanel({
   projectId,
+  existingEntriesCount = 0,
   isImporting,
   fieldErrors,
   formError,
@@ -102,7 +104,7 @@ export function ScriptImportPanel({
     defaultValues: {
       raw_content: "",
       source_format: "museflow",
-      auto_apply_proposal: true,
+      auto_apply_proposal: false,
       replace_existing: false,
     },
     mode: "onSubmit",
@@ -328,12 +330,30 @@ export function ScriptImportPanel({
                 {...register("auto_apply_proposal")}
               />
               <span>
-                Apply proposal immediately to Story Bible &amp; Shots
+                Apply changes directly to Story Bible &amp; shots
                 <span className="block text-xs font-normal text-muted-foreground">
-                  Uncheck to record a draft script revision without modifying current shots.
+                  Uncheck to save a versioned screenplay revision and run analyzer diagnostics
+                  without modifying active shots or Story Bible.
                 </span>
               </span>
             </label>
+
+            {existingEntriesCount > 0 && autoApply && (
+              <div
+                role="note"
+                data-testid="existing-pipeline-overwrite-warning"
+                className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning"
+              >
+                <p className="flex items-center gap-1.5 font-medium">
+                  <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+                  Project already has {existingEntriesCount} Story Bible{" "}
+                  {existingEntriesCount === 1 ? "entry" : "entries"}.
+                </p>
+                <p className="mt-1 text-foreground/80">
+                  Applying this script will replace active scenes, Story Bible locks, and shots.
+                </p>
+              </div>
+            )}
 
             <div
               className={cn(
@@ -369,7 +389,7 @@ export function ScriptImportPanel({
             ) : (
               <FileUp className="size-4" aria-hidden="true" />
             )}
-            {autoApply ? "Import & apply script" : "Save script proposal"}
+            {autoApply ? "Import & apply script" : "Save draft revision & analyze"}
           </Button>
         </div>
       </form>

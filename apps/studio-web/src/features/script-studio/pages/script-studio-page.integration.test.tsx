@@ -343,6 +343,14 @@ describe("ScriptStudioPage", () => {
 
     const importPanel = await screen.findByTestId("script-import-panel");
     await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(
+      within(importPanel).getByRole("checkbox", {
+        name: /Apply changes directly to Story Bible & shots/,
+      }),
+    );
+    expect(
+      within(importPanel).getByTestId("existing-pipeline-overwrite-warning"),
+    ).toBeInTheDocument();
     await user.click(within(importPanel).getByRole("button", { name: "Import & apply script" }));
 
     expect(

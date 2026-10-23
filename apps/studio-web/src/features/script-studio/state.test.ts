@@ -122,6 +122,36 @@ describe("Script Studio state helpers", () => {
     });
   });
 
+  it("enforces reference lock flag only for character entries and coerces non-characters to false", () => {
+    const locationEntry = makeEntry({
+      entry_type: "location",
+      code_name: "loc_bridge",
+      display_name: "Neon Bridge",
+      requires_reference_lock: true,
+    });
+    // Defaults for non-character entry should coerce requires_reference_lock to false
+    expect(bibleEntryFormDefaults(locationEntry).requires_reference_lock).toBe(false);
+
+    // buildBibleEntryCreateRequest for non-character entry should coerce requires_reference_lock to false
+    const locationReq = buildBibleEntryCreateRequest(
+      {
+        ...bibleEntryFormDefaults(locationEntry),
+        requires_reference_lock: true,
+      },
+      locationEntry,
+    );
+    expect(locationReq.requires_reference_lock).toBe(false);
+
+    // character entries retain requires_reference_lock
+    const charEntry = makeEntry({ entry_type: "character", requires_reference_lock: true });
+    expect(bibleEntryFormDefaults(charEntry).requires_reference_lock).toBe(true);
+    const charReq = buildBibleEntryCreateRequest(
+      { ...bibleEntryFormDefaults(charEntry), requires_reference_lock: true },
+      charEntry,
+    );
+    expect(charReq.requires_reference_lock).toBe(true);
+  });
+
   it("preserves custom mutable_attributes on non-style entries while updating structured fields", () => {
     const existingCharacter = makeEntry({
       mutable_attributes: {

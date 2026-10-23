@@ -524,21 +524,23 @@ export function StoryBibleEditor({
           </>
         )}
 
-        <div className="md:col-span-2">
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <input
-              type="checkbox"
-              disabled={busy}
-              className="size-4 rounded border-input"
-              {...register("requires_reference_lock")}
-            />
-            Require reference lock for downstream shots
-          </label>
-          <p className="mt-1 text-xs text-muted-foreground">
-            When enabled on a character, any shot featuring this character is blocked from
-            generation until at least one reference asset is attached.
-          </p>
-        </div>
+        {entryType === "character" && (
+          <div className="md:col-span-2">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                disabled={busy}
+                className="size-4 rounded border-input"
+                {...register("requires_reference_lock")}
+              />
+              Require reference lock for downstream shots
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              When enabled on a character, any shot featuring this character is blocked from
+              generation until at least one reference asset is attached.
+            </p>
+          </div>
+        )}
 
         <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3 md:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -274,6 +274,7 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
       <ScriptImportPanel
         key={sessionVersion}
         projectId={projectId}
+        existingEntriesCount={entries.length}
         isImporting={importInCurrentSession && importMutation.isPending}
         fieldErrors={importErrors ? importErrors.fieldErrors : NO_IMPORT_FIELD_ERRORS}
         formError={importErrors?.formError ?? null}
