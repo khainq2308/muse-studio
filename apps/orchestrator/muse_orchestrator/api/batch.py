@@ -16,7 +16,7 @@ from muse_orchestrator.models.domain import (
     BatchRenderJobRecord,
 )
 from muse_orchestrator.api.pipeline import _recompile_project_shots
-from muse_orchestrator.api.arq_dispatch import schedule_generation_task
+from muse_orchestrator.api.arq_dispatch import schedule_generation_task, schedule_generation_tasks
 from muse_orchestrator.services.generation_queue import (
     GenerationQueueService,
     conditioning_first_frame_of,
@@ -322,9 +322,10 @@ async def tick_project_batch_queue(
     queued_tasks = [t for t in active_tasks if t.state == QueueTaskState.QUEUED]
 
     stepped_results: list[dict[str, Any]] = []
+    to_schedule: list[GenerationTaskRecord] = []
     for t in running_tasks + queued_tasks:
         updated = await GenerationQueueService.step_task(repository.session, t.id)
-        await schedule_generation_task(request, updated)
+        to_schedule.append(updated)
         stepped_results.append({
             "task_id": updated.id,
             "shot_id": updated.shot_id,
@@ -339,7 +340,7 @@ async def tick_project_batch_queue(
         repository, project_id, requested_connection_id=connection_id
     )
     for cs, new_t, created in auto_results:
-        await schedule_generation_task(request, new_t)
+        to_schedule.append(new_t)
         if created:
             stepped_results.append({
                 "task_id": new_t.id,
@@ -347,6 +348,9 @@ async def tick_project_batch_queue(
                 "state": new_t.state.value,
                 "auto_enqueued_from_frame_chain": True,
             })
+
+    # Every step and auto-enqueue is committed; publish them all before reporting a 503.
+    await schedule_generation_tasks(request, to_schedule)
 
     all_project_tasks = await repository.list_project_generation_tasks(project_id)
     counts: dict[str, int] = {}
@@ -415,6 +419,7 @@ async def retry_failed_project_tasks(
         )
 
     new_task_ids: list[str] = []
+    created_tasks: list[GenerationTaskRecord] = []
     for s, conn, model_id in plan:
         try:
             t, _ = await GenerationQueueService.enqueue_shot_generation(
@@ -428,8 +433,10 @@ async def retry_failed_project_tasks(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         new_task_ids.append(t.id)
-        await schedule_generation_task(request, t)
+        created_tasks.append(t)
 
+    # Publish only after every retry task exists, so a Redis failure cannot skip shots.
+    await schedule_generation_tasks(request, created_tasks)
     return {"retried_count": len(new_task_ids), "new_task_ids": new_task_ids}
 
 
@@ -465,6 +472,7 @@ async def flag_take_continuity_and_regenerate(
         if error is not None:
             raise HTTPException(status_code=422, detail=error)
 
+    previous_flag = (take.continuity_flagged, take.director_notes)
     take.continuity_flagged = payload.continuity_flagged
     take.director_notes = payload.director_notes
     await repository.save_take_continuity(take)
@@ -482,6 +490,12 @@ async def flag_take_continuity_and_regenerate(
                 force_retry=True,
             )
         except ValueError as exc:
+            # The guard refused after the pre-check (state changed meanwhile): undo the flag
+            # so a 422 never leaves half of the request applied.
+            take = await repository.get_shot_take(take_id)
+            if take is not None:
+                take.continuity_flagged, take.director_notes = previous_flag
+                await repository.save_take_continuity(take)
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         regen_task_id = new_task.id
         await schedule_generation_task(request, new_task)
