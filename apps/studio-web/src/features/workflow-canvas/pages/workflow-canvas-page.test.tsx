@@ -71,7 +71,8 @@ const createdWorkflow: WorkflowCreateResponse = {
       target_port: "shots",
     },
   ],
-  ui_layout: { n_script_in: { x: 0, y: 120 }, n_approval: { x: 240, y: 120 } },
+  // A genuinely custom (operator-saved) layout: positions do not share a single row.
+  ui_layout: { n_script_in: { x: 0, y: 120 }, n_approval: { x: 240, y: 320 } },
 };
 
 function execution(node_id: string, state: components["schemas"]["NodeExecutionState"]) {
@@ -340,7 +341,7 @@ describe("WorkflowCanvasPage", () => {
         {
           ui_layout: {
             n_script_in: { x: 0, y: 120 },
-            n_approval: { x: 240, y: 120 },
+            n_approval: { x: 240, y: 320 },
             // Missing from ui_layout: falls back to the grid slot for index 2.
             n_render: { x: 560, y: 0 },
           },
@@ -348,6 +349,59 @@ describe("WorkflowCanvasPage", () => {
       ]),
     );
     expect(await screen.findByRole("status")).toHaveTextContent("Canvas layout saved (v1)");
+  });
+
+  it("replaces the backend default single-row layout with a wrapped grid in execution order", async () => {
+    const layoutPath = `${BASE}/wf-1/layout`;
+    const singleRow: WorkflowCreateResponse = {
+      ...createdWorkflow,
+      // Backend M3 template default: {x: idx * 240, y: 120} for every node.
+      ui_layout: {
+        n_script_in: { x: 0, y: 120 },
+        n_approval: { x: 240, y: 120 },
+        n_render: { x: 480, y: 120 },
+      },
+    };
+    const fetchMock = mockApi([
+      { method: "POST", path: BASE, status: 201, body: singleRow },
+      {
+        method: "PATCH",
+        path: layoutPath,
+        status: 200,
+        body: { workflow_id: "wf-1", version_number: 2, ui_layout_saved: true },
+      },
+    ]);
+    renderPage();
+    await createWorkflow();
+    fireEvent.click(screen.getByRole("button", { name: "Save canvas layout" }));
+
+    await waitFor(() =>
+      expect(requestsTo(fetchMock, "PATCH", layoutPath)).toEqual([
+        {
+          ui_layout: {
+            n_script_in: { x: 0, y: 0 },
+            n_approval: { x: 280, y: 0 },
+            n_render: { x: 560, y: 0 },
+          },
+        },
+      ]),
+    );
+  });
+
+  it("uses short run mode labels and explains the selected mode in helper text", async () => {
+    mockApi([{ method: "POST", path: BASE, status: 201, body: createdWorkflow }]);
+    renderPage();
+    await createWorkflow();
+
+    const select = screen.getByLabelText("Run mode");
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Dry run (plan only)", "From selected node", "Selected + downstream", "Full DAG"]);
+    expect(select).toHaveAccessibleDescription(/Planning only/);
+    fireEvent.change(select, { target: { value: "full" } });
+    expect(select).toHaveAccessibleDescription(/entire DAG simulation/);
   });
 
   it("renders create errors with the action error message", async () => {

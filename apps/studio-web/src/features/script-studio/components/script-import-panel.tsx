@@ -89,26 +89,36 @@ const SCREENPLAY_SNIPPETS: ReadonlyArray<{
   },
 ];
 
-interface ParsedSceneOutline {
-  index: number;
-  heading: string;
+/**
+ * Client-side outline of the textarea content. This is a rough local preview only: it is
+ * derived with simple line patterns and is NOT the server analyzer's result, which is
+ * reported in the import result after submission.
+ */
+interface LocalOutlineGroup {
+  key: string;
+  /** 1-based position among detected scene headings; `null` for shots before any heading. */
+  sceneNumber: number | null;
+  heading: string | null;
   shotCount: number;
   preview: string;
 }
 
-function extractSceneOutlines(rawContent: string): ParsedSceneOutline[] {
+function extractLocalSceneOutline(rawContent: string): LocalOutlineGroup[] {
   const lines = rawContent.split(/\r?\n/);
-  const outlines: ParsedSceneOutline[] = [];
-  let current: ParsedSceneOutline | null = null;
+  const groups: LocalOutlineGroup[] = [];
+  let current: LocalOutlineGroup | null = null;
+  let sceneCount = 0;
 
-  for (const rawLine of lines) {
+  for (const [lineIndex, rawLine] of lines.entries()) {
     const line = rawLine.trim();
     if (!line) continue;
 
     if (/^(?:SCENE\s+\d+|INT\.|EXT\.|#\s*SCENE)/i.test(line)) {
-      if (current) outlines.push(current);
+      if (current) groups.push(current);
+      sceneCount += 1;
       current = {
-        index: outlines.length + 1,
+        key: `scene-${lineIndex}`,
+        sceneNumber: sceneCount,
         heading: line.replace(/^#\s*/, ""),
         shotCount: 0,
         preview: "",
@@ -118,9 +128,11 @@ function extractSceneOutlines(rawContent: string): ParsedSceneOutline[] {
 
     if (/^SHOT\s+\d+/i.test(line)) {
       if (!current) {
+        // Shots before any scene heading: group them neutrally instead of inventing a heading.
         current = {
-          index: outlines.length + 1,
-          heading: "SCENE 1: Opening Sequence",
+          key: "before-first-scene",
+          sceneNumber: null,
+          heading: null,
           shotCount: 0,
           preview: "",
         };
@@ -137,8 +149,8 @@ function extractSceneOutlines(rawContent: string): ParsedSceneOutline[] {
     }
   }
 
-  if (current) outlines.push(current);
-  return outlines;
+  if (current) groups.push(current);
+  return groups;
 }
 
 const scriptImportSchema = z.object({
@@ -200,8 +212,8 @@ export function ScriptImportPanel({
   onDismissResult,
 }: ScriptImportPanelProps) {
   const headingId = useId();
+  const outlineHeadingId = useId();
   const idPrefix = useId();
-  const [activeSceneIndex, setActiveSceneIndex] = useState(1);
   const [activeFormatTag, setActiveFormatTag] = useState("action");
 
   const form = useForm<ScriptImportFormValues>({
@@ -242,7 +254,9 @@ export function ScriptImportPanel({
   const rawContent = watch("raw_content");
   const autoApply = watch("auto_apply_proposal");
 
-  const sceneOutlines = useMemo(() => extractSceneOutlines(rawContent), [rawContent]);
+  const outlineGroups = useMemo(() => extractLocalSceneOutline(rawContent), [rawContent]);
+  const localSceneCount = outlineGroups.filter((group) => group.sceneNumber !== null).length;
+  const shotCountUnknown = isCheckingPipeline || pipelineCheckError;
 
   const fieldId = (field: ScriptImportField) => `${idPrefix}-${field}`;
   const errorId = (field: ScriptImportField) => `${idPrefix}-${field}-error`;
@@ -301,11 +315,27 @@ export function ScriptImportPanel({
           <span className="hidden h-4 w-px bg-border sm:inline-block" aria-hidden="true" />
 
           <div className="flex items-center gap-1.5 text-xs">
-            <span className="rounded-md bg-amber-500/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-              SCENES {sceneOutlines.length}
+            <span
+              className="rounded-md bg-amber-500/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-700 dark:text-amber-300"
+              title="Counted locally from scene headings in the text box; the server analyzer may detect a different number."
+              data-testid="local-scene-count"
+            >
+              Local preview: {localSceneCount} {localSceneCount === 1 ? "scene" : "scenes"}
             </span>
-            <span className="rounded-md bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-medium text-primary">
-              {existingShotsCount} active {existingShotsCount === 1 ? "shot" : "shots"}
+            <span
+              className="rounded-md bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-medium text-primary"
+              data-testid="active-shots-count"
+              title={
+                isCheckingPipeline
+                  ? "Checking existing shots..."
+                  : pipelineCheckError
+                    ? "Could not load existing shots."
+                    : undefined
+              }
+            >
+              {shotCountUnknown
+                ? "— active shots"
+                : `${existingShotsCount} active ${existingShotsCount === 1 ? "shot" : "shots"}`}
             </span>
           </div>
         </div>
@@ -426,62 +456,75 @@ export function ScriptImportPanel({
         onSubmit={submit}
         noValidate
       >
-        {/* Left Column: SCENES Breakdown Navigator */}
+        {/* Left Column: local, non-interactive outline preview of the textarea content */}
         <div className="bg-secondary/20 p-4 lg:col-span-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="flex items-center justify-between gap-2">
+            <h4
+              id={outlineHeadingId}
+              className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
+            >
               Scene Outline
-            </span>
+            </h4>
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-              {sceneOutlines.length} {sceneOutlines.length === 1 ? "Scene" : "Scenes"}
+              {localSceneCount} {localSceneCount === 1 ? "Scene" : "Scenes"}
             </span>
           </div>
+          <p
+            data-testid="local-outline-disclaimer"
+            className="mt-1 text-[11px] leading-snug text-muted-foreground"
+          >
+            Local outline preview — not analyzer output. The server analyzer reports detected scenes
+            after import.
+          </p>
 
-          <div className="mt-3 space-y-2">
-            {sceneOutlines.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border bg-background/70 p-3.5 text-xs text-muted-foreground">
-                <p className="font-medium text-foreground">No scenes parsed yet</p>
-                <p className="mt-1 leading-relaxed">
-                  Paste your screenplay or click <strong>Insert sample script</strong> to populate
-                  numbered scene cards.
-                </p>
-              </div>
-            ) : (
-              sceneOutlines.map((scene) => {
-                const isSelected = activeSceneIndex === scene.index;
-                return (
-                  <button
-                    key={`${scene.index}-${scene.heading}`}
-                    type="button"
-                    onClick={() => setActiveSceneIndex(scene.index)}
-                    className={cn(
-                      "w-full rounded-xl border p-3 text-left transition-all",
-                      isSelected
-                        ? "border-amber-500/50 bg-amber-500/10 shadow-2xs"
-                        : "border-border bg-background hover:bg-secondary/50",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs font-bold text-amber-700 dark:text-amber-300">
-                        #{scene.index}
-                      </span>
-                      <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                        {scene.shotCount} {scene.shotCount === 1 ? "shot" : "shots"}
-                      </span>
-                    </div>
-                    <p className="mt-1 truncate text-xs font-semibold uppercase tracking-tight text-foreground">
-                      {scene.heading}
+          {outlineGroups.length === 0 ? (
+            <div className="mt-3 rounded-xl border border-dashed border-border bg-background/70 p-3.5 text-xs text-muted-foreground">
+              <p className="font-medium text-foreground">No scene headings found yet</p>
+              <p className="mt-1 leading-relaxed">
+                Paste your screenplay or click <strong>Insert sample script</strong> to preview its
+                scene headings here.
+              </p>
+            </div>
+          ) : (
+            <ol
+              aria-labelledby={outlineHeadingId}
+              className="mt-3 space-y-2"
+              data-testid="local-scene-outline"
+            >
+              {outlineGroups.map((group) => (
+                <li
+                  key={group.key}
+                  className="w-full rounded-xl border border-border bg-background p-3 text-left"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-bold text-amber-700 dark:text-amber-300">
+                      {group.sceneNumber === null ? "—" : `#${group.sceneNumber}`}
+                    </span>
+                    <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                      {group.shotCount} {group.shotCount === 1 ? "shot" : "shots"}
+                    </span>
+                  </div>
+                  {group.heading === null ? (
+                    <p className="mt-1 text-xs font-medium italic text-muted-foreground">
+                      Before first scene
                     </p>
-                    {scene.preview && (
-                      <p className="mt-1 line-clamp-2 text-[11px] italic text-muted-foreground">
-                        {scene.preview}
-                      </p>
-                    )}
-                  </button>
-                );
-              })
-            )}
-          </div>
+                  ) : (
+                    <p
+                      className="mt-1 truncate text-xs font-semibold uppercase tracking-tight text-foreground"
+                      title={group.heading}
+                    >
+                      {group.heading}
+                    </p>
+                  )}
+                  {group.preview && (
+                    <p className="mt-1 line-clamp-2 text-[11px] italic text-muted-foreground">
+                      {group.preview}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
 
           <div className="mt-4 rounded-xl border border-border bg-background p-3 text-xs">
             <p className="font-semibold text-foreground">Key Elements Tracked</p>

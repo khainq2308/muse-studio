@@ -348,3 +348,11 @@ jobs:
           path: apps/studio-web/test-results/queue-monitor.png
           if-no-files-found: ignore
           retention-days: 7
+      - name: Upload module viewport screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-web-viewport-evidence
+          path: apps/studio-web/test-results/ui-evidence/
+          if-no-files-found: ignore
+          retention-days: 7

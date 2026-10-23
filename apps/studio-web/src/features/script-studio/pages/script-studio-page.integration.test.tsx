@@ -533,4 +533,134 @@ describe("ScriptStudioPage", () => {
       within(importPanel).getByRole("button", { name: "Import & apply script" }),
     ).not.toBeDisabled();
   });
+  it("keeps the entry being edited mounted when search or filter excludes it, and explains search-empty results", async () => {
+    const user = userEvent.setup();
+    stubApi(({ pathname }) => {
+      if (pathname === "/api/v1/projects/project-1/story-bible") {
+        return {
+          status: 200,
+          body: bibleEntries.map((item) => ({ ...item, reference_asset_ids: [] })),
+        };
+      }
+      return undefined;
+    });
+    mount();
+
+    const linhCard = await screen.findByTestId("story-bible-entry-char_linh");
+    await user.click(
+      within(linhCard).getByRole("button", { name: "Edit Detective Linh (char_linh)" }),
+    );
+    const editor = within(linhCard).getByTestId("story-bible-editor-char_linh");
+    const displayNameInput = within(editor).getByLabelText("Display name");
+    await user.clear(displayNameInput);
+    await user.type(displayNameInput, "Linh draft");
+
+    const search = screen.getByRole("searchbox", { name: "Search Story Bible entries" });
+    await user.type(search, "noir");
+    expect(screen.getByTestId("story-bible-entry-style_noir")).toBeInTheDocument();
+    expect(screen.queryByTestId("story-bible-entry-char_minh")).not.toBeInTheDocument();
+    expect(screen.getByTestId("story-bible-editor-char_linh")).toBe(editor);
+    expect(within(editor).getByLabelText("Display name")).toHaveValue("Linh draft");
+    expect(screen.getByTestId("story-bible-editing-outside-filter")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Location (0)" }));
+    expect(within(editor).getByLabelText("Display name")).toHaveValue("Linh draft");
+
+    // Closing the editor leaves no visible entries, so the search-specific message appears.
+    await user.click(screen.getByRole("button", { name: "Edit Detective Linh (char_linh)" }));
+    expect(screen.getByTestId("story-bible-search-empty")).toHaveTextContent(
+      /No location entries match the search .noir./,
+    );
+    expect(screen.queryByTestId("story-bible-filter-empty")).not.toBeInTheDocument();
+
+    await user.clear(search);
+    expect(screen.getByTestId("story-bible-filter-empty")).toHaveTextContent(
+      "No location entries match the selected filter.",
+    );
+  });
+
+  it("shows unknown counts instead of zero when the pipeline check fails", async () => {
+    stubApi(({ pathname }) => {
+      if (pathname === "/api/v1/projects/project-1/story-bible") {
+        return { status: 500, body: { detail: "Database error", category: "internal" } };
+      }
+      if (pathname === "/api/v1/projects/project-1/shots") {
+        return { status: 500, body: { detail: "Database error", category: "internal" } };
+      }
+      return undefined;
+    });
+    mount();
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    await waitFor(() => {
+      expect(within(importPanel).getByTestId("active-shots-count")).toHaveTextContent(
+        "— active shots",
+      );
+    });
+    expect(screen.getByRole("heading", { name: "Story Bible (—)" })).toBeInTheDocument();
+    expect(screen.getByTestId("story-bible-summary")).not.toHaveTextContent(/You have 0/);
+  });
+
+  it("labels the scene outline as a local preview without inventing scene headings", async () => {
+    const user = userEvent.setup();
+    stubApi(({ pathname }) =>
+      pathname === "/api/v1/projects/project-1/story-bible" ? { status: 200, body: [] } : undefined,
+    );
+    mount();
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    expect(within(importPanel).getByTestId("local-outline-disclaimer")).toHaveTextContent(
+      "Local outline preview — not analyzer output",
+    );
+    await user.type(
+      within(importPanel).getByLabelText("Script content"),
+      "SHOT 1: Cold open{enter}SCENE 1: Neon Alley{enter}SHOT 2: Arrival",
+    );
+
+    const outline = within(importPanel).getByTestId("local-scene-outline");
+    const items = within(outline).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("Before first scene");
+    expect(items[1]).toHaveTextContent("#1");
+    expect(items[1]).toHaveTextContent("SCENE 1: Neon Alley");
+    expect(within(outline).queryByRole("button")).not.toBeInTheDocument();
+    expect(importPanel).not.toHaveTextContent(/Opening Sequence/);
+    expect(within(importPanel).getByTestId("local-scene-count")).toHaveTextContent(
+      "Local preview: 1 scene",
+    );
+  });
+
+  it("renders an icon-only retry control for failed compact reference thumbnails", async () => {
+    const user = userEvent.setup();
+    const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    let extraCalls = 0;
+    stubApi(({ pathname }) => {
+      if (pathname === "/api/v1/projects/project-1/story-bible") {
+        return {
+          status: 200,
+          body: [{ ...bibleEntries[0], reference_asset_ids: ["ast_ref1", "ast_ref2"] }],
+        };
+      }
+      if (pathname === "/api/v1/assets/ast_ref1/download") {
+        return { status: 200, body: pngBytes, contentType: "image/png" };
+      }
+      if (pathname === "/api/v1/assets/ast_ref2/download") {
+        extraCalls += 1;
+        return extraCalls === 1
+          ? { status: 500, body: { detail: "Storage down", category: "internal" } }
+          : { status: 200, body: pngBytes, contentType: "image/png" };
+      }
+      return undefined;
+    });
+    mount();
+
+    const errorBox = await screen.findByTestId("reference-asset-error-ast_ref2");
+    expect(errorBox).toHaveTextContent("Preview unavailable");
+    const retry = within(errorBox).getByRole("button", {
+      name: "Retry loading Reference ast_ref2 for Detective Linh",
+    });
+    expect(retry).not.toHaveTextContent("Retry");
+    await user.click(retry);
+    expect(await screen.findByTestId("reference-asset-image-ast_ref2")).toBeInTheDocument();
+  });
 });

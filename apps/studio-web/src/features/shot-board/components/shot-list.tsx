@@ -1,6 +1,5 @@
 import {
   Camera,
-  ChevronUp,
   Clapperboard,
   Film,
   ImageIcon,
@@ -8,7 +7,6 @@ import {
   Link2,
   MapPin,
   Pencil,
-  Plus,
   Sparkles,
   TriangleAlert,
   Volume2,
@@ -40,6 +38,8 @@ interface ShotListProps {
   onGenerate: (shotId: string) => void;
   /** Shot whose take review is open, if any. */
   reviewingShotId: string | null;
+  /** Shots showing another inline panel (generate confirm, queue status/result) that needs full width. */
+  expandedShotIds?: ReadonlySet<string>;
   onReviewTakes: (shotId: string) => void;
   /** Whether single-shot generation can be started (connection + model chosen). */
   canGenerate: boolean;
@@ -48,12 +48,21 @@ interface ShotListProps {
   renderShotDetail: (shot: ProjectShot) => ReactNode;
 }
 
+const MISSING = "—";
+
+/** Rounds to centiseconds so float sums never render as 0.30000000000000004. */
+function formatSeconds(value: number): string {
+  if (!Number.isFinite(value)) return MISSING;
+  return `${Math.round(value * 100) / 100}s`;
+}
+
 export function ShotList({
   shots,
   editingShotId,
   onEdit,
   onGenerate,
   reviewingShotId,
+  expandedShotIds,
   onReviewTakes,
   canGenerate,
   generateDisabledReason,
@@ -66,14 +75,12 @@ export function ShotList({
     <div className="space-y-6">
       {groups.map((group) => {
         const primaryLocation =
-          group.shots.find((shot) => shot.location_code)?.location_code ?? "Main Stage";
+          group.shots.find((shot) => shot.location_code.trim())?.location_code ?? MISSING;
         const hasFrameChain = group.shots.some((shot) => shot.continuity_mode === "frame_chain");
         const primaryCamera =
-          group.shots.find((shot) => shot.camera_motion)?.camera_motion ?? "Cinematic";
+          group.shots.find((shot) => shot.camera_motion.trim())?.camera_motion ?? MISSING;
         const primaryDialogue =
-          group.shots.find((shot) => shot.dialogue?.trim())?.dialogue ??
-          group.shots[0]?.action ??
-          "Visual sequence beat";
+          group.shots.find((shot) => shot.dialogue.trim())?.dialogue ?? MISSING;
         const totalSceneDuration = group.shots.reduce(
           (sum, shot) => sum + (Number.isFinite(shot.duration_seconds) ? shot.duration_seconds : 0),
           0,
@@ -87,7 +94,7 @@ export function ShotList({
             className="rounded-2xl border border-border bg-secondary/35 p-4 shadow-2xs sm:p-5"
           >
             <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
-              {/* Left Scene Sidebar (LTX Studio Scene Setting & Sound column) */}
+              {/* Scene summary derived only from the shots in this scene */}
               <aside className="w-full shrink-0 space-y-3 xl:w-64">
                 <h3 className="flex items-center gap-2 text-base font-bold tracking-tight text-foreground">
                   <Clapperboard className="size-4 text-primary" aria-hidden="true" />
@@ -101,10 +108,7 @@ export function ShotList({
 
                 {/* Scene Setting Card */}
                 <div className="space-y-3 rounded-xl border border-border bg-card p-3.5 shadow-2xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground">Scene setting</span>
-                    <ChevronUp className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  </div>
+                  <span className="block text-xs font-bold text-foreground">Scene setting</span>
 
                   <div className="space-y-2.5">
                     <div className="space-y-1">
@@ -119,7 +123,7 @@ export function ShotList({
 
                     <div className="space-y-1">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Continuity &amp; Lighting
+                        Continuity
                       </p>
                       <div className="rounded-lg border border-border bg-secondary/40 px-2.5 py-1.5 text-xs font-medium text-foreground">
                         {hasFrameChain ? "Frame-chained sequence" : "Standard scene cut"}
@@ -128,7 +132,7 @@ export function ShotList({
 
                     <div className="space-y-1">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Camera Style
+                        Camera motion (first shot set)
                       </p>
                       <div className="rounded-lg border border-border bg-secondary/40 px-2.5 py-1.5 text-xs font-medium text-foreground">
                         {primaryCamera}
@@ -139,16 +143,15 @@ export function ShotList({
 
                 {/* Sound & Timing Card */}
                 <div className="space-y-3 rounded-xl border border-border bg-card p-3.5 shadow-2xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground">Sound &amp; Timing</span>
-                    <ChevronUp className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  </div>
+                  <span className="block text-xs font-bold text-foreground">
+                    Dialogue &amp; Timing
+                  </span>
 
                   <div className="flex items-start gap-2 rounded-lg border border-border bg-secondary/40 p-2.5">
                     <Volume2 className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Voiceover / Action Beat
+                        Dialogue (first shot with dialogue)
                       </p>
                       <p className="mt-0.5 line-clamp-2 text-xs text-foreground">
                         {primaryDialogue}
@@ -161,13 +164,13 @@ export function ShotList({
                       Scene Duration
                     </span>
                     <span className="font-mono font-semibold text-foreground">
-                      {totalSceneDuration}s
+                      {formatSeconds(totalSceneDuration)}
                     </span>
                   </div>
                 </div>
               </aside>
 
-              {/* Right Storyboard Columns Grid (LTX Studio Shot Cards) */}
+              {/* Shot cards */}
               <div className="grid min-w-0 flex-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
                 {group.shots.map((shot) => (
                   <ShotCard
@@ -180,6 +183,7 @@ export function ShotList({
                     onEdit={() => onEdit(shot.id)}
                     onGenerate={() => onGenerate(shot.id)}
                     isReviewing={reviewingShotId === shot.id}
+                    hasInlinePanel={expandedShotIds?.has(shot.id) ?? false}
                     onReviewTakes={() => onReviewTakes(shot.id)}
                     canGenerate={canGenerate}
                     generateDisabledReason={generateDisabledReason}
@@ -203,6 +207,8 @@ interface ShotCardProps {
   onEdit: () => void;
   onGenerate: () => void;
   isReviewing: boolean;
+  /** Another inline panel (generate confirm, queue status/result) is open in this card. */
+  hasInlinePanel: boolean;
   onReviewTakes: () => void;
   canGenerate: boolean;
   generateDisabledReason: string | null;
@@ -216,6 +222,7 @@ function ShotCard({
   onEdit,
   onGenerate,
   isReviewing,
+  hasInlinePanel,
   onReviewTakes,
   canGenerate,
   generateDisabledReason,
@@ -225,8 +232,8 @@ function ShotCard({
   const blockers = shotLintBlockers(shot.lint_report);
   const warnings = shotLintWarnings(shot.lint_report);
   const hasFirstFrame = Boolean(shot.first_frame_asset_id);
-  const isExpanded = isEditing || isReviewing;
-  const motionPercent = Math.min(100, Math.max(12, Math.round((shot.duration_seconds / 10) * 100)));
+  const isExpanded = isEditing || isReviewing || hasInlinePanel;
+  const framing = `${shot.shot_size || MISSING} · ${shot.camera_motion || MISSING}`;
 
   return (
     <article
@@ -243,7 +250,7 @@ function ShotCard({
       )}
     >
       <div className="space-y-3">
-        {/* LTX Studio 16:9 Storyboard Frame Header */}
+        {/* Shot header */}
         <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-3 text-slate-100">
           <div
             className="pointer-events-none absolute inset-0 opacity-20"
@@ -257,8 +264,8 @@ function ShotCard({
 
           {/* Top Floating Number Pill & State Badges */}
           <div className="relative flex items-start justify-between gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900/85 px-2.5 py-1 font-mono text-xs font-bold text-white shadow-xs backdrop-blur-md">
-              <span className="text-indigo-400">⋮⋮</span> {shot.sequence_index}
+            <span className="inline-flex items-center rounded-lg bg-slate-900/85 px-2.5 py-1 font-mono text-xs font-bold text-white shadow-xs backdrop-blur-md">
+              #{shot.sequence_index}
             </span>
 
             <div className="flex flex-wrap justify-end gap-1.5">
@@ -281,8 +288,7 @@ function ShotCard({
             </div>
             <h4 className="mt-1.5 line-clamp-1 text-sm font-semibold text-white">{label}</h4>
             <p className="mt-0.5 font-mono text-[11px] text-slate-300">
-              {shot.shot_size || "medium"} · {shot.camera_motion || "static"} ·{" "}
-              {shot.duration_seconds}s
+              {framing} · {formatSeconds(shot.duration_seconds)}
             </p>
           </div>
 
@@ -320,8 +326,8 @@ function ShotCard({
           </div>
         </div>
 
-        {/* LTX Studio Action Button Strip right below thumbnail */}
-        <div className="grid grid-cols-3 gap-2">
+        {/* Shot actions */}
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="outline"
@@ -362,11 +368,11 @@ function ShotCard({
 
         {children}
 
-        {/* LTX Studio PROMPT Box with @Entity pill highlights */}
+        {/* Action text with subject/location code pills (not the compiled prompt) */}
         <div className="space-y-2 rounded-xl border border-border bg-secondary/20 p-3">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-              Prompt
+              Action &amp; subjects
             </span>
             {shot.location_code && (
               <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
@@ -399,9 +405,7 @@ function ShotCard({
               <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Shot size / camera
               </dt>
-              <dd className="mt-0.5 break-words font-medium text-foreground">
-                {shot.shot_size || "—"} · {shot.camera_motion || "—"}
-              </dd>
+              <dd className="mt-0.5 break-words font-medium text-foreground">{framing}</dd>
             </div>
 
             <div className="rounded-lg border border-border/70 bg-card px-2.5 py-2">
@@ -418,7 +422,7 @@ function ShotCard({
                 Duration
               </dt>
               <dd className="mt-0.5 font-medium tabular-nums text-foreground">
-                {shot.duration_seconds} s
+                {formatSeconds(shot.duration_seconds)}
               </dd>
             </div>
 
@@ -451,35 +455,12 @@ function ShotCard({
           </dl>
         </div>
 
-        {/* LTX Studio MOTION SCALE Bar */}
-        <div className="rounded-xl border border-border bg-card px-3 py-2.5">
-          <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            <span>Motion Scale &amp; Pacing</span>
-            <span className="font-mono text-foreground">{shot.duration_seconds}s</span>
-          </div>
-          <div className="relative mt-2 h-1.5 w-full rounded-full bg-secondary">
-            <div
-              className="h-full rounded-full bg-foreground/80"
-              style={{ width: `${motionPercent}%` }}
-            />
-            <span
-              className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-foreground bg-card shadow-2xs"
-              style={{ left: `${motionPercent}%` }}
-              aria-hidden="true"
-            />
-          </div>
-        </div>
-
-        {/* LTX Studio SFX / Continuity Footer */}
-        <div className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2 text-xs">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            SFX &amp; Dialogue Cue
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2 text-xs">
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Dialogue
           </span>
-          <span className="inline-flex items-center gap-1 text-muted-foreground">
-            <span className="max-w-[160px] truncate text-[11px]">
-              {shot.dialogue ? shot.dialogue : "Ambient track"}
-            </span>
-            <Plus className="size-3.5" aria-hidden="true" />
+          <span className="min-w-0 whitespace-pre-wrap break-words text-right text-[11px] text-foreground">
+            {shot.dialogue.trim() ? shot.dialogue : MISSING}
           </span>
         </div>
 

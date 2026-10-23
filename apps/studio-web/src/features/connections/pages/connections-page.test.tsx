@@ -58,7 +58,7 @@ function json(body: unknown, status = 200): Response {
 let requests: RecordedRequest[] = [];
 let failMutations = false;
 
-function installFetch(accounts: AccountOut[]) {
+function installFetch(accounts: AccountOut[], connections: ConnectionOut[] = [connection]) {
   requests = [];
   vi.stubGlobal(
     "fetch",
@@ -70,7 +70,7 @@ function installFetch(accounts: AccountOut[]) {
       const body = typeof rawBody === "string" && rawBody ? JSON.parse(rawBody) : undefined;
       requests.push({ method, url, body });
 
-      if (method === "GET" && url.endsWith("/api/v1/connections")) return json([connection]);
+      if (method === "GET" && url.endsWith("/api/v1/connections")) return json(connections);
       if (method === "GET" && url.endsWith("/accounts")) return json(accounts);
       if (failMutations) {
         return json({ detail: "Upstream provider rejected the request." }, 422);
@@ -110,6 +110,33 @@ afterEach(() => {
 });
 
 describe("ConnectionsPage", () => {
+  it("selects a connection card from the keyboard and exposes the selection via aria-pressed", async () => {
+    const user = userEvent.setup();
+    const backup: ConnectionOut = { ...connection, id: "conn-2", name: "Backup gateway" };
+    installFetch([], [connection, backup]);
+    renderPage();
+
+    const primary = await screen.findByRole("button", { name: "Select connection Studio gateway" });
+    const secondary = screen.getByRole("button", { name: "Select connection Backup gateway" });
+    expect(primary).toHaveAttribute("aria-pressed", "true");
+    expect(secondary).toHaveAttribute("aria-pressed", "false");
+    expect(
+      await screen.findByRole("heading", { name: "Studio gateway — Account Pool" }),
+    ).toBeInTheDocument();
+
+    secondary.focus();
+    await user.keyboard("{Enter}");
+    expect(secondary).toHaveAttribute("aria-pressed", "true");
+    expect(primary).toHaveAttribute("aria-pressed", "false");
+    expect(
+      await screen.findByRole("heading", { name: "Backup gateway — Account Pool" }),
+    ).toBeInTheDocument();
+
+    primary.focus();
+    await user.keyboard(" ");
+    expect(primary).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("creates a pool account with the expected body and clears the API key afterwards", async () => {
     const user = userEvent.setup();
     installFetch([]);

@@ -93,17 +93,31 @@ export function StoryBibleList({
     return map;
   }, [entries]);
 
-  const visibleEntries = useMemo(() => {
+  const trimmedQuery = searchQuery.trim();
+
+  const matchingCodeNames = useMemo(() => {
     const byType = filterStoryBibleEntries(entries, filter);
-    const trimmed = searchQuery.trim().toLowerCase();
-    if (!trimmed) return byType;
-    return byType.filter(
-      (entry) =>
-        entry.display_name.toLowerCase().includes(trimmed) ||
-        entry.code_name.toLowerCase().includes(trimmed) ||
-        (entry.immutable_traits ?? "").toLowerCase().includes(trimmed),
-    );
-  }, [entries, filter, searchQuery]);
+    const needle = trimmedQuery.toLowerCase();
+    const matches = needle
+      ? byType.filter(
+          (entry) =>
+            entry.display_name.toLowerCase().includes(needle) ||
+            entry.code_name.toLowerCase().includes(needle) ||
+            (entry.immutable_traits ?? "").toLowerCase().includes(needle),
+        )
+      : byType;
+    return new Set(matches.map((entry) => entry.code_name));
+  }, [entries, filter, trimmedQuery]);
+
+  // The entry being edited always stays mounted so a search or type filter can never
+  // unmount its editor and discard unsaved changes.
+  const visibleEntries = useMemo(
+    () =>
+      entries.filter(
+        (entry) => matchingCodeNames.has(entry.code_name) || entry.code_name === editingCodeName,
+      ),
+    [entries, editingCodeName, matchingCodeNames],
+  );
 
   const filterButtons: ReadonlyArray<{ value: StoryBibleFilterType; label: string }> = [
     { value: "all", label: "All" },
@@ -127,7 +141,7 @@ export function StoryBibleList({
               type="search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search entities, code names, traits..."
+              placeholder="Search entries..."
               aria-label="Search Story Bible entries"
               className="h-9 w-full rounded-lg border border-input bg-background pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             />
@@ -196,13 +210,23 @@ export function StoryBibleList({
       </div>
 
       {visibleEntries.length === 0 ? (
-        <p
-          data-testid="story-bible-filter-empty"
-          className="rounded-xl border border-dashed border-border bg-card/50 p-8 text-center text-sm text-muted-foreground"
-        >
-          No {filter === "all" ? "" : `${STORY_BIBLE_ENTRY_LABELS[filter].toLowerCase()} `}entries
-          match the selected filter.
-        </p>
+        trimmedQuery ? (
+          <p
+            data-testid="story-bible-search-empty"
+            className="rounded-xl border border-dashed border-border bg-card/50 p-8 text-center text-sm break-words text-muted-foreground"
+          >
+            No {filter === "all" ? "" : `${STORY_BIBLE_ENTRY_LABELS[filter].toLowerCase()} `}
+            entries match the search &ldquo;{trimmedQuery}&rdquo;.
+          </p>
+        ) : (
+          <p
+            data-testid="story-bible-filter-empty"
+            className="rounded-xl border border-dashed border-border bg-card/50 p-8 text-center text-sm text-muted-foreground"
+          >
+            No {filter === "all" ? "" : `${STORY_BIBLE_ENTRY_LABELS[filter].toLowerCase()} `}
+            entries match the selected filter.
+          </p>
+        )
       ) : (
         <ul
           className={cn(
@@ -218,6 +242,7 @@ export function StoryBibleList({
               entry.requires_reference_lock &&
               entry.reference_asset_ids.length === 0;
             const isEditing = editingCodeName === entry.code_name;
+            const shownOnlyWhileEditing = isEditing && !matchingCodeNames.has(entry.code_name);
             const primaryAssetId = entry.reference_asset_ids[0] ?? null;
             const extraAssetIds = entry.reference_asset_ids.slice(1);
             const coverTone = entryCoverTone(entry.entry_type);
@@ -362,7 +387,10 @@ export function StoryBibleList({
                                   <dt className="font-medium text-muted-foreground">
                                     {item.label}
                                   </dt>
-                                  <dd className="truncate font-medium text-foreground">
+                                  <dd
+                                    className="min-w-0 truncate font-medium text-foreground"
+                                    title={item.value}
+                                  >
                                     {item.value}
                                   </dd>
                                 </div>
@@ -382,9 +410,13 @@ export function StoryBibleList({
                                   <ReferenceAssetPreview
                                     assetId={assetId}
                                     label={`Reference ${assetId} for ${entry.display_name}`}
+                                    size="compact"
                                     className="w-16"
                                   />
-                                  <p className="w-16 truncate font-mono text-[10px] text-muted-foreground">
+                                  <p
+                                    className="w-16 truncate font-mono text-[10px] text-muted-foreground"
+                                    title={assetId}
+                                  >
                                     {assetId}
                                   </p>
                                 </div>
@@ -490,6 +522,16 @@ export function StoryBibleList({
 
                   {isEditing && (
                     <div className="border-t border-border/80 bg-muted/20 p-4">
+                      {shownOnlyWhileEditing && (
+                        <p
+                          role="note"
+                          data-testid="story-bible-editing-outside-filter"
+                          className="mb-3 text-xs text-muted-foreground"
+                        >
+                          This entry does not match the current search or filter. It stays visible
+                          while you edit it.
+                        </p>
+                      )}
                       {renderEntryEditor?.(entry)}
                     </div>
                   )}

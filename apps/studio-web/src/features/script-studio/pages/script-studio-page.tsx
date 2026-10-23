@@ -52,6 +52,8 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
   const [newEntryNonce, setNewEntryNonce] = useState(0);
 
   const entries = useMemo(() => bibleQuery.data ?? [], [bibleQuery.data]);
+  // Without loaded data the entry count is unknown; never present it as a real "0".
+  const entryCountKnown = bibleQuery.data !== undefined && !bibleQuery.isError;
   const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
 
   const { reset: resetUpsert } = upsertMutation;
@@ -199,9 +201,15 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
           <h2 id="script-studio-heading" className="mt-1 text-2xl font-semibold tracking-tight">
             Script Studio
           </h2>
-          <p className="mt-2 break-all text-sm text-muted-foreground">
-            Import scripts, lock Story Bible references and export the compiled shot list for
-            project <span className="font-medium text-foreground">{projectId}</span>.
+          <p className="mt-2 text-sm text-muted-foreground">
+            Import scripts, lock Story Bible references and export the compiled shot list for this
+            project.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="script-studio-project-id">
+            Project{" "}
+            <span className="font-mono font-medium text-foreground [overflow-wrap:anywhere]">
+              {projectId}
+            </span>
           </p>
         </div>
 
@@ -313,10 +321,12 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
                 id="story-bible-section-heading"
                 className="mt-1 text-xl font-bold tracking-tight text-foreground"
               >
-                Story Bible ({entries.length})
+                Story Bible ({entryCountKnown ? entries.length : "—"})
               </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                You have {entries.length} canonical {entries.length === 1 ? "entity" : "entities"}{" "}
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="story-bible-summary">
+                {entryCountKnown
+                  ? `You have ${entries.length} canonical ${entries.length === 1 ? "entity" : "entities"}`
+                  : "Canonical entities"}{" "}
                 (characters, locations, style rules and props) compiled into downstream shot
                 prompts.
               </p>

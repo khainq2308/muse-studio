@@ -626,30 +626,41 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
               return (
                 <div
                   key={conn.id}
-                  onClick={() => setSelectedConnectionId(conn.id)}
+                  data-testid={`connection-card-${conn.id}`}
                   className={cn(
-                    "cursor-pointer rounded-xl border p-4 transition-all",
+                    "rounded-xl border p-4 transition-all",
                     isSelected
                       ? "border-primary bg-primary/5 shadow-xs"
                       : "border-border bg-background hover:border-primary/40",
                   )}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-semibold">{conn.name}</p>
+                  {/* A real button (not a clickable div) so the card is keyboard selectable; the
+                      "Test & probe" action stays a sibling to avoid nesting interactive content. */}
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={`Select connection ${conn.name}`}
+                    aria-describedby={`connection-details-${conn.id}`}
+                    onClick={() => setSelectedConnectionId(conn.id)}
+                    className="flex w-full cursor-pointer items-start justify-between gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
+                    <span id={`connection-details-${conn.id}`} className="block min-w-0">
+                      <span className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="min-w-0 truncate text-sm font-semibold">{conn.name}</span>
                         <span className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
                           {conn.provider_type}
                         </span>
-                      </div>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">{conn.base_url}</p>
-                      <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-muted-foreground">
+                        {conn.base_url}
+                      </span>
+                      <span className="mt-1 block break-words font-mono text-xs text-muted-foreground">
                         max {conn.max_concurrency} concurrent · timeout {conn.timeout_seconds}s ·
                         key {conn.api_key_masked}
-                      </p>
-                    </div>
+                      </span>
+                    </span>
 
-                    <div className="shrink-0 text-right text-xs">
+                    <span className="block shrink-0 text-right text-xs">
                       <span
                         className={cn(
                           "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium",
@@ -664,11 +675,11 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
                         ) : null}
                         {conn.health_state}
                       </span>
-                      <p className="mt-1 font-mono text-muted-foreground">
+                      <span className="mt-1 block font-mono text-muted-foreground">
                         {formatLatency(conn.latency_ms)}
-                      </p>
-                    </div>
-                  </div>
+                      </span>
+                    </span>
+                  </button>
 
                   {conn.last_error_redacted && (
                     <p className="mt-2 rounded border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">

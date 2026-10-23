@@ -1,4 +1,4 @@
-import { ImageOff, LoaderCircle, RefreshCw } from "lucide-react";
+import { FileQuestion, ImageOff, LoaderCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useReferenceAssetMedia } from "@/features/script-studio/api";
@@ -12,6 +12,12 @@ interface ReferenceAssetPreviewProps {
   assetId: string;
   label: string;
   variant?: "thumb" | "cover";
+  /**
+   * `compact` is for very small thumbnails (e.g. 64px): status text is moved to an
+   * accessible label/tooltip and the retry action becomes an icon-only button so
+   * nothing is clipped or unclickable.
+   */
+  size?: "default" | "compact";
   className?: string;
 }
 
@@ -23,6 +29,7 @@ export function ReferenceAssetPreview({
   assetId,
   label,
   variant = "thumb",
+  size = "default",
   className,
 }: ReferenceAssetPreviewProps) {
   const [element, setElement] = useState<HTMLDivElement | null>(null);
@@ -37,6 +44,7 @@ export function ReferenceAssetPreview({
         assetId={assetId}
         label={label}
         variant={variant}
+        size={size}
         enabled={inView}
       />
     </div>
@@ -47,8 +55,10 @@ function ReferenceAssetPreviewBody({
   assetId,
   label,
   variant = "thumb",
+  size = "default",
   enabled,
 }: ReferenceAssetPreviewProps & { enabled: boolean }) {
+  const compact = size === "compact" && variant !== "cover";
   const query = useReferenceAssetMedia(assetId, REFERENCE_PREVIEW_MAX_BYTES, {
     enabled,
     gcTime: 30_000,
@@ -63,10 +73,37 @@ function ReferenceAssetPreviewBody({
     const tooLarge = query.error instanceof ApiError && query.error.category === "too_large";
     const missing = query.error instanceof ApiError && query.error.status === 404;
     const final = tooLarge || missing;
+    const message = tooLarge ? "Too large" : missing ? "Asset missing" : "Preview unavailable";
+    if (compact) {
+      return (
+        <div
+          className={cn(boxClass, "flex-col gap-1 p-1 text-center")}
+          role="alert"
+          title={`${message}: ${label}`}
+          data-testid={`reference-asset-error-${assetId}`}
+        >
+          <ImageOff className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="sr-only">{message}</span>
+          {!final && (
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              onClick={() => void query.refetch()}
+              aria-label={`Retry loading ${label}`}
+              title="Retry"
+              className="size-7 [&_svg]:size-3"
+            >
+              <RefreshCw aria-hidden="true" />
+            </Button>
+          )}
+        </div>
+      );
+    }
     return (
       <div className={cn(boxClass, "flex-col gap-1.5 p-2 text-center")} role="alert">
         <ImageOff className="size-4" aria-hidden="true" />
-        <span>{tooLarge ? "Too large" : missing ? "Asset missing" : "Preview unavailable"}</span>
+        <span>{message}</span>
         {!final && (
           <Button
             type="button"
@@ -105,9 +142,19 @@ function ReferenceAssetPreviewBody({
     );
   }
 
+  const nonImageText = `Non-image (${query.data.type || "unknown"})`;
+  if (compact) {
+    return (
+      <div className={boxClass} role="note" title={nonImageText}>
+        <FileQuestion className="size-3.5" aria-hidden="true" />
+        <span className="sr-only">{nonImageText}</span>
+      </div>
+    );
+  }
+
   return (
     <div className={boxClass} role="note">
-      <span className="p-2 text-center">Non-image ({query.data.type || "unknown"})</span>
+      <span className="p-2 text-center">{nonImageText}</span>
     </div>
   );
 }

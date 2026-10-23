@@ -29,7 +29,11 @@ import {
 import {
   buildFlowEdges,
   buildFlowNodes,
+  hasCustomLayout,
   layoutFromNodes,
+  planAutoLayout,
+  regridFlowNodes,
+  type AutoLayoutPlan,
   type NodeExecutionSummary,
   type WorkflowFlowNode,
   type WorkflowRunStatus,
@@ -38,7 +42,10 @@ import {
   nodeStateBadgeClass,
   nodeStateLabel,
 } from "@/features/workflow-canvas/components/node-state";
-import { WorkflowFlowCanvas } from "@/features/workflow-canvas/components/workflow-flow-canvas";
+import {
+  WorkflowFlowCanvas,
+  type CanvasSize,
+} from "@/features/workflow-canvas/components/workflow-flow-canvas";
 import { actionErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
@@ -92,6 +99,19 @@ function mergeApproval(
   };
 }
 
+const RUN_MODE_HINTS: Record<WorkflowRunRequest["run_mode"], string> = {
+  dry_run:
+    "Planning only: computes execution order and cache hits without running nodes. Safe default.",
+  from_here: "Partial run that starts from the selected node.",
+  downstream: "Partial run of the selected node and the nodes downstream of it.",
+  full: "Runs the entire DAG simulation; stops at ManualApproval gates.",
+};
+
+/** Automatic grid layout state; `null` once the server layout is custom or the user dragged. */
+interface AutoLayoutState extends AutoLayoutPlan {
+  workflowId: string;
+}
+
 interface QueuedLayout {
   workflowId: string;
   layout: Record<string, XYPosition>;
@@ -118,11 +138,15 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
   const [layoutSavedMessage, setLayoutSavedMessage] = useState<string | null>(null);
   const [confirmingReplace, setConfirmingReplace] = useState(false);
   const [pendingApprovalNodeId, setPendingApprovalNodeId] = useState<string | null>(null);
+  const [autoLayout, setAutoLayout] = useState<AutoLayoutState | null>(null);
+  const [viewportMode, setViewportMode] = useState<AutoLayoutPlan["mode"]>("fit");
+  const [viewportRevision, setViewportRevision] = useState(0);
 
   // Layout saves are serialized: a drop during an in-flight PATCH queues only the latest layout,
   // so an older request can never overwrite a newer position on the server.
   const layoutInFlight = useRef(false);
   const queuedLayout = useRef<QueuedLayout | null>(null);
+  const canvasSize = useRef<CanvasSize | null>(null);
 
   const nodes = useMemo(() => workflow?.nodes ?? [], [workflow]);
   const flowEdges = useMemo(() => buildFlowEdges(workflow?.edges ?? []), [workflow]);
@@ -190,8 +214,20 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
           executeWorkflow.reset();
           approveGate.reset();
           saveLayout.reset();
+          // A canvas that is already mounted will not report its size again, so reuse it.
+          const plan = canvasSize.current
+            ? planAutoLayout(
+                created.nodes.length,
+                canvasSize.current.width,
+                canvasSize.current.height,
+              )
+            : { columns: 3, mode: "fit" as const };
+          const isAuto = !hasCustomLayout(created);
           setWorkflow(created);
-          setFlowNodes(buildFlowNodes(created));
+          setFlowNodes(buildFlowNodes(created, plan.columns));
+          setAutoLayout(isAuto ? { workflowId: created.id, ...plan } : null);
+          setViewportMode(isAuto ? plan.mode : "fit");
+          setViewportRevision((revision) => revision + 1);
           setSelectedNodeId(created.nodes[0]?.node_id ?? null);
           setLastRun(null);
         },
@@ -223,8 +259,24 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
     });
   }
 
+  // While the layout is automatic, re-grid it to whatever column count fits the canvas best.
+  function handleCanvasSize(size: CanvasSize) {
+    canvasSize.current = size;
+    if (!workflow || !autoLayout || autoLayout.workflowId !== workflow.id) return;
+    const plan = planAutoLayout(workflow.nodes.length, size.width, size.height);
+    if (plan.columns !== autoLayout.columns) {
+      setFlowNodes((current) => regridFlowNodes(current, plan.columns));
+    }
+    if (plan.columns !== autoLayout.columns || plan.mode !== autoLayout.mode) {
+      setAutoLayout({ ...autoLayout, ...plan });
+      setViewportMode(plan.mode);
+      setViewportRevision((revision) => revision + 1);
+    }
+  }
+
   const handleNodeDragStop: OnNodeDrag<WorkflowFlowNode> = (_event, _node, draggedNodes) => {
     if (!workflow) return;
+    setAutoLayout(null);
     const dropped = new Map(draggedNodes.map((node) => [node.id, node.position]));
     const layout = layoutFromNodes(
       flowNodes.map((node) => ({ id: node.id, position: dropped.get(node.id) ?? node.position })),
@@ -435,6 +487,9 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
               onNodesChange={onFlowNodesChange}
               onNodeSelect={setSelectedNodeId}
               onNodeDragStop={handleNodeDragStop}
+              onSizeChange={handleCanvasSize}
+              viewportKey={`${workflow.id}:${viewportRevision}`}
+              viewportMode={viewportMode}
             />
             <p className="text-xs text-muted-foreground">
               Drag a node to move it; the new layout is saved when you drop it and never changes
@@ -505,6 +560,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
                 <span>Run mode</span>
                 <select
                   aria-label="Run mode"
+                  aria-describedby="workflow-run-mode-hint"
                   value={runMode}
                   onChange={(event) => {
                     const nextMode = event.target.value as WorkflowRunRequest["run_mode"];
@@ -513,11 +569,17 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
                   }}
                   className="h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <option value="dry_run">dry_run (Planning only — safe default)</option>
-                  <option value="from_here">from_here (Start from selected node)</option>
-                  <option value="downstream">downstream (Selected node & downstream)</option>
-                  <option value="full">full (Execute entire DAG simulation)</option>
+                  <option value="dry_run">Dry run (plan only)</option>
+                  <option value="from_here">From selected node</option>
+                  <option value="downstream">Selected + downstream</option>
+                  <option value="full">Full DAG</option>
                 </select>
+                <span
+                  id="workflow-run-mode-hint"
+                  className="block font-normal leading-relaxed text-muted-foreground"
+                >
+                  <code className="font-mono">{runMode}</code> — {RUN_MODE_HINTS[runMode]}
+                </span>
               </label>
 
               {needsStartNode && (

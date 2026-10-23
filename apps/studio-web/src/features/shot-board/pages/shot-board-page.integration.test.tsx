@@ -118,6 +118,12 @@ describe("ShotBoardPage", () => {
       within(chase).getByRole("button", { name: "Review takes for Shot 2 · Chase" }),
     ).toHaveAttribute("aria-expanded", "false");
     expect(within(chase).queryByTestId("shot-predecessor-warning")).not.toBeInTheDocument();
+
+    // No dead Storyboard/Shot Editor toggle, and no implied soundtrack.
+    expect(screen.queryByRole("button", { name: "Storyboard" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Shot Editor" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Timeline" })).toBeInTheDocument();
+    expect(screen.queryByText(/Soundtrack/)).not.toBeInTheDocument();
   });
 
   it("explains a missing admin token and shows the empty state when there are no shots", async () => {
@@ -217,6 +223,8 @@ describe("ShotBoardPage", () => {
 
     await user.click(generate);
     const dialog = screen.getByRole("alertdialog");
+    // The confirm dialog gets the full row, not a half-width card.
+    expect(screen.getByTestId("shot-card-shot-1")).toHaveClass("md:col-span-2");
     expect(dialog).toHaveTextContent("Queue video generation for Shot 1 · Hero enters?");
     expect(dialog).toHaveTextContent("Mock provider (no provider cost)");
     await user.click(within(dialog).getByRole("button", { name: "Confirm and queue" }));
@@ -224,6 +232,7 @@ describe("ShotBoardPage", () => {
     const result = await screen.findByTestId("shot-enqueue-result");
     expect(result).toHaveTextContent("matched an existing task task-old (state: failed)");
     expect(result).toHaveTextContent("No new generation was started.");
+    expect(screen.getByTestId("shot-card-shot-1")).toHaveClass("md:col-span-2");
     await waitFor(() =>
       expect(requests.find((request) => request.method === "POST")?.body).toEqual({
         shot_id: "shot-1",

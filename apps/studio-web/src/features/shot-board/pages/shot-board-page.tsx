@@ -66,7 +66,6 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
   const [generateShotId, setGenerateShotId] = useState<string | null>(null);
   const [reviewShotId, setReviewShotId] = useState<string | null>(null);
-  const [boardMode, setBoardMode] = useState<"storyboard" | "shot-editor">("storyboard");
 
   const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
   const sceneIds = useMemo(() => groupShotsByScene(shots).map((group) => group.sceneId), [shots]);
@@ -124,12 +123,10 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
     resetUpdate();
     setGenerateShotId(null);
     setEditingShotId(shotId);
-    setBoardMode("shot-editor");
   };
   const closeEditor = () => {
     resetUpdate();
     setEditingShotId(null);
-    setBoardMode("storyboard");
   };
   const saveShot = (shotId: string, update: ShotUpdate) => {
     updateMutation.mutate({ shotId, update });
@@ -153,6 +150,27 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
     setGenerateShotId(null);
   };
   const enqueueShotId = enqueueMutation.variables?.request.shot_id ?? null;
+
+  // Shots whose card shows an inline panel (confirm dialog, queue status or result)
+  // and therefore needs the full row width, not a half-width card.
+  const expandedShotIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (generateShotId && connection) ids.add(generateShotId);
+    if (
+      enqueueShotId &&
+      (enqueueMutation.isPending || enqueueMutation.data || enqueueMutation.error)
+    ) {
+      ids.add(enqueueShotId);
+    }
+    return ids;
+  }, [
+    connection,
+    enqueueMutation.data,
+    enqueueMutation.error,
+    enqueueMutation.isPending,
+    enqueueShotId,
+    generateShotId,
+  ]);
 
   const toggleTakeReview = (shotId: string) => {
     setReviewShotId((current) => (current === shotId ? null : shotId));
@@ -248,51 +266,18 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
                 >
                   Shot Board
                 </h2>
-                <span className="rounded-full bg-secondary px-2.5 py-0.5 font-mono text-xs text-muted-foreground">
+                <span className="break-all rounded-full bg-secondary px-2.5 py-0.5 font-mono text-xs text-muted-foreground">
                   {projectId}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
                 Review, edit and generate shots for project{" "}
-                <span className="font-medium text-foreground">{projectId}</span>.
+                <span className="break-all font-medium text-foreground">{projectId}</span>.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Segmented Mode Switcher: Storyboard | Shot Editor */}
-            <div className="inline-flex rounded-xl border border-border bg-secondary/60 p-1">
-              <button
-                type="button"
-                onClick={() => setBoardMode("storyboard")}
-                className={cn(
-                  "rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all",
-                  boardMode === "storyboard"
-                    ? "bg-foreground text-background shadow-xs"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Storyboard
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setBoardMode("shot-editor");
-                  if (!editingShotId && shots[0]) {
-                    openEditor(shots[0].id);
-                  }
-                }}
-                className={cn(
-                  "rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all",
-                  boardMode === "shot-editor"
-                    ? "bg-foreground text-background shadow-xs"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Shot Editor
-              </button>
-            </div>
-
             <QueueMonitorLink projectId={projectId} />
 
             <Button
@@ -310,7 +295,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
           </div>
         </header>
 
-        {/* Secondary Studio Quick-Links Bar (LTX Studio Project Settings / Soundtrack / Characters ribbon) */}
+        {/* Secondary quick-links bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-secondary/35 px-5 py-2.5 text-xs">
           <div className="flex flex-wrap items-center gap-4">
             <Link
@@ -327,7 +312,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
               className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
               <Clapperboard className="size-3.5 text-primary" aria-hidden="true" />
-              Soundtrack &amp; Timeline
+              Timeline
             </Link>
             <Link
               to="/projects/$projectId/$module"
@@ -429,6 +414,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
             onEdit={openEditor}
             onGenerate={openGenerate}
             reviewingShotId={reviewShotId}
+            expandedShotIds={expandedShotIds}
             onReviewTakes={toggleTakeReview}
             canGenerate={!generateDisabledReason && !enqueueMutation.isPending}
             generateDisabledReason={generateDisabledReason}

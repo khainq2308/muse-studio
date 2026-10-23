@@ -181,12 +181,14 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
             );
           }}
         >
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-1.5 text-sm font-semibold">
-              <Sparkles className="size-4 text-primary" aria-hidden="true" />
-              Create another production workspace
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+              <Sparkles className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span>Create another production workspace</span>
             </h3>
-            <span className="text-xs text-muted-foreground">POST /api/v1/projects</span>
+            <span className="break-all sm:text-right text-xs text-muted-foreground">
+              POST /api/v1/projects
+            </span>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
@@ -333,12 +335,12 @@ export function ProjectsPage({ projectId }: ProjectsPageProps) {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <section aria-label="Revision history" className="space-y-3 lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-2 text-base font-semibold">
-              <History className="size-4 text-primary" aria-hidden="true" />
-              Project Revision History ({revisions.length})
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
+              <History className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span>Project Revision History ({revisions.length})</span>
             </h3>
-            <span className="text-xs text-muted-foreground">
+            <span className="break-all sm:text-right text-xs text-muted-foreground">
               GET /api/v1/projects/{projectId}/revisions
             </span>
           </div>

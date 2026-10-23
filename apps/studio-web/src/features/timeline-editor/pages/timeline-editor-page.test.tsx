@@ -71,6 +71,29 @@ function makeTimeline(): TimelineSequence {
   } as TimelineSequence;
 }
 
+type Clip = TimelineSequence["manifest"]["video_clips"][number];
+
+/** A 13s, three-clip sequence (4s + 5s + 4s), matching the e2e fixture's shape. */
+function makeThreeClipTimeline(sequenceId = "seq-1"): TimelineSequence {
+  const timeline = makeTimeline();
+  const base = timeline.manifest.video_clips[0]!;
+  const clip = (index: number, start: number, duration: number): Clip => ({
+    ...base,
+    order_index: index,
+    shot_id: `shot-${index + 1}`,
+    take_id: `take-${index + 1}`,
+    start_time_seconds: start,
+    source_duration_seconds: duration,
+    effective_duration_seconds: duration,
+  });
+  timeline.sequence_id = sequenceId;
+  timeline.manifest.sequence_id = sequenceId;
+  timeline.total_duration_seconds = 13;
+  timeline.manifest.total_duration_seconds = 13;
+  timeline.manifest.video_clips = [clip(0, 0, 4), clip(1, 4, 5), clip(2, 9, 4)];
+  return timeline;
+}
+
 function makeExportStatus(overrides: Partial<ExportJobStatus> = {}): ExportJobStatus {
   return {
     export_id: "exp-1",
@@ -212,6 +235,117 @@ describe("TimelineEditorPage timeline loading", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(/Could not load project timeline/);
     expect(screen.queryByText(/No timeline assembled/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("TimelineEditorPage honest sequence view", () => {
+  it("states the export carries a silent AAC track and does not claim shot audio", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(makeTimeline()) });
+    mount();
+    await advance(0);
+
+    const audio = screen.getByTestId("timeline-audio-summary");
+    expect(audio).toHaveTextContent(/silent AAC track/);
+    expect(audio).toHaveTextContent(/Shot audio is not included/);
+    expect(screen.queryByText(/Default shot audio stream active/i)).toBeNull();
+  });
+
+  it("renders no subtitle lane or fake cue when the timeline has no subtitles", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(makeTimeline()) });
+    mount();
+    await advance(0);
+
+    expect(screen.queryByTestId("timeline-subtitle-lane")).toBeNull();
+    expect(screen.queryByText(/Cue #/)).toBeNull();
+    expect(screen.queryByText(/Opening Sequence/)).toBeNull();
+  });
+
+  it("renders one honest subtitle lane when subtitles are saved", async () => {
+    const timeline = makeThreeClipTimeline();
+    timeline.manifest.has_subtitles = true;
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(timeline) });
+    mount();
+    await advance(0);
+
+    const lanes = screen.getAllByTestId("timeline-subtitle-lane");
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]).toHaveTextContent("Subtitles saved (SRT) — not rendered into MP4");
+    expect(screen.queryByText(/Cue #/)).toBeNull();
+  });
+
+  it("derives ruler ticks from the sequence duration", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(makeThreeClipTimeline()) });
+    mount();
+    await advance(0);
+
+    const labels = screen.getAllByTestId("timeline-ruler-tick").map((tick) => tick.textContent);
+    expect(labels).toEqual([
+      "00:00:00",
+      "00:00:02",
+      "00:00:04",
+      "00:00:06",
+      "00:00:08",
+      "00:00:10",
+      "00:00:12",
+    ]);
+    expect(labels).not.toContain("00:00:25");
+    expect(screen.getByText(/Total 00:00:13 \(3 clips\)/)).toBeInTheDocument();
+  });
+
+  it("shows no fabricated format, color space or monitor data before a timeline exists", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json({ detail: "Timeline not found" }, 404) });
+    mount();
+    await advance(0);
+
+    expect(screen.queryByText(/Rec\. ?709/i)).toBeNull();
+    expect(screen.queryByText(/1920x1080 · 24\s?fps/)).toBeNull();
+    expect(screen.queryByText(/^Full$/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /zoom/i })).toBeNull();
+    expect(screen.getByLabelText("Selected clip")).toHaveTextContent(/Assemble a timeline/);
+    expect(screen.getByRole("heading", { name: "Timeline Assembly & Export" })).toBeVisible();
+    expect(screen.getByText(/trim and reorder editing is not available yet/i)).toBeInTheDocument();
+  });
+
+  it("selects a clip through an accessible toggle button", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(makeThreeClipTimeline()) });
+    mount();
+    await advance(0);
+
+    const first = screen.getByRole("button", { name: /Shot: shot-1/ });
+    const second = screen.getByRole("button", { name: /Shot: shot-2/ });
+    expect(first).toHaveAttribute("type", "button");
+    expect(first).toHaveAttribute("aria-pressed", "true");
+    expect(second).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(second);
+
+    expect(first).toHaveAttribute("aria-pressed", "false");
+    expect(second).toHaveAttribute("aria-pressed", "true");
+    const details = screen.getByLabelText("Selected clip");
+    expect(details).toHaveTextContent("take-2");
+    expect(details).toHaveTextContent("00:00:04:00");
+  });
+
+  it("resets the clip selection when a different sequence is loaded", async () => {
+    let current = makeThreeClipTimeline("seq-1");
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(current) });
+    const queryClient = mount();
+    await advance(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /Shot: shot-3/ }));
+    expect(screen.getByLabelText("Selected clip")).toHaveTextContent("take-3");
+
+    current = makeThreeClipTimeline("seq-2");
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    await advance(0);
+
+    expect(screen.getByRole("button", { name: /Shot: shot-1/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("Selected clip")).toHaveTextContent("take-1");
   });
 });
 

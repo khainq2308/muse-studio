@@ -348,12 +348,12 @@ export function SystemOpsPage({ projectId }: SystemOpsPageProps) {
             aria-label="Project backups"
             className="space-y-4 rounded-xl border border-border bg-card p-5"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-base font-semibold">
-                <Archive className="size-4 text-primary" aria-hidden="true" />
-                Project Backups ({backups.length})
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
+                <Archive className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                <span>Project Backups ({backups.length})</span>
               </h3>
-              <span className="font-mono text-xs text-muted-foreground">
+              <span className="break-all sm:text-right font-mono text-xs text-muted-foreground">
                 GET /api/v1/projects/{projectId}/backups
               </span>
             </div>
@@ -544,12 +544,14 @@ export function SystemOpsPage({ projectId }: SystemOpsPageProps) {
             aria-label="Asset upload and deletion"
             className="space-y-4 rounded-xl border border-border bg-card p-5"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-base font-semibold">
-                <Database className="size-4 text-primary" aria-hidden="true" />
-                Project Media Asset Manager
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
+                <Database className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                <span>Project Media Asset Manager</span>
               </h3>
-              <span className="font-mono text-xs text-muted-foreground">/api/v1/assets/*</span>
+              <span className="break-all sm:text-right font-mono text-xs text-muted-foreground">
+                /api/v1/assets/*
+              </span>
             </div>
 
             <form
@@ -666,7 +668,7 @@ export function SystemOpsPage({ projectId }: SystemOpsPageProps) {
                     setConfirmDeleteAsset(false);
                   }}
                   placeholder="Asset ID to delete"
-                  className="h-9 flex-1 rounded-lg border border-input bg-background px-3 font-mono text-xs"
+                  className="h-9 w-full min-w-0 rounded-lg border border-input bg-background px-3 font-mono text-xs sm:flex-1"
                 />
                 <label className="flex items-center gap-1.5 text-xs">
                   <input
@@ -920,12 +922,14 @@ export function SystemOpsPage({ projectId }: SystemOpsPageProps) {
             aria-label="Structured operational logs"
             className="space-y-3 rounded-xl border border-border bg-card p-5"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-base font-semibold">
-                <Activity className="size-4 text-primary" aria-hidden="true" />
-                Recent Structured Logs ({logs.length})
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
+                <Activity className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                <span>Recent Structured Logs ({logs.length})</span>
               </h3>
-              <span className="font-mono text-xs text-muted-foreground">/api/v1/system/logs</span>
+              <span className="break-all sm:text-right font-mono text-xs text-muted-foreground">
+                /api/v1/system/logs
+              </span>
             </div>
 
             <QueryState
