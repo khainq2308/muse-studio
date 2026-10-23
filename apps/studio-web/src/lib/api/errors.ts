@@ -33,6 +33,31 @@ export function authErrorMessage(
 }
 
 /**
+ * Message for a failed write action (create, update, delete, run). Unlike {@link authErrorMessage},
+ * it surfaces the server's validation detail so a 422 explains which input was rejected.
+ */
+export function actionErrorMessage(
+  error: unknown,
+  activeAdminToken: string,
+  action: string,
+): string {
+  if (isAuthError(error)) {
+    if (error.status === 403) {
+      return `The current session does not have permission to ${action}.`;
+    }
+    if (!activeAdminToken.trim()) return `Admin token required to ${action}.`;
+    return `The configured admin token was rejected while trying to ${action}. Update the token and reconnect.`;
+  }
+  if (error instanceof ApiError) {
+    if (error.category === "timeout") {
+      return `Could not confirm whether the request to ${action} finished (timed out). Refresh before retrying.`;
+    }
+    return `Could not ${action}: ${error.message}`;
+  }
+  return error instanceof Error ? `Could not ${action}: ${error.message}` : `Could not ${action}.`;
+}
+
+/**
  * Whether a failed request may succeed if repeated unchanged: network failures, timeouts,
  * rate limits and transient gateway errors. Auth, validation and not-found errors are final.
  */

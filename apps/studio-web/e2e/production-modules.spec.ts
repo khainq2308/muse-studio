@@ -1,0 +1,364 @@
+import { expect, test } from "@playwright/test";
+import {
+  PROJECT_ID,
+  approvalResult,
+  backups,
+  createdWorkflow,
+  exportLaunched,
+  exportStatus,
+  mockStudioApi,
+  orphanCleanup,
+  testProject,
+  waitingApprovalRun,
+} from "./support/studio-mocks";
+
+const ASPECT_RATIO_PATTERN = /^(16:9|9:16|1:1|21:9)$/;
+
+test.describe("Projects module", () => {
+  test("shows project settings, creates a project with a valid aspect ratio and duplicates settings only", async ({
+    page,
+  }) => {
+    const requests = await mockStudioApi(page, ({ method, pathname, body }) => {
+      if (method === "POST" && pathname === "/api/v1/projects") {
+        const request = body as Record<string, unknown>;
+        return {
+          status: 201,
+          body: {
+            ...testProject,
+            ...request,
+            id: "created-project",
+            asset_count: 0,
+            current_revision_num: 1,
+          },
+        };
+      }
+      if (method === "POST" && pathname === `/api/v1/projects/${PROJECT_ID}/duplicate`) {
+        return {
+          status: 201,
+          body: {
+            ...testProject,
+            id: "duplicated-project",
+            name: "Test project (copy)",
+            asset_count: 0,
+            current_revision_num: 1,
+          },
+        };
+      }
+      return undefined;
+    });
+
+    await page.goto(`/projects/${PROJECT_ID}/projects`);
+
+    await expect(
+      page.getByRole("heading", { name: "Project Settings & Revision History" }),
+    ).toBeVisible();
+    const profile = page.getByRole("region", { name: "Active project profile" });
+    await expect(profile).toContainText("Test project");
+    await expect(profile).toContainText("16:9 · 24 fps");
+    await expect(profile).toContainText("2d_anime_cinematic");
+    const history = page.getByRole("region", { name: "Revision history" });
+    await expect(history).toContainText("Project Revision History (2)");
+    await expect(history).toContainText("Imported script revision v2");
+    await expect(page.getByRole("region", { name: "Workspace switcher" })).toContainText(
+      "Episode 02 - Glass Citadel",
+    );
+
+    await page.getByRole("button", { name: "New workspace" }).click();
+    const form = page.getByRole("form", { name: "Create new workspace" });
+    await form.getByLabel("Project name").fill("Episode 03 - Vertical teaser");
+    await expect(form.getByLabel("Aspect ratio").locator("option")).toHaveText([
+      "16:9",
+      "9:16",
+      "1:1",
+      "21:9",
+    ]);
+    await form.getByLabel("Aspect ratio").selectOption("9:16");
+    await form.getByRole("button", { name: "Create workspace" }).click();
+
+    await expect(page.getByRole("status")).toContainText(
+      "Created project Episode 03 - Vertical teaser (created-project).",
+    );
+    const creates = requests.filter(
+      (request) => request.method === "POST" && request.pathname === "/api/v1/projects",
+    );
+    expect(creates).toHaveLength(1);
+    const createBody = creates[0].body as Record<string, unknown>;
+    expect(createBody.aspect_ratio).toMatch(ASPECT_RATIO_PATTERN);
+    expect(createBody).toEqual({
+      name: "Episode 03 - Vertical teaser",
+      description: "",
+      aspect_ratio: "9:16",
+      fps: 24,
+      language: "vi",
+      style_preset: "2d_anime_cinematic",
+      output_profile: "1080p_h264",
+    });
+
+    await page.getByRole("button", { name: "Duplicate settings" }).click();
+    const duplicated = page.getByRole("status");
+    await expect(duplicated).toContainText(
+      "Duplicated project settings as Test project (copy) (duplicated-project).",
+    );
+    await expect(duplicated).toContainText(
+      "Only project settings are copied; Story Bible, shots and assets are not copied.",
+    );
+    expect(
+      requests.filter((request) => request.pathname.endsWith("/duplicate")).map((r) => r.body),
+    ).toEqual([undefined]);
+  });
+});
+
+test.describe("Connections module", () => {
+  test("lists connections and pool accounts; removing an account requires confirmation", async ({
+    page,
+  }) => {
+    const requests = await mockStudioApi(page, ({ method, pathname }) =>
+      method === "DELETE" && pathname === "/api/v1/connections/conn-live/accounts/acc-primary"
+        ? { status: 204, body: null }
+        : undefined,
+    );
+
+    await page.goto(`/projects/${PROJECT_ID}/connections`);
+
+    await expect(
+      page.getByRole("heading", { name: "Provider Connections & Account Pools" }),
+    ).toBeVisible();
+    await expect(page.getByText("Live gateway", { exact: true })).toBeVisible();
+    await expect(page.getByText("Mock provider", { exact: true })).toBeVisible();
+    await expect(page.getByText("Upstream returned HTTP 503")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Live gateway — Account Pool" })).toBeVisible();
+
+    const primary = page.getByRole("listitem").filter({ hasText: "Primary account" });
+    const backup = page.getByRole("listitem").filter({ hasText: "Backup account" });
+    await expect(primary).toContainText("priority 10");
+    await expect(primary).toContainText("proxy: proxy.example:8080");
+    await expect(backup).toContainText("auth_error");
+    await expect(backup).toContainText("HTTP 401: invalid API key");
+
+    await primary.getByRole("button", { name: "Remove" }).click();
+    const dialog = primary.getByRole("alertdialog");
+    await expect(dialog).toContainText('Remove pool account "Primary account"?');
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(primary.getByRole("alertdialog")).toHaveCount(0);
+    expect(requests.filter((request) => request.method === "DELETE")).toEqual([]);
+
+    await primary.getByRole("button", { name: "Remove" }).click();
+    await primary.getByRole("alertdialog").getByRole("button", { name: "Remove account" }).click();
+    await expect
+      .poll(() => requests.filter((request) => request.method === "DELETE").map((r) => r.pathname))
+      .toEqual(["/api/v1/connections/conn-live/accounts/acc-primary"]);
+  });
+});
+
+test.describe("Workflow Canvas module", () => {
+  test("creates a workflow rendered as React Flow nodes and approving a gate requires confirmation", async ({
+    page,
+  }) => {
+    const base = `/api/v1/projects/${PROJECT_ID}/workflows`;
+    const requests = await mockStudioApi(page, ({ method, pathname }) => {
+      if (method === "POST" && pathname === base) return { status: 201, body: createdWorkflow };
+      if (method === "POST" && pathname === `${base}/wf_e2e01/runs`) {
+        return { status: 201, body: waitingApprovalRun };
+      }
+      if (
+        method === "POST" &&
+        pathname === `${base}/wf_e2e01/runs/run_e2e01/nodes/n_approval/approve`
+      ) {
+        return { status: 200, body: approvalResult };
+      }
+      return undefined;
+    });
+
+    await page.goto(`/projects/${PROJECT_ID}/workflow-canvas`);
+    await expect(
+      page.getByRole("heading", { name: "Workflow DAG Canvas & Merkle Execution" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Initialize M3 Pipeline DAG" }).click();
+    const canvas = page.getByRole("region", { name: "Workflow DAG canvas" });
+    await expect(canvas.locator(".react-flow__node")).toHaveCount(7);
+    await expect(canvas.getByTestId("workflow-node-n_approval")).toContainText("ManualApproval");
+    await expect(page.getByText("7 nodes · 6 edges")).toBeVisible();
+    expect(
+      requests.filter((r) => r.method === "POST" && r.pathname === base).map((r) => r.body),
+    ).toEqual([
+      {
+        name: "Script to Batch Film Pipeline",
+        description:
+          "Typed DAG pipeline with Merkle cache keys and human-in-the-loop approval gates",
+        use_default_m3_template: true,
+      },
+    ]);
+
+    await page.getByLabel("Run mode").selectOption("full");
+    const execute = page.getByRole("button", { name: "Execute (full)" });
+    await expect(execute).toBeDisabled();
+    await page
+      .getByRole("checkbox", { name: /Confirm full DAG execution across all 7 nodes/ })
+      .check();
+    await execute.click();
+    await expect(page.getByRole("region", { name: "Execution run summary" })).toContainText(
+      "waiting approval",
+    );
+    expect(requests.filter((r) => r.pathname.endsWith("/runs")).map((r) => r.body)).toEqual([
+      { run_mode: "full", force_rerun: false, start_node_id: null },
+    ]);
+
+    const approvals = () => requests.filter((r) => r.pathname.endsWith("/approve"));
+    await page.getByRole("button", { name: "Review gate n_approval" }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("Approve manual gate n_approval?");
+    await expect(dialog).toContainText("Approval cannot be undone.");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    expect(approvals()).toEqual([]);
+
+    await page.getByRole("button", { name: "Review gate n_approval" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Approve & resume" }).click();
+    await expect(canvas.getByTestId("workflow-node-n_approval")).toHaveAttribute(
+      "data-state",
+      "succeeded",
+    );
+    expect(approvals().map((r) => r.pathname)).toEqual([
+      `${base}/wf_e2e01/runs/run_e2e01/nodes/n_approval/approve`,
+    ]);
+  });
+});
+
+test.describe("Timeline Editor module", () => {
+  test("renders clips, restricts resolutions to the aspect ratio and exports a matching pair", async ({
+    page,
+  }) => {
+    const base = `/api/v1/projects/${PROJECT_ID}/timeline/exports`;
+    let launchedRequest: { resolution: string; aspect_ratio: string; fps: number } | null = null;
+    const requests = await mockStudioApi(page, ({ method, pathname, body }) => {
+      if (method === "POST" && pathname === base) {
+        launchedRequest = body as { resolution: string; aspect_ratio: string; fps: number };
+        return { status: 202, body: exportLaunched(launchedRequest) };
+      }
+      if (method === "GET" && pathname === `${base}/exp_e2e01` && launchedRequest) {
+        return { status: 200, body: exportStatus(launchedRequest) };
+      }
+      return undefined;
+    });
+
+    await page.goto(`/projects/${PROJECT_ID}/timeline-editor`);
+
+    const ruler = page.getByRole("region", { name: "Timeline tracks" });
+    await expect(ruler.getByText("Shot: shot-1")).toBeVisible();
+    await expect(ruler.getByText("Shot: shot-2")).toBeVisible();
+    await expect(ruler.getByText("Shot: shot-3")).toBeVisible();
+    await expect(ruler).toContainText("Shot 4 has no selected take and was skipped.");
+
+    const exportPanel = page.getByRole("region", { name: "FFmpeg MP4 export" });
+    const aspect = exportPanel.getByLabel("Aspect ratio");
+    const resolution = exportPanel.getByLabel("Resolution");
+    await expect(resolution.locator("option")).toHaveText(["1920x1080", "1280x720"]);
+
+    await aspect.selectOption("9:16");
+    await expect(resolution.locator("option")).toHaveText(["1080x1920", "720x1280"]);
+    await expect(resolution).toHaveValue("1080x1920");
+    await resolution.selectOption("720x1280");
+
+    const skipped = exportPanel.getByTestId("export-skipped-features");
+    await expect(skipped).toBeVisible();
+    await expect(skipped).toContainText("This export will not include:");
+    await expect(skipped.getByRole("listitem")).toHaveText([
+      "clip audio (output carries a silent AAC track)",
+      "subtitles",
+      "audio tracks (background music)",
+    ]);
+
+    await exportPanel.getByRole("button", { name: "Launch Verified MP4 Export" }).click();
+    const status = page.getByRole("region", { name: "Export job status" });
+    await expect(status).toContainText("succeeded");
+    await expect(status).toContainText("subtitles, audio_tracks");
+
+    const launches = requests.filter((r) => r.method === "POST" && r.pathname === base);
+    expect(launches.map((r) => r.body)).toEqual([
+      { sequence_id: "seq_e2e01", resolution: "720x1280", aspect_ratio: "9:16", fps: 24 },
+    ]);
+    const [width, height] = (launches[0].body as { resolution: string }).resolution
+      .split("x")
+      .map(Number);
+    expect(height).toBeGreaterThan(width);
+  });
+});
+
+test.describe("System Ops module", () => {
+  test("lists backups, confirms backup deletion and gates real orphan cleanup behind a dry-run", async ({
+    page,
+  }) => {
+    const requests = await mockStudioApi(page, ({ method, pathname, body }) => {
+      if (method === "DELETE" && pathname === "/api/v1/backups/bak-1") {
+        return { status: 204, body: null };
+      }
+      if (method === "POST" && pathname === "/api/v1/maintenance/orphans/cleanup") {
+        return {
+          status: 200,
+          body: orphanCleanup(body as { dry_run: boolean; retention_hours: number }),
+        };
+      }
+      return undefined;
+    });
+
+    await page.goto(`/projects/${PROJECT_ID}/system-ops`);
+
+    const backupsRegion = page.getByRole("region", { name: "Project backups" });
+    await expect(backupsRegion).toContainText("Project Backups (2)");
+    for (const backup of backups) {
+      await expect(backupsRegion.getByText(backup.filename)).toBeVisible();
+    }
+    await expect(page.getByRole("region", { name: "Observability summary" })).toContainText(
+      "2 archives",
+    );
+
+    const deletes = () => requests.filter((r) => r.method === "DELETE");
+    await backupsRegion
+      .getByRole("button", { name: `Delete backup ${backups[0].filename}` })
+      .click();
+    const dialog = backupsRegion.getByRole("alertdialog");
+    await expect(dialog).toContainText(`Delete backup ${backups[0].filename}?`);
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(backupsRegion.getByRole("alertdialog")).toHaveCount(0);
+    expect(deletes()).toEqual([]);
+
+    await backupsRegion
+      .getByRole("button", { name: `Delete backup ${backups[0].filename}` })
+      .click();
+    await backupsRegion
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Delete backup", exact: true })
+      .click();
+    await expect.poll(() => deletes().map((r) => r.pathname)).toEqual(["/api/v1/backups/bak-1"]);
+
+    const orphans = page.getByRole("region", { name: "Orphan media maintenance" });
+    const realCleanup = orphans.getByRole("button", { name: "Delete Orphan Files" });
+    await expect(realCleanup).toBeDisabled();
+    await expect(orphans).toContainText(
+      "Run a dry-run with the current retention window before deleting orphan files.",
+    );
+
+    await orphans.getByRole("button", { name: "Dry-Run Cleanup" }).click();
+    await expect(orphans.getByTestId("dry-run-report")).toContainText(
+      "Dry-run report: 2 orphan files would be deleted",
+    );
+    await expect(realCleanup).toBeEnabled();
+
+    await realCleanup.click();
+    const cleanupDialog = orphans.getByRole("alertdialog");
+    await expect(cleanupDialog).toContainText(
+      "Delete orphan files older than 24h across all projects?",
+    );
+    await cleanupDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(orphans.getByRole("alertdialog")).toHaveCount(0);
+
+    // Changing the retention window invalidates the preview and disables real cleanup again.
+    await orphans.getByLabel("Retention window (hours)").fill("48");
+    await expect(realCleanup).toBeDisabled();
+
+    const cleanups = requests.filter((r) => r.pathname === "/api/v1/maintenance/orphans/cleanup");
+    expect(cleanups.map((r) => r.body)).toEqual([{ dry_run: true, retention_hours: 24 }]);
+  });
+});

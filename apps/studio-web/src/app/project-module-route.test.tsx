@@ -59,6 +59,36 @@ vi.mock("@/features/script-studio", () => ({
   },
 }));
 
+vi.mock("@/features/workflow-canvas", () => ({
+  default: function WorkflowCanvasStub({ projectId }: { projectId: string }) {
+    return <div data-testid="workflow-canvas-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/timeline-editor", () => ({
+  default: function TimelineEditorStub({ projectId }: { projectId: string }) {
+    return <div data-testid="timeline-editor-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/connections", () => ({
+  default: function ConnectionsStub({ projectId }: { projectId: string }) {
+    return <div data-testid="connections-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/projects", () => ({
+  default: function ProjectsStub({ projectId }: { projectId: string }) {
+    return <div data-testid="projects-stub">{projectId}</div>;
+  },
+}));
+
+vi.mock("@/features/system-ops", () => ({
+  default: function SystemOpsStub({ projectId }: { projectId: string }) {
+    return <div data-testid="system-ops-stub">{projectId}</div>;
+  },
+}));
+
 import ProjectModuleRoute from "@/app/project-module-route";
 
 beforeEach(() => {
@@ -110,6 +140,35 @@ describe("ProjectModuleRoute", () => {
     expect(scriptStudio).toHaveAttribute("aria-current", "page");
     expect(scriptStudio).toHaveAttribute("href", "/projects/project-a/script-studio");
     expect(shotBoard).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks Project Settings as the active module on the projects route", () => {
+    mocks.params = { projectId: "project-a", module: "projects" };
+    render(<ProjectModuleRoute />);
+
+    expect(screen.getByTestId("projects-stub").textContent).toBe("project-a");
+    const nav = screen.getByRole("navigation", { name: "Project modules" });
+    const settings = within(nav).getByRole("link", { name: "Project Settings" });
+    const systemOps = within(nav).getByRole("link", { name: "System & Backups" });
+    expect(settings).toHaveAttribute("aria-current", "page");
+    expect(settings).toHaveAttribute("href", "/projects/project-a/projects");
+    expect(systemOps).not.toHaveAttribute("aria-current");
+    expect(systemOps).toHaveAttribute("href", "/projects/project-a/system-ops");
+  });
+
+  it("renders Workflow Canvas, Timeline Editor, Connections, Projects, and System Ops modules", () => {
+    for (const [module, testId] of [
+      ["workflow-canvas", "workflow-canvas-stub"],
+      ["timeline-editor", "timeline-editor-stub"],
+      ["connections", "connections-stub"],
+      ["projects", "projects-stub"],
+      ["system-ops", "system-ops-stub"],
+    ] as const) {
+      mocks.params = { projectId: "project-a", module };
+      const { unmount } = render(<ProjectModuleRoute />);
+      expect(screen.getByTestId(testId).textContent).toBe("project-a");
+      unmount();
+    }
   });
 
   it("shows a not-found page instead of an empty module for an unknown project", () => {

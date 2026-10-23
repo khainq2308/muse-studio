@@ -1,11 +1,16 @@
 import { useParams } from "@tanstack/react-router";
-import { LoaderCircle } from "lucide-react";
+import { Film, LoaderCircle } from "lucide-react";
 import NotFoundPage from "@/app/not-found-page";
-import { useProjects } from "@/entities/project/api";
 import { ProjectModuleNav } from "@/app/project-module-nav";
+import { useProjects } from "@/entities/project/api";
+import ConnectionsPage from "@/features/connections";
+import ProjectsPage from "@/features/projects";
 import QueueMonitorPage from "@/features/queue-monitor";
 import ScriptStudioPage from "@/features/script-studio";
 import ShotBoardPage from "@/features/shot-board";
+import SystemOpsPage from "@/features/system-ops";
+import TimelineEditorPage from "@/features/timeline-editor";
+import WorkflowCanvasPage from "@/features/workflow-canvas";
 
 export default function ProjectModuleRoute() {
   const { projectId, module } = useParams({ from: "/_shell/projects/$projectId/$module" });
@@ -24,9 +29,11 @@ export default function ProjectModuleRoute() {
     );
   }
 
+  const activeProject = projectsQuery.data?.find((project) => project.id === projectId);
+
   // Only a successful list proves absence. On auth/network errors the module renders and
   // surfaces its own error state instead of claiming the project does not exist.
-  if (projectsQuery.isSuccess && !projectsQuery.data.some((project) => project.id === projectId)) {
+  if (projectsQuery.isSuccess && !activeProject) {
     return (
       <section
         data-testid="project-not-found"
@@ -50,6 +57,16 @@ export default function ProjectModuleRoute() {
       <QueueMonitorPage key={projectId} projectId={projectId} />
     ) : module === "shot-board" ? (
       <ShotBoardPage key={projectId} projectId={projectId} />
+    ) : module === "workflow-canvas" ? (
+      <WorkflowCanvasPage key={projectId} projectId={projectId} />
+    ) : module === "timeline-editor" ? (
+      <TimelineEditorPage key={projectId} projectId={projectId} />
+    ) : module === "connections" ? (
+      <ConnectionsPage key={projectId} projectId={projectId} />
+    ) : module === "projects" ? (
+      <ProjectsPage key={projectId} projectId={projectId} />
+    ) : module === "system-ops" ? (
+      <SystemOpsPage key={projectId} projectId={projectId} />
     ) : (
       <div data-testid="project-module-placeholder" className="space-y-2">
         <h2 className="text-xl font-semibold">{heading}</h2>
@@ -60,12 +77,36 @@ export default function ProjectModuleRoute() {
 
   return (
     <>
+      {activeProject && activeProject.name && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-secondary/45 px-4 py-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <Film className="size-3.5 text-primary" aria-hidden="true" />
+            <span className="font-semibold text-foreground">{activeProject.name}</span>
+            <span className="font-mono text-muted-foreground">({activeProject.id})</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+            {activeProject.aspect_ratio && (
+              <span className="rounded bg-card px-2 py-0.5 font-mono">
+                {activeProject.aspect_ratio} · {activeProject.fps} fps
+              </span>
+            )}
+            {activeProject.style_preset && (
+              <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-primary">
+                {activeProject.style_preset}
+              </span>
+            )}
+            {typeof activeProject.current_revision_num === "number" && (
+              <span className="font-mono">r{activeProject.current_revision_num}</span>
+            )}
+          </div>
+        </div>
+      )}
       <ProjectModuleNav projectId={projectId} activeModule={module} />
       <section
         data-testid="project-module-route"
         data-project-id={projectId}
         data-module={module}
-        className="rounded-xl border border-border bg-card p-6"
+        className="rounded-xl border border-border bg-card p-6 shadow-xs"
       >
         {content}
       </section>

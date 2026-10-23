@@ -5,13 +5,21 @@ interface ResourceCardProps {
   title: string;
   description: string;
   count: number;
+  action?: ReactNode;
   children: ReactNode;
 }
 
-export function ResourceCard({ icon, title, description, count, children }: ResourceCardProps) {
+export function ResourceCard({
+  icon,
+  title,
+  description,
+  count,
+  action,
+  children,
+}: ResourceCardProps) {
   return (
     <article className="min-w-0 rounded-xl border border-border bg-card p-5 shadow-sm">
-      <div className="mb-5 flex items-center justify-between gap-3">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             {icon}
@@ -21,9 +29,12 @@ export function ResourceCard({ icon, title, description, count, children }: Reso
             <p className="text-sm text-muted-foreground">{description}</p>
           </div>
         </div>
-        <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium tabular-nums">
-          {count}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium tabular-nums">
+            {count}
+          </span>
+          {action}
+        </div>
       </div>
       {children}
     </article>

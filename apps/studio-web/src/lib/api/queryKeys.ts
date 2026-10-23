@@ -1,7 +1,16 @@
 export const queryKeys = {
   health: ["system", "health"] as const,
   projects: (sessionVersion: number) => ["projects", sessionVersion] as const,
+  /** Every project's revision history (prefix; create/duplicate write a new revision). */
+  projectRevisionsPrefix: (sessionVersion: number) =>
+    ["project-revisions", sessionVersion] as const,
+  projectRevisions: (sessionVersion: number, projectId: string) =>
+    ["project-revisions", sessionVersion, projectId] as const,
+  projectActions: (sessionVersion: number) => ["project-actions", sessionVersion] as const,
   connections: (sessionVersion: number) => ["connections", sessionVersion] as const,
+  connectionAccounts: (sessionVersion: number, connectionId: string) =>
+    ["connection-accounts", sessionVersion, connectionId] as const,
+  connectionActions: (sessionVersion: number) => ["connection-actions", sessionVersion] as const,
   queueTasksPrefix: (sessionVersion: number, projectId: string) =>
     ["queue-tasks", sessionVersion, projectId] as const,
   queueTasks: (sessionVersion: number, projectId: string, stateFilter: string, offset: number) =>
@@ -45,4 +54,29 @@ export const queryKeys = {
   /** Mutation key for Script Studio actions (Story Bible upsert, script import, reference upload). */
   scriptStudioActions: (sessionVersion: number, projectId: string) =>
     ["script-studio-actions", sessionVersion, projectId] as const,
+  /** Latest timeline sequence of a project (`GET /api/v1/projects/{project_id}/timeline`). */
+  projectTimeline: (sessionVersion: number, projectId: string) =>
+    ["project-timeline", sessionVersion, projectId] as const,
+  /** Export job status (`GET /api/v1/projects/{project_id}/timeline/exports/{export_id}`). */
+  timelineExport: (sessionVersion: number, projectId: string, exportId: string) =>
+    ["timeline-export", sessionVersion, projectId, exportId] as const,
+  /** Mutation key for timeline assemble and export launch. */
+  timelineActions: (sessionVersion: number, projectId: string) =>
+    ["timeline-actions", sessionVersion, projectId] as const,
+  /** Mutation key for workflow creation, graph update, layout save, run, and gate approval. */
+  workflowActions: (sessionVersion: number, projectId: string) =>
+    ["workflow-actions", sessionVersion, projectId] as const,
+  /** Project backups (`GET /api/v1/projects/{project_id}/backups`). */
+  projectBackups: (sessionVersion: number, projectId: string) =>
+    ["project-backups", sessionVersion, projectId] as const,
+  /** System metrics summary (`GET /api/v1/metrics/summary`). */
+  metricsSummary: (sessionVersion: number) => ["metrics-summary", sessionVersion] as const,
+  /** System diagnostics (`GET /api/v1/system/diagnostics`). */
+  systemDiagnostics: (sessionVersion: number) => ["system-diagnostics", sessionVersion] as const,
+  /** Structured operational logs (`GET /api/v1/system/logs`). */
+  systemLogs: (sessionVersion: number, projectId: string, level: string) =>
+    ["system-logs", sessionVersion, projectId, level] as const,
+  /** Mutation key for backups, orphan media scan/cleanup, and asset management. */
+  systemOpsActions: (sessionVersion: number, projectId: string) =>
+    ["system-ops-actions", sessionVersion, projectId] as const,
 };

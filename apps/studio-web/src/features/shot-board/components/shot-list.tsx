@@ -1,12 +1,15 @@
 import {
+  Camera,
   Clapperboard,
   Film,
   ImageIcon,
   ImageOff,
   Link2,
+  MapPin,
   Pencil,
-  Play,
+  Sparkles,
   TriangleAlert,
+  Volume2,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +38,8 @@ interface ShotListProps {
   onGenerate: (shotId: string) => void;
   /** Shot whose take review is open, if any. */
   reviewingShotId: string | null;
+  /** Shots showing another inline panel (generate confirm, queue status/result) that needs full width. */
+  expandedShotIds?: ReadonlySet<string>;
   onReviewTakes: (shotId: string) => void;
   /** Whether single-shot generation can be started (connection + model chosen). */
   canGenerate: boolean;
@@ -43,12 +48,21 @@ interface ShotListProps {
   renderShotDetail: (shot: ProjectShot) => ReactNode;
 }
 
+const MISSING = "—";
+
+/** Rounds to centiseconds so float sums never render as 0.30000000000000004. */
+function formatSeconds(value: number): string {
+  if (!Number.isFinite(value)) return MISSING;
+  return `${Math.round(value * 100) / 100}s`;
+}
+
 export function ShotList({
   shots,
   editingShotId,
   onEdit,
   onGenerate,
   reviewingShotId,
+  expandedShotIds,
   onReviewTakes,
   canGenerate,
   generateDisabledReason,
@@ -59,40 +73,129 @@ export function ShotList({
 
   return (
     <div className="space-y-6">
-      {groups.map((group) => (
-        <section
-          key={group.sceneId}
-          aria-label={`Scene ${group.sceneId}`}
-          data-testid={`shot-scene-${group.sceneId}`}
-          className="space-y-3"
-        >
-          <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            <Clapperboard className="size-4" aria-hidden="true" />
-            Scene <span className="break-all normal-case">{group.sceneId}</span>
-            <span className="font-normal normal-case">
-              · {group.shots.length} {group.shots.length === 1 ? "shot" : "shots"}
-            </span>
-          </h3>
-          {group.shots.map((shot) => (
-            <ShotCard
-              key={shot.id}
-              shot={shot}
-              previousShot={
-                shot.previous_shot_id ? shotsById.get(shot.previous_shot_id) : undefined
-              }
-              isEditing={editingShotId === shot.id}
-              onEdit={() => onEdit(shot.id)}
-              onGenerate={() => onGenerate(shot.id)}
-              isReviewing={reviewingShotId === shot.id}
-              onReviewTakes={() => onReviewTakes(shot.id)}
-              canGenerate={canGenerate}
-              generateDisabledReason={generateDisabledReason}
-            >
-              {renderShotDetail(shot)}
-            </ShotCard>
-          ))}
-        </section>
-      ))}
+      {groups.map((group) => {
+        const primaryLocation =
+          group.shots.find((shot) => shot.location_code.trim())?.location_code ?? MISSING;
+        const hasFrameChain = group.shots.some((shot) => shot.continuity_mode === "frame_chain");
+        const primaryCamera =
+          group.shots.find((shot) => shot.camera_motion.trim())?.camera_motion ?? MISSING;
+        const primaryDialogue =
+          group.shots.find((shot) => shot.dialogue.trim())?.dialogue ?? MISSING;
+        const totalSceneDuration = group.shots.reduce(
+          (sum, shot) => sum + (Number.isFinite(shot.duration_seconds) ? shot.duration_seconds : 0),
+          0,
+        );
+
+        return (
+          <section
+            key={group.sceneId}
+            aria-label={`Scene ${group.sceneId}`}
+            data-testid={`shot-scene-${group.sceneId}`}
+            className="rounded-2xl border border-border bg-secondary/35 p-4 shadow-2xs sm:p-5"
+          >
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
+              {/* Scene summary derived only from the shots in this scene */}
+              <aside className="w-full shrink-0 space-y-3 xl:w-64">
+                <h3 className="flex items-center gap-2 text-base font-bold tracking-tight text-foreground">
+                  <Clapperboard className="size-4 text-primary" aria-hidden="true" />
+                  <span>
+                    Scene <span className="break-all">{group.sceneId}</span>
+                  </span>
+                  <span className="ml-auto rounded-full bg-card px-2.5 py-0.5 text-xs font-medium text-muted-foreground shadow-2xs">
+                    {group.shots.length} {group.shots.length === 1 ? "shot" : "shots"}
+                  </span>
+                </h3>
+
+                {/* Scene Setting Card */}
+                <div className="space-y-3 rounded-xl border border-border bg-card p-3.5 shadow-2xs">
+                  <span className="block text-xs font-bold text-foreground">Scene setting</span>
+
+                  <div className="space-y-2.5">
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Location
+                      </p>
+                      <div className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/40 px-2.5 py-1.5 text-xs font-medium text-foreground">
+                        <MapPin className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                        <span className="truncate">{primaryLocation}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Continuity
+                      </p>
+                      <div className="rounded-lg border border-border bg-secondary/40 px-2.5 py-1.5 text-xs font-medium text-foreground">
+                        {hasFrameChain ? "Frame-chained sequence" : "Standard scene cut"}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Camera motion (first shot set)
+                      </p>
+                      <div className="rounded-lg border border-border bg-secondary/40 px-2.5 py-1.5 text-xs font-medium text-foreground">
+                        {primaryCamera}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sound & Timing Card */}
+                <div className="space-y-3 rounded-xl border border-border bg-card p-3.5 shadow-2xs">
+                  <span className="block text-xs font-bold text-foreground">
+                    Dialogue &amp; Timing
+                  </span>
+
+                  <div className="flex items-start gap-2 rounded-lg border border-border bg-secondary/40 p-2.5">
+                    <Volume2 className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Dialogue (first shot with dialogue)
+                      </p>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-foreground">
+                        {primaryDialogue}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/40 px-2.5 py-1.5 text-xs">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Scene Duration
+                    </span>
+                    <span className="font-mono font-semibold text-foreground">
+                      {formatSeconds(totalSceneDuration)}
+                    </span>
+                  </div>
+                </div>
+              </aside>
+
+              {/* Shot cards */}
+              <div className="grid min-w-0 flex-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+                {group.shots.map((shot) => (
+                  <ShotCard
+                    key={shot.id}
+                    shot={shot}
+                    previousShot={
+                      shot.previous_shot_id ? shotsById.get(shot.previous_shot_id) : undefined
+                    }
+                    isEditing={editingShotId === shot.id}
+                    onEdit={() => onEdit(shot.id)}
+                    onGenerate={() => onGenerate(shot.id)}
+                    isReviewing={reviewingShotId === shot.id}
+                    hasInlinePanel={expandedShotIds?.has(shot.id) ?? false}
+                    onReviewTakes={() => onReviewTakes(shot.id)}
+                    canGenerate={canGenerate}
+                    generateDisabledReason={generateDisabledReason}
+                  >
+                    {renderShotDetail(shot)}
+                  </ShotCard>
+                ))}
+              </div>
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -104,6 +207,8 @@ interface ShotCardProps {
   onEdit: () => void;
   onGenerate: () => void;
   isReviewing: boolean;
+  /** Another inline panel (generate confirm, queue status/result) is open in this card. */
+  hasInlinePanel: boolean;
   onReviewTakes: () => void;
   canGenerate: boolean;
   generateDisabledReason: string | null;
@@ -117,6 +222,7 @@ function ShotCard({
   onEdit,
   onGenerate,
   isReviewing,
+  hasInlinePanel,
   onReviewTakes,
   canGenerate,
   generateDisabledReason,
@@ -126,40 +232,75 @@ function ShotCard({
   const blockers = shotLintBlockers(shot.lint_report);
   const warnings = shotLintWarnings(shot.lint_report);
   const hasFirstFrame = Boolean(shot.first_frame_asset_id);
+  const isExpanded = isEditing || isReviewing || hasInlinePanel;
+  const framing = `${shot.shot_size || MISSING} · ${shot.camera_motion || MISSING}`;
 
   return (
     <article
       data-testid={`shot-card-${shot.id}`}
       aria-label={label}
       className={cn(
-        "rounded-xl border bg-card p-4 shadow-sm sm:p-5",
-        isEditing
-          ? "border-primary/60"
+        "flex flex-col justify-between rounded-2xl border bg-card p-3.5 shadow-xs transition-all sm:p-4",
+        isExpanded && "md:col-span-2 2xl:col-span-3",
+        isEditing || isReviewing
+          ? "border-primary ring-2 ring-primary/25"
           : blockers.length > 0
-            ? "border-destructive/40"
-            : "border-border",
+            ? "border-destructive/50"
+            : "border-border hover:border-primary/40",
       )}
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 space-y-2">
-          <h4 className="break-words font-semibold">{label}</h4>
-          <div className="flex flex-wrap items-center gap-2">
-            <StateBadge
-              tone={shotGenerationTone(shot.generation_state)}
-              testId="shot-generation-state"
-            >
-              {shotGenerationLabel(shot.generation_state)}
-            </StateBadge>
-            <StateBadge tone={shotApprovalTone(shot.approval_state)} testId="shot-approval-state">
-              {shotApprovalLabel(shot.approval_state)}
-            </StateBadge>
+      <div className="space-y-3">
+        {/* Shot header */}
+        <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-3 text-slate-100">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-20"
+            style={{
+              backgroundImage:
+                "linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px)",
+              backgroundSize: "32px 32px",
+            }}
+            aria-hidden="true"
+          />
+
+          {/* Top Floating Number Pill & State Badges */}
+          <div className="relative flex items-start justify-between gap-2">
+            <span className="inline-flex items-center rounded-lg bg-slate-900/85 px-2.5 py-1 font-mono text-xs font-bold text-white shadow-xs backdrop-blur-md">
+              #{shot.sequence_index}
+            </span>
+
+            <div className="flex flex-wrap justify-end gap-1.5">
+              <StateBadge
+                tone={shotGenerationTone(shot.generation_state)}
+                testId="shot-generation-state"
+              >
+                {shotGenerationLabel(shot.generation_state)}
+              </StateBadge>
+              <StateBadge tone={shotApprovalTone(shot.approval_state)} testId="shot-approval-state">
+                {shotApprovalLabel(shot.approval_state)}
+              </StateBadge>
+            </div>
+          </div>
+
+          {/* Center Storyboard Visual Frame Title */}
+          <div className="relative my-2.5 flex flex-col items-center justify-center text-center">
+            <div className="flex size-8 items-center justify-center rounded-full border border-white/15 bg-white/10 text-indigo-300 backdrop-blur-xs">
+              <Camera className="size-4" aria-hidden="true" />
+            </div>
+            <h4 className="mt-1.5 line-clamp-1 text-sm font-semibold text-white">{label}</h4>
+            <p className="mt-0.5 font-mono text-[11px] text-slate-300">
+              {framing} · {formatSeconds(shot.duration_seconds)}
+            </p>
+          </div>
+
+          {/* Bottom Frame Overlay: Lint & First Frame Status */}
+          <div className="relative flex flex-wrap items-center justify-between gap-1.5 pt-1">
             <StateBadge
               tone={
                 blockers.length > 0
-                  ? "border border-destructive/30 bg-destructive/10 text-destructive"
+                  ? "border border-destructive/40 bg-destructive/20 text-red-200"
                   : warnings.length > 0
-                    ? "border border-warning/30 bg-warning/10 text-warning"
-                    : "border border-success/30 bg-success/10 text-success"
+                    ? "border border-warning/40 bg-warning/20 text-amber-200"
+                    : "border border-emerald-400/30 bg-emerald-500/20 text-emerald-200"
               }
               testId="shot-lint-status"
             >
@@ -169,32 +310,24 @@ function ShotCard({
                   ? `${warnings.length} lint ${warnings.length === 1 ? "warning" : "warnings"}`
                   : "Lint clear"}
             </StateBadge>
+
             <StateBadge
-              tone="border border-border bg-muted text-muted-foreground"
+              tone="border border-white/15 bg-slate-900/80 text-slate-200"
               testId="shot-first-frame"
               title={shot.first_frame_asset_id ?? undefined}
             >
               {hasFirstFrame ? (
-                <ImageIcon className="size-3.5" aria-hidden="true" />
+                <ImageIcon className="size-3.5 text-indigo-300" aria-hidden="true" />
               ) : (
-                <ImageOff className="size-3.5" aria-hidden="true" />
+                <ImageOff className="size-3.5 text-slate-400" aria-hidden="true" />
               )}
               {hasFirstFrame ? "First frame set" : "No first frame"}
             </StateBadge>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onEdit}
-            disabled={isEditing}
-            aria-label={`Edit ${label}`}
-          >
-            <Pencil aria-hidden="true" />
-            Edit
-          </Button>
+
+        {/* Shot actions */}
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="outline"
@@ -204,9 +337,21 @@ function ShotCard({
             title={generateDisabledReason ?? undefined}
             aria-label={`Generate ${label}`}
             aria-haspopup="dialog"
+            className="border-primary/25 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary"
           >
-            <Play aria-hidden="true" />
+            <Sparkles className="size-3.5" aria-hidden="true" />
             Generate
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onEdit}
+            disabled={isEditing}
+            aria-label={`Edit ${label}`}
+          >
+            <Pencil className="size-3.5" aria-hidden="true" />
+            Edit
           </Button>
           <Button
             type="button"
@@ -216,73 +361,129 @@ function ShotCard({
             aria-expanded={isReviewing}
             aria-label={`Review takes for ${label}`}
           >
-            <Film aria-hidden="true" />
+            <Film className="size-3.5" aria-hidden="true" />
             Review takes
           </Button>
         </div>
-      </div>
 
-      <p className="mt-3 whitespace-pre-wrap break-words text-sm">
-        {shot.action || <span className="text-muted-foreground">No action described.</span>}
-      </p>
+        {children}
 
-      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-        <div>
-          <dt className="text-xs text-muted-foreground">Duration</dt>
-          <dd className="font-medium tabular-nums">{shot.duration_seconds} s</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">Shot size / camera</dt>
-          <dd className="break-words font-medium">
-            {shot.shot_size || "—"} · {shot.camera_motion || "—"}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">Continuity</dt>
-          <dd className="break-words font-medium">{shotContinuityLabel(shot.continuity_mode)}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">Previous shot</dt>
-          <dd className="flex items-center gap-1 break-all font-medium">
-            {shot.previous_shot_id ? (
-              <>
-                <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
-                {previousShot ? shotLabel(previousShot) : shot.previous_shot_id}
-              </>
-            ) : (
-              "None"
+        {/* Action text with subject/location code pills (not the compiled prompt) */}
+        <div className="space-y-2 rounded-xl border border-border bg-secondary/20 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Action &amp; subjects
+            </span>
+            {shot.location_code && (
+              <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                @{shot.location_code}
+              </span>
             )}
-          </dd>
+          </div>
+
+          <div className="rounded-lg border border-border/70 bg-card p-2.5 text-xs leading-relaxed text-foreground">
+            {shot.subject_codes && shot.subject_codes.length > 0 && (
+              <span className="mr-1.5 inline-flex flex-wrap gap-1">
+                {shot.subject_codes.map((code) => (
+                  <span
+                    key={code}
+                    className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary"
+                  >
+                    @{code}
+                  </span>
+                ))}
+              </span>
+            )}
+            <span className="whitespace-pre-wrap break-words">
+              {shot.action || <span className="text-muted-foreground">No action described.</span>}
+            </span>
+          </div>
+
+          {/* SHOT TYPE Box inside Prompt container */}
+          <dl className="grid gap-2 pt-1 text-xs sm:grid-cols-2">
+            <div className="rounded-lg border border-border/70 bg-card px-2.5 py-2">
+              <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Shot size / camera
+              </dt>
+              <dd className="mt-0.5 break-words font-medium text-foreground">{framing}</dd>
+            </div>
+
+            <div className="rounded-lg border border-border/70 bg-card px-2.5 py-2">
+              <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Continuity
+              </dt>
+              <dd className="mt-0.5 break-words font-medium text-foreground">
+                {shotContinuityLabel(shot.continuity_mode)}
+              </dd>
+            </div>
+
+            <div className="rounded-lg border border-border/70 bg-card px-2.5 py-2">
+              <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Duration
+              </dt>
+              <dd className="mt-0.5 font-medium tabular-nums text-foreground">
+                {formatSeconds(shot.duration_seconds)}
+              </dd>
+            </div>
+
+            <div className="rounded-lg border border-border/70 bg-card px-2.5 py-2">
+              <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Previous shot
+              </dt>
+              <dd className="mt-0.5 flex items-center gap-1 break-all font-medium text-foreground">
+                {shot.previous_shot_id ? (
+                  <>
+                    <Link2 className="size-3 shrink-0 text-primary" aria-hidden="true" />
+                    {previousShot ? shotLabel(previousShot) : shot.previous_shot_id}
+                  </>
+                ) : (
+                  "None"
+                )}
+              </dd>
+            </div>
+
+            {shot.composition && (
+              <div className="rounded-lg border border-border/70 bg-card px-2.5 py-2 sm:col-span-2">
+                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Composition
+                </dt>
+                <dd className="mt-0.5 whitespace-pre-wrap break-words text-foreground">
+                  {shot.composition}
+                </dd>
+              </div>
+            )}
+          </dl>
         </div>
-        {shot.composition && (
-          <div className="min-w-0 sm:col-span-2 lg:col-span-4">
-            <dt className="text-xs text-muted-foreground">Composition</dt>
-            <dd className="whitespace-pre-wrap break-words">{shot.composition}</dd>
+
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2 text-xs">
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Dialogue
+          </span>
+          <span className="min-w-0 whitespace-pre-wrap break-words text-right text-[11px] text-foreground">
+            {shot.dialogue.trim() ? shot.dialogue : MISSING}
+          </span>
+        </div>
+
+        {isPredecessorOutOfOrder(shot, previousShot) && previousShot && (
+          <p
+            role="note"
+            data-testid="shot-predecessor-warning"
+            className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/5 p-2.5 text-xs text-warning"
+          >
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              {PREDECESSOR_ORDER_WARNING}: {shotLabel(previousShot)} is #
+              {previousShot.sequence_index}; this shot is #{shot.sequence_index}.
+            </span>
+          </p>
+        )}
+
+        {shot.lint_report.length > 0 && (
+          <div>
+            <ShotLintReport issues={shot.lint_report} label={`Prompt Linter for ${label}`} />
           </div>
         )}
-      </dl>
-
-      {isPredecessorOutOfOrder(shot, previousShot) && previousShot && (
-        <p
-          role="note"
-          data-testid="shot-predecessor-warning"
-          className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-2 text-xs text-warning"
-        >
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          <span>
-            {PREDECESSOR_ORDER_WARNING}: {shotLabel(previousShot)} is #{previousShot.sequence_index}
-            ; this shot is #{shot.sequence_index}.
-          </span>
-        </p>
-      )}
-
-      {shot.lint_report.length > 0 && (
-        <div className="mt-4">
-          <ShotLintReport issues={shot.lint_report} label={`Prompt Linter for ${label}`} />
-        </div>
-      )}
-
-      {children}
+      </div>
     </article>
   );
 }
