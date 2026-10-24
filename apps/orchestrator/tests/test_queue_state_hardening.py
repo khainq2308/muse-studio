@@ -347,6 +347,98 @@ async def test_force_retry_returns_existing_active_task(client: AsyncClient):
     assert len(await _tasks_for_shot(s1["id"])) == 1
 
 
+@pytest.mark.asyncio
+async def test_plain_enqueue_after_forced_retry_returns_the_newest_attempt(client: AsyncClient):
+    # A forced retry stores its task under "<key>_retry_<suffix>". Repeating the plain request
+    # must name the newest attempt of that request, not the original, so a client is not told
+    # "this matched a canceled/failed task" after the retry already succeeded.
+    pid, cid, s1, _s2 = await _setup(client)
+    body = {"shot_id": s1["id"], "connection_id": cid}
+    original = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    assert (await client.post(f"/api/v1/queue/tasks/{original['id']}/cancel")).status_code == 200
+    retry = (await client.post("/api/v1/queue/tasks", json={**body, "force_retry": True})).json()
+    assert retry["created_new"] is True and retry["id"] != original["id"]
+    await _ticks(client, pid)
+
+    again = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    assert again["created_new"] is False
+    assert again["id"] == retry["id"]
+    assert again["state"] == "succeeded"
+    assert len(await _tasks_for_shot(s1["id"])) == 2
+
+
+@pytest.mark.asyncio
+async def test_newest_attempt_lookup_escapes_client_keys_and_ignores_lookalikes(client: AsyncClient):
+    # LIKE wildcards in a client key match literally, and another request on the same shot whose
+    # key merely looks like a retry of this one (different model) is never returned for it.
+    pid, cid, s1, _s2 = await _setup(client)
+    body = {"shot_id": s1["id"], "connection_id": cid, "idempotency_key": "a%b_c"}
+    original = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    await client.post(f"/api/v1/queue/tasks/{original['id']}/cancel")
+    lookalike = (await client.post("/api/v1/queue/tasks", json={
+        "shot_id": s1["id"], "connection_id": cid, "model_id": "other-model",
+        "idempotency_key": "a%b_c_retry_zzz"})).json()
+    assert lookalike["created_new"] is True
+    await client.post(f"/api/v1/queue/tasks/{lookalike['id']}/cancel")
+    wildcard_twin = (await client.post("/api/v1/queue/tasks", json={
+        "shot_id": s1["id"], "connection_id": cid, "idempotency_key": "aXbYc_retry_q"})).json()
+    await client.post(f"/api/v1/queue/tasks/{wildcard_twin['id']}/cancel")
+
+    again = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    assert again["id"] == original["id"]
+    assert again["created_new"] is False
+
+
+@pytest.mark.asyncio
+async def test_replay_names_the_newest_attempt_even_when_it_did_not_succeed(client: AsyncClient):
+    # Contract: "newest attempt", not "newest success". The shot keeps its successful state.
+    pid, cid, s1, _s2 = await _setup(client)
+    body = {"shot_id": s1["id"], "connection_id": cid}
+    original = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    await client.post(f"/api/v1/queue/tasks/{original['id']}/cancel")
+    await client.post("/api/v1/queue/tasks", json={**body, "force_retry": True})
+    await _ticks(client, pid)
+    assert (await _shots(client, pid))[s1["id"]]["generation_state"] == "succeeded"
+    second = (await client.post("/api/v1/queue/tasks", json={**body, "force_retry": True})).json()
+    await client.post(f"/api/v1/queue/tasks/{second['id']}/cancel")
+
+    again = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    assert again["id"] == second["id"]
+    assert again["state"] == "canceled"
+    assert (await _shots(client, pid))[s1["id"]]["generation_state"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_client_key_resembling_a_retry_key_is_not_an_attempt(client: AsyncClient):
+    # Same request identity, but "K_retry_mine" is not a generated "<K>_retry_<6 hex>" key.
+    pid, cid, s1, _s2 = await _setup(client)
+    body = {"shot_id": s1["id"], "connection_id": cid, "idempotency_key": "K"}
+    original = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    await client.post(f"/api/v1/queue/tasks/{original['id']}/cancel")
+    mine = (await client.post("/api/v1/queue/tasks", json={**body, "idempotency_key": "K_retry_mine"})).json()
+    assert mine["created_new"] is True
+    await client.post(f"/api/v1/queue/tasks/{mine['id']}/cancel")
+
+    again = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    assert again["id"] == original["id"]
+
+
+@pytest.mark.asyncio
+async def test_forced_retry_of_a_maximum_length_client_key_fits_the_column(client: AsyncClient):
+    pid, cid, s1, _s2 = await _setup(client)
+    key = "k" * 128
+    body = {"shot_id": s1["id"], "connection_id": cid, "idempotency_key": key}
+    original = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    await client.post(f"/api/v1/queue/tasks/{original['id']}/cancel")
+    retry = await client.post("/api/v1/queue/tasks", json={**body, "force_retry": True})
+    assert retry.status_code == 201, retry.text
+    assert len(retry.json()["idempotency_key"]) <= 128
+    assert retry.json()["idempotency_key"].startswith("k" * 115 + "_retry_")
+
+    again = (await client.post("/api/v1/queue/tasks", json=body)).json()
+    assert again["id"] == retry.json()["id"]
+
+
 # --- BUG-007 / API-003: disabled connections and validate-before-commit ---------------------
 
 

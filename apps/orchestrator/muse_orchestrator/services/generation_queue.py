@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import struct
 import uuid
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.util import identity_key
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,15 @@ if TYPE_CHECKING:
     from muse_orchestrator.infrastructure.repositories import StudioRepository
 
 logger = logging.getLogger(__name__)
+
+# Idempotency keys are String(128). A forced retry stores "<base>_retry_<6 hex>" (13 chars),
+# so the base is cut to fit; every attempt of one request shares that base.
+IDEMPOTENCY_KEY_MAX_LENGTH = 128
+RETRY_KEY_SUFFIX_LENGTH = len("_retry_") + 6
+
+
+def _retry_key_base(key: str) -> str:
+    return key[: IDEMPOTENCY_KEY_MAX_LENGTH - RETRY_KEY_SUFFIX_LENGTH]
 
 _TERMINAL_TASK_STATES = (
     QueueTaskState.PAUSED, QueueTaskState.CANCELED, QueueTaskState.SUCCEEDED,
@@ -926,6 +936,40 @@ class GenerationQueueService:
             shot.generation_state = synced
 
     @staticmethod
+    async def _newest_attempt(
+        db: AsyncSession, original: GenerationTaskRecord
+    ) -> GenerationTaskRecord | None:
+        """Newest task of one request: its own key or a forced retry of it.
+
+        A retry key is exactly "<base>_retry_<6 hex>" as generated below, and the attempt must
+        have the original request's identity (shot, task type, connection, model, prompt), so
+        another request whose key merely resembles a retry key is not treated as an attempt.
+        """
+        key = original.idempotency_key
+        base = _retry_key_base(key)
+        retry_key = re.compile(re.escape(base) + r"_retry_[0-9a-f]{6}")
+        escaped = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        result = await db.execute(
+            select(GenerationTaskRecord)
+            .where(
+                GenerationTaskRecord.shot_id == original.shot_id,
+                GenerationTaskRecord.task_type == original.task_type,
+                GenerationTaskRecord.connection_id == original.connection_id,
+                GenerationTaskRecord.model_id == original.model_id,
+                GenerationTaskRecord.prompt_hash == original.prompt_hash,
+                or_(
+                    GenerationTaskRecord.idempotency_key == key,
+                    GenerationTaskRecord.idempotency_key.like(f"{escaped}\\_retry\\_%", escape="\\"),
+                ),
+            )
+            .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
+        )
+        for task in result.scalars():
+            if task.idempotency_key == key or retry_key.fullmatch(task.idempotency_key):
+                return task
+        return None
+
+    @staticmethod
     async def enqueue_shot_generation(
         db: AsyncSession,
         shot: ShotRecord,
@@ -1001,15 +1045,19 @@ class GenerationQueueService:
             )
 
         if existing is not None and not force_retry:
-            # Strict idempotency: the same key returns the same (finished) task. A new
-            # generation can cost provider quota, so it requires force_retry=True.
-            GenerationQueueService._sync_shot_with_task(shot, existing)
+            # Strict idempotency: the same request returns its task instead of starting a new
+            # generation (that can cost provider quota, so it requires force_retry=True). After
+            # forced retries the request has several attempts; name the newest one, so a client
+            # is not told about a failed original when a later attempt already succeeded.
+            newest = await GenerationQueueService._newest_attempt(db, existing)
+            replay = newest or existing
+            GenerationQueueService._sync_shot_with_task(shot, replay)
             await db.commit()
-            return existing, False
+            return replay, False
 
         if existing is not None:
             # force_retry=True: idempotency_key is UNIQUE, so a fresh task needs a fresh key.
-            computed_idem = f"{computed_idem}_retry_{uuid.uuid4().hex[:6]}"
+            computed_idem = f"{_retry_key_base(computed_idem)}_retry_{uuid.uuid4().hex[:6]}"
 
         task = GenerationTaskRecord(
             id=f"tsk_{uuid.uuid4().hex[:10]}",
