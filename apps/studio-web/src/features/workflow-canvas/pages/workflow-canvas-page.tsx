@@ -12,13 +12,14 @@ import {
   Sparkles,
   XCircle,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { Button } from "@/components/ui/button";
 import {
   useApproveWorkflowGate,
   useCreateWorkflow,
   useExecuteWorkflow,
+  useProjectWorkflow,
   useSaveWorkflowLayout,
   type WorkflowApprovalResponse,
   type WorkflowCreateResponse,
@@ -46,7 +47,8 @@ import {
   WorkflowFlowCanvas,
   type CanvasSize,
 } from "@/features/workflow-canvas/components/workflow-flow-canvas";
-import { actionErrorMessage } from "@/lib/api/errors";
+import { ApiError } from "@/lib/api/client";
+import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
@@ -120,6 +122,7 @@ interface QueuedLayout {
 
 export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
   const activeAdminToken = useSessionStore((state) => state.adminToken);
+  const workflowQuery = useProjectWorkflow(projectId);
   const createWorkflow = useCreateWorkflow(projectId);
   const saveLayout = useSaveWorkflowLayout(projectId);
   const executeWorkflow = useExecuteWorkflow(projectId);
@@ -148,6 +151,45 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
   const layoutInFlight = useRef(false);
   const queuedLayout = useRef<QueuedLayout | null>(null);
   const canvasSize = useRef<CanvasSize | null>(null);
+
+  const fetchedWorkflow = workflowQuery.data ?? null;
+  const isNoWorkflowYet =
+    workflowQuery.isError &&
+    workflowQuery.error instanceof ApiError &&
+    workflowQuery.error.status === 404;
+
+  useEffect(() => {
+    if (workflow && workflow.project_id !== projectId) {
+      setWorkflow(null);
+      setFlowNodes([]);
+      setAutoLayout(null);
+      setSelectedNodeId(null);
+      setLastRun(null);
+      setLayoutSavedMessage(null);
+    }
+  }, [projectId, setFlowNodes, workflow]);
+
+  useEffect(() => {
+    if (!fetchedWorkflow || fetchedWorkflow.project_id !== projectId) return;
+    setWorkflow((current) => {
+      if (current?.id === fetchedWorkflow.id) return current;
+      const plan = canvasSize.current
+        ? planAutoLayout(
+            fetchedWorkflow.nodes.length,
+            canvasSize.current.width,
+            canvasSize.current.height,
+          )
+        : { columns: 3, mode: "fit" as const };
+      const isAuto = !hasCustomLayout(fetchedWorkflow);
+      setFlowNodes(buildFlowNodes(fetchedWorkflow, plan.columns));
+      setAutoLayout(isAuto ? { workflowId: fetchedWorkflow.id, ...plan } : null);
+      setViewportMode(isAuto ? plan.mode : "fit");
+      setViewportRevision((revision) => revision + 1);
+      setSelectedNodeId(fetchedWorkflow.nodes[0]?.node_id ?? null);
+      setLastRun(null);
+      return fetchedWorkflow;
+    });
+  }, [fetchedWorkflow, projectId, setFlowNodes]);
 
   const nodes = useMemo(() => workflow?.nodes ?? [], [workflow]);
   const flowEdges = useMemo(() => buildFlowEdges(workflow?.edges ?? []), [workflow]);
@@ -383,15 +425,34 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
       >
         <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
         <span>
-          The Orchestrator does not yet expose an endpoint to read a workflow back, so this canvas
-          only keeps the workflow created in this tab. Reloading or leaving the page loses access to
-          it; the workflow itself remains stored on the server.
+          The active workflow graph and saved node positions persist on the server and reload
+          automatically for this project. Execution runs on this canvas are state-machine
+          simulations; real video generation runs from the Shot Board.
         </span>
       </p>
 
+      {workflowQuery.isError && !isNoWorkflowYet && !workflow && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+        >
+          <span>
+            {authErrorMessage(workflowQuery.error, activeAdminToken, "the project workflow")}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void workflowQuery.refetch()}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+
       {confirmingReplace && workflow && (
         <ConfirmActionDialog
-          title="Create a new workflow and leave the current one?"
+          title="Create a new workflow and replace the active one?"
           confirmLabel="Create new workflow"
           isSubmitting={createWorkflow.isPending}
           onConfirm={submitCreate}
@@ -399,8 +460,9 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
         >
           <p>
             <span className="font-mono">{workflow.name}</span> (
-            <span className="font-mono">{workflow.id}</span>) stays on the server, but this page
-            cannot reopen it afterwards. Its latest run result will also be cleared from view.
+            <span className="font-mono">{workflow.id}</span>) stays stored on the server, and the
+            new workflow will become the active workflow loaded for this project. Its latest run
+            result will also be cleared from view.
           </p>
         </ConfirmActionDialog>
       )}

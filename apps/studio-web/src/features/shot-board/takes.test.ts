@@ -4,6 +4,7 @@ import {
   downstreamShotLabels,
   flagErrorFeedback,
   isPredecessorOutOfOrder,
+  parseTakeCreatedAt,
   sortTakes,
   takeActionErrorMessage,
 } from "@/features/shot-board/takes";
@@ -117,6 +118,16 @@ describe("take helpers", () => {
       makeTake({ id: "a", take_number: 1 }),
     ]);
     expect(sorted.map((take) => take.id)).toEqual(["a", "b"]);
+  });
+
+  it("parses valid ISO-8601 created_at timestamps and returns null for invalid values", () => {
+    expect(parseTakeCreatedAt("2026-10-23T12:34:56Z")?.toISOString()).toBe(
+      "2026-10-23T12:34:56.000Z",
+    );
+    expect(parseTakeCreatedAt("")).toBeNull();
+    expect(parseTakeCreatedAt("not-a-date")).toBeNull();
+    expect(parseTakeCreatedAt(null)).toBeNull();
+    expect(parseTakeCreatedAt(undefined)).toBeNull();
   });
 
   it("labels downstream shots and keeps unknown IDs", () => {

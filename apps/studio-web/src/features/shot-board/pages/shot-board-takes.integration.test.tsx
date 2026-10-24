@@ -114,6 +114,7 @@ const takeOne = makeTake({
   first_frame_asset_id: "frame-1-first",
   last_frame_asset_id: "frame-1-last",
   is_selected: true,
+  created_at: "2026-10-23T10:15:30Z",
 });
 const takeTwo = makeTake({
   id: "take-2",
@@ -125,6 +126,7 @@ const takeTwo = makeTake({
   last_frame_asset_id: "frame-2-last",
   continuity_flagged: true,
   director_notes: "Scarf switches shoulders.",
+  created_at: "2026-10-23T10:20:00Z",
 });
 
 function baseHandler(extra?: Handler): Handler {
@@ -192,8 +194,16 @@ describe("Shot Board take review", () => {
 
     const first = within(panel).getByTestId("take-take-1");
     expect(within(first).getByTestId("take-selected-badge")).toHaveTextContent("Selected");
+    expect(within(first).getByTestId("take-created-at")).toHaveAttribute(
+      "datetime",
+      "2026-10-23T10:15:30.000Z",
+    );
     expect(within(first).getByRole("button", { name: "Take 1 is selected" })).toBeDisabled();
     const second = within(panel).getByTestId("take-take-2");
+    expect(within(second).getByTestId("take-created-at")).toHaveAttribute(
+      "datetime",
+      "2026-10-23T10:20:00.000Z",
+    );
     expect(within(second).getByTestId("take-continuity-badge")).toHaveTextContent(
       "Continuity flagged",
     );

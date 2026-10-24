@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import type {
   BibleEntryCreateRequest,
   ScriptImportRequest,
+  ScriptRevisionApplyRequest,
   ShotExportFormat,
   UploadedAsset,
 } from "@/features/script-studio/state";
@@ -29,6 +30,20 @@ export function useStoryBible(projectId: string) {
         signal,
         pathParams: { project_id: projectId },
       }),
+  });
+}
+
+/** Saved script revisions for one project (`GET /api/v1/projects/{project_id}/script-revisions`). */
+export function useScriptRevisions(projectId: string) {
+  const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  return useQuery({
+    queryKey: queryKeys.scriptRevisions(sessionVersion, projectId),
+    queryFn: ({ signal }) =>
+      apiGet("/api/v1/projects/{project_id}/script-revisions", {
+        signal,
+        pathParams: { project_id: projectId },
+      }),
+    retry: false,
   });
 }
 
@@ -90,6 +105,9 @@ function invalidatePipelineAfterImport(
       queryKey: queryKeys.storyBible(scope.sessionVersion, scope.projectId),
     }),
     queryClient.invalidateQueries({
+      queryKey: queryKeys.scriptRevisions(scope.sessionVersion, scope.projectId),
+    }),
+    queryClient.invalidateQueries({
       queryKey: queryKeys.projectShots(scope.sessionVersion, scope.projectId),
     }),
     queryClient.invalidateQueries({
@@ -129,14 +147,55 @@ export function useImportScript(projectId: string) {
       if (variables.request.auto_apply_proposal) {
         return invalidatePipelineAfterImport(queryClient, variables);
       }
-      return queryClient.invalidateQueries({
-        queryKey: queryKeys.projects(variables.sessionVersion),
-      });
+      return Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.scriptRevisions(variables.sessionVersion, variables.projectId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.projects(variables.sessionVersion),
+        }),
+      ]);
     },
   });
   const { mutate: rawMutate } = mutation;
   const mutate = useCallback(
     (request: ScriptImportRequest) => rawMutate({ request, projectId, sessionVersion }),
+    [projectId, rawMutate, sessionVersion],
+  );
+  return { ...mutation, mutate };
+}
+
+export interface ApplyScriptRevisionVariables {
+  revisionId: string;
+  request?: ScriptRevisionApplyRequest;
+}
+
+/**
+ * Apply a saved script revision (`POST /api/v1/projects/{project_id}/script-revisions/{revision_id}/apply`).
+ * Compiles the revision's screenplay into Story Bible entries, scenes, and shots.
+ */
+export function useApplyScriptRevision(projectId: string) {
+  const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationKey: queryKeys.scriptStudioActions(sessionVersion, projectId),
+    mutationFn: ({
+      revisionId,
+      request = { replace_existing: false },
+      projectId: scopeProjectId,
+    }: ApplyScriptRevisionVariables & MutationScope) =>
+      apiPost("/api/v1/projects/{project_id}/script-revisions/{revision_id}/apply", request, {
+        pathParams: { project_id: scopeProjectId, revision_id: revisionId },
+      }),
+    onSettled: (_data, _error, variables) => {
+      if (!variables) return;
+      return invalidatePipelineAfterImport(queryClient, variables);
+    },
+  });
+  const { mutate: rawMutate } = mutation;
+  const mutate = useCallback(
+    (variables: ApplyScriptRevisionVariables) =>
+      rawMutate({ ...variables, projectId, sessionVersion }),
     [projectId, rawMutate, sessionVersion],
   );
   return { ...mutation, mutate };

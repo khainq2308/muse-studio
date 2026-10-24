@@ -7,14 +7,26 @@ from typing_extensions import TypeAliasType
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from muse_orchestrator.api.dependencies import get_pipeline_service, get_studio_repository
+from muse_orchestrator.api.dependencies import (
+    get_pipeline_service,
+    get_studio_repository,
+)
 from muse_orchestrator.application.pipeline_service import PipelineService
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.core.security import verify_single_admin
-from muse_orchestrator.models.domain import ShotRecord, ShotApprovalState, ShotGenerationState
-from muse_orchestrator.services.script_parser import MAX_SCRIPT_CHARS, MAX_SHOT_DURATION_SECONDS
+from muse_orchestrator.models.domain import (
+    ShotRecord,
+    ShotApprovalState,
+    ShotGenerationState,
+)
+from muse_orchestrator.services.script_parser import (
+    MAX_SCRIPT_CHARS,
+    MAX_SHOT_DURATION_SECONDS,
+)
 
-router = APIRouter(prefix="/api/v1/projects/{project_id}", tags=["M2 Script-to-Shot Pipeline"])
+router = APIRouter(
+    prefix="/api/v1/projects/{project_id}", tags=["M2 Script-to-Shot Pipeline"]
+)
 
 
 JsonValue = TypeAliasType(
@@ -63,7 +75,9 @@ class BibleEntryCreateIn(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=255)
     immutable_traits: str = Field(default="", max_length=8_000)
     mutable_attributes: dict[str, JsonValue] = Field(default_factory=dict)
-    reference_asset_ids: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_ASSETS)
+    reference_asset_ids: list[str] = Field(
+        default_factory=list, max_length=MAX_REFERENCE_ASSETS
+    )
     requires_reference_lock: bool = Field(default=False)
 
     @field_validator("reference_asset_ids")
@@ -73,8 +87,13 @@ class BibleEntryCreateIn(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mutable_attributes(self) -> "BibleEntryCreateIn":
-        if len(json.dumps(self.mutable_attributes, ensure_ascii=False)) > MAX_MUTABLE_ATTRIBUTES_CHARS:
-            raise ValueError(f"mutable_attributes exceeds {MAX_MUTABLE_ATTRIBUTES_CHARS} characters")
+        if (
+            len(json.dumps(self.mutable_attributes, ensure_ascii=False))
+            > MAX_MUTABLE_ATTRIBUTES_CHARS
+        ):
+            raise ValueError(
+                f"mutable_attributes exceeds {MAX_MUTABLE_ATTRIBUTES_CHARS} characters"
+            )
         if self.entry_type == "style":
             # A wrongly typed style entry would otherwise be committed and break every
             # later recompile; reject it with 422 instead.
@@ -97,7 +116,9 @@ class ShotUpdateIn(BaseModel):
     previous_shot_id: str | None = Field(default=None, min_length=1, max_length=64)
     first_frame_asset_id: str | None = Field(default=None, min_length=1, max_length=64)
     requires_reference_lock: bool | None = None
-    reference_asset_ids: list[str] | None = Field(default=None, max_length=MAX_REFERENCE_ASSETS)
+    reference_asset_ids: list[str] | None = Field(
+        default=None, max_length=MAX_REFERENCE_ASSETS
+    )
     approval_state: ShotApprovalState | None = None
 
     @field_validator("shot_size", "camera_motion", "composition", "action")
@@ -130,6 +151,26 @@ class ScriptImportOut(BaseModel):
     detected_scenes: int
     generated_shots: int
     warnings: list[str] = Field(default_factory=list)
+
+
+class ScriptRevisionApplyIn(BaseModel):
+    replace_existing: bool = Field(default=False)
+
+
+class ScriptRevisionOut(BaseModel):
+    id: str
+    project_id: str
+    version_number: int
+    source_format: str
+    raw_content: str
+    diff_summary: str
+    is_approved: bool
+    detected_characters: int
+    detected_locations: int
+    detected_scenes: int
+    detected_shots: int
+    warnings: list[str] = Field(default_factory=list)
+    created_at: str
 
 
 class StoryBibleEntryOut(BaseModel):
@@ -192,7 +233,9 @@ class ProjectShotsExportOut(BaseModel):
     shots: list[ProjectShotOut]
 
 
-async def _recompile_project_shots(project_id: str, repository: StudioRepository) -> list[ShotRecord]:
+async def _recompile_project_shots(
+    project_id: str, repository: StudioRepository
+) -> list[ShotRecord]:
     """Recompile and commit prompts/lint state (kept for callers such as batch launch).
 
     Read-only list/export handlers must use ``StudioRepository.list_project_shots``
@@ -201,7 +244,11 @@ async def _recompile_project_shots(project_id: str, repository: StudioRepository
     return await PipelineService(repository).recompile_project_shots(project_id)
 
 
-@router.post("/scripts/import", response_model=ScriptImportOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/scripts/import",
+    response_model=ScriptImportOut,
+    status_code=status.HTTP_201_CREATED,
+)
 async def import_and_analyze_script(
     project_id: str,
     payload: ScriptImportIn,
@@ -228,8 +275,76 @@ async def import_and_analyze_script(
     )
 
 
+def _serialize_script_revision(rev: Any) -> ScriptRevisionOut:
+    proposal = (
+        rev.structured_proposal_json
+        if isinstance(rev.structured_proposal_json, dict)
+        else {}
+    )
+    chars = proposal.get("characters")
+    locs = proposal.get("locations")
+    scenes = proposal.get("scenes")
+    shots = proposal.get("shots")
+    warnings = proposal.get("warnings")
+    return ScriptRevisionOut(
+        id=rev.id,
+        project_id=rev.project_id,
+        version_number=rev.version_number,
+        source_format=rev.source_format,
+        raw_content=rev.raw_content,
+        diff_summary=rev.diff_summary,
+        is_approved=rev.is_approved,
+        detected_characters=len(chars) if isinstance(chars, list) else 0,
+        detected_locations=len(locs) if isinstance(locs, list) else 0,
+        detected_scenes=len(scenes) if isinstance(scenes, list) else 0,
+        detected_shots=len(shots) if isinstance(shots, list) else 0,
+        warnings=[w for w in warnings if isinstance(w, str)]
+        if isinstance(warnings, list)
+        else [],
+        created_at=rev.created_at.isoformat(),
+    )
+
+
+@router.get("/script-revisions", response_model=list[ScriptRevisionOut])
+async def list_project_script_revisions(
+    project_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+    actor: str = Depends(verify_single_admin),
+) -> list[ScriptRevisionOut]:
+    revisions = await service.list_script_revisions(project_id)
+    return [_serialize_script_revision(rev) for rev in revisions]
+
+
+@router.post("/script-revisions/{revision_id}/apply", response_model=ScriptImportOut)
+async def apply_saved_script_revision(
+    project_id: str,
+    revision_id: str,
+    payload: ScriptRevisionApplyIn,
+    service: PipelineService = Depends(get_pipeline_service),
+    actor: str = Depends(verify_single_admin),
+) -> ScriptImportOut:
+    result = await service.apply_script_revision(
+        project_id,
+        revision_id,
+        replace_existing=payload.replace_existing,
+    )
+    return ScriptImportOut(
+        script_revision_id=result.revision.id,
+        version_number=result.revision.version_number,
+        raw_content_preserved=True,
+        diff_summary=result.revision.diff_summary,
+        detected_characters=len(result.proposal.characters),
+        detected_locations=len(result.proposal.locations),
+        detected_scenes=len(result.proposal.scenes),
+        generated_shots=result.generated_shots,
+        warnings=result.proposal.warnings,
+    )
+
+
 @router.get("/story-bible", response_model=list[StoryBibleEntryOut])
-async def get_story_bible(project_id: str, repository: StudioRepository = Depends(get_studio_repository)) -> list[StoryBibleEntryOut]:
+async def get_story_bible(
+    project_id: str, repository: StudioRepository = Depends(get_studio_repository)
+) -> list[StoryBibleEntryOut]:
     if not await repository.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project không tồn tại.")
     rows = await repository.list_story_bible_entries(project_id)
@@ -248,7 +363,11 @@ async def get_story_bible(project_id: str, repository: StudioRepository = Depend
     ]
 
 
-@router.post("/story-bible", response_model=StoryBibleUpsertOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/story-bible",
+    response_model=StoryBibleUpsertOut,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upsert_story_bible_entry(
     project_id: str,
     payload: BibleEntryCreateIn,
@@ -256,7 +375,11 @@ async def upsert_story_bible_entry(
     actor: str = Depends(verify_single_admin),
 ) -> StoryBibleUpsertOut:
     entry = await service.upsert_bible_entry(project_id, payload.model_dump())
-    return {"id": entry.id, "code_name": entry.code_name, "status": "recompiled_downstream_shots"}
+    return {
+        "id": entry.id,
+        "code_name": entry.code_name,
+        "status": "recompiled_downstream_shots",
+    }
 
 
 def _serialize_project_shot(s: ShotRecord) -> dict[str, Any]:
@@ -310,7 +433,9 @@ async def update_and_review_shot(
     service: PipelineService = Depends(get_pipeline_service),
     actor: str = Depends(verify_single_admin),
 ) -> ShotReviewOut:
-    shot = await service.update_shot(project_id, shot_id, payload.model_dump(exclude_unset=True))
+    shot = await service.update_shot(
+        project_id, shot_id, payload.model_dump(exclude_unset=True)
+    )
     return {
         "id": shot.id,
         "prompt_final": shot.prompt_final,
@@ -353,25 +478,56 @@ async def export_shot_list(
     if format.lower() == "csv":
         buf = io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow([
-            "sequence_index", "shot_id", "title", "location_code", "subject_codes",
-            "shot_size", "camera_motion", "duration_seconds", "approval_state",
-            "generation_state", "prompt_hash", "prompt_final"
-        ])
+        writer.writerow(
+            [
+                "sequence_index",
+                "shot_id",
+                "title",
+                "location_code",
+                "subject_codes",
+                "shot_size",
+                "camera_motion",
+                "duration_seconds",
+                "approval_state",
+                "generation_state",
+                "prompt_hash",
+                "prompt_final",
+            ]
+        )
         for s in shots:
-            writer.writerow([_csv_safe(cell) for cell in [
-                s["sequence_index"], s["id"], s["title"], s["location_code"],
-                "|".join(s["subject_codes"]), s["shot_size"], s["camera_motion"],
-                s["duration_seconds"], s["approval_state"].value if hasattr(s["approval_state"], "value") else s["approval_state"],
-                s["generation_state"].value if hasattr(s["generation_state"], "value") else s["generation_state"],
-                s["prompt_hash"], s["prompt_final"]
-            ]])
+            writer.writerow(
+                [
+                    _csv_safe(cell)
+                    for cell in [
+                        s["sequence_index"],
+                        s["id"],
+                        s["title"],
+                        s["location_code"],
+                        "|".join(s["subject_codes"]),
+                        s["shot_size"],
+                        s["camera_motion"],
+                        s["duration_seconds"],
+                        s["approval_state"].value
+                        if hasattr(s["approval_state"], "value")
+                        else s["approval_state"],
+                        s["generation_state"].value
+                        if hasattr(s["generation_state"], "value")
+                        else s["generation_state"],
+                        s["prompt_hash"],
+                        s["prompt_final"],
+                    ]
+                ]
+            )
         return Response(
             content=buf.getvalue(),
             media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{project_id}_shots.csv"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{project_id}_shots.csv"'
+            },
         )
     return Response(
-        content=json.dumps({"project_id": project_id, "shots": shots}, ensure_ascii=False, indent=2),
+        content=json.dumps(
+            {"project_id": project_id, "shots": shots}, ensure_ascii=False, indent=2
+        ),
         media_type="application/json",
     )

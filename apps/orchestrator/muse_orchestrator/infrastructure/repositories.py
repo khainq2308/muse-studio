@@ -48,7 +48,9 @@ class StudioRepository:
 
     # --- M6 timeline persistence ---
 
-    async def get_timeline_shot_take(self, take_id: str) -> TimelineShotTakeRecord | None:
+    async def get_timeline_shot_take(
+        self, take_id: str
+    ) -> TimelineShotTakeRecord | None:
         return await self.session.get(TimelineShotTakeRecord, take_id)
 
     async def get_timeline_sequence(
@@ -116,7 +118,9 @@ class StudioRepository:
     async def get_export_job(self, export_id: str) -> ExportJobRecord | None:
         return await self.session.get(ExportJobRecord, export_id)
 
-    async def list_export_jobs_in_state(self, state: ExportJobState) -> list[ExportJobRecord]:
+    async def list_export_jobs_in_state(
+        self, state: ExportJobState
+    ) -> list[ExportJobRecord]:
         result = await self.session.execute(
             select(ExportJobRecord)
             .where(ExportJobRecord.state == state)
@@ -124,13 +128,17 @@ class StudioRepository:
         )
         return list(result.scalars().all())
 
-    async def list_active_project_export_jobs(self, project_id: str) -> list[ExportJobRecord]:
+    async def list_active_project_export_jobs(
+        self, project_id: str
+    ) -> list[ExportJobRecord]:
         """QUEUED/RUNNING exports of one project, i.e. jobs whose render may still read inputs."""
         result = await self.session.execute(
             select(ExportJobRecord)
             .where(
                 ExportJobRecord.project_id == project_id,
-                ExportJobRecord.state.in_((ExportJobState.QUEUED, ExportJobState.RUNNING)),
+                ExportJobRecord.state.in_(
+                    (ExportJobState.QUEUED, ExportJobState.RUNNING)
+                ),
             )
             .order_by(ExportJobRecord.created_at.asc())
         )
@@ -138,35 +146,66 @@ class StudioRepository:
 
     async def find_project_timeline_references_to_asset(
         self, project_id: str, asset_id: str
-    ) -> tuple[list[TimelineClipRecord], list[TimelineTrackRecord], list[ExportJobRecord]]:
+    ) -> tuple[
+        list[TimelineClipRecord], list[TimelineTrackRecord], list[ExportJobRecord]
+    ]:
         """Clip rows and legacy track clip lists of the project's sequences, plus export outputs.
 
         Clips and tracks are both scoped to the asset's project: assembly validates that
         every clip/audio asset belongs to the project and restore remaps ids per project,
         so a cross-project reference cannot be created through the API.
         """
-        clips = list((await self.session.execute(
-            select(TimelineClipRecord)
-            .join(TimelineSequenceRecord, TimelineSequenceRecord.id == TimelineClipRecord.sequence_id)
-            .where(
-                TimelineSequenceRecord.project_id == project_id,
-                TimelineClipRecord.asset_id == asset_id,
+        clips = list(
+            (
+                await self.session.execute(
+                    select(TimelineClipRecord)
+                    .join(
+                        TimelineSequenceRecord,
+                        TimelineSequenceRecord.id == TimelineClipRecord.sequence_id,
+                    )
+                    .where(
+                        TimelineSequenceRecord.project_id == project_id,
+                        TimelineClipRecord.asset_id == asset_id,
+                    )
+                )
             )
-        )).scalars().all())
-        project_tracks = (await self.session.execute(
-            select(TimelineTrackRecord)
-            .join(TimelineSequenceRecord, TimelineSequenceRecord.id == TimelineTrackRecord.sequence_id)
-            .where(TimelineSequenceRecord.project_id == project_id)
-        )).scalars().all()
+            .scalars()
+            .all()
+        )
+        project_tracks = (
+            (
+                await self.session.execute(
+                    select(TimelineTrackRecord)
+                    .join(
+                        TimelineSequenceRecord,
+                        TimelineSequenceRecord.id == TimelineTrackRecord.sequence_id,
+                    )
+                    .where(TimelineSequenceRecord.project_id == project_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
         tracks = [
-            track for track in project_tracks
-            if any(isinstance(c, dict) and c.get("asset_id") == asset_id for c in (track.clips_json or []))
-        ]
-        exports = list((await self.session.execute(
-            select(ExportJobRecord).where(
-                ExportJobRecord.output_asset_id == asset_id, ExportJobRecord.project_id == project_id
+            track
+            for track in project_tracks
+            if any(
+                isinstance(c, dict) and c.get("asset_id") == asset_id
+                for c in (track.clips_json or [])
             )
-        )).scalars().all())
+        ]
+        exports = list(
+            (
+                await self.session.execute(
+                    select(ExportJobRecord).where(
+                        ExportJobRecord.output_asset_id == asset_id,
+                        ExportJobRecord.project_id == project_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
         return clips, tracks, exports
 
     async def update_export_job(self, job: ExportJobRecord) -> ExportJobRecord:
@@ -177,8 +216,25 @@ class StudioRepository:
 
     # --- M3 workflow persistence ---
 
-    async def get_workflow_definition(self, workflow_id: str) -> WorkflowDefinition | None:
+    async def get_workflow_definition(
+        self, workflow_id: str
+    ) -> WorkflowDefinition | None:
         return await self.session.get(WorkflowDefinition, workflow_id)
+
+    async def get_latest_project_workflow(
+        self, project_id: str
+    ) -> WorkflowDefinition | None:
+        result = await self.session.execute(
+            select(WorkflowDefinition)
+            .where(WorkflowDefinition.project_id == project_id)
+            .order_by(
+                WorkflowDefinition.updated_at.desc(),
+                WorkflowDefinition.created_at.desc(),
+                WorkflowDefinition.id.desc(),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def get_workflow_version(
         self, workflow_id: str, version_number: int
@@ -200,7 +256,9 @@ class StudioRepository:
         )
         return list(result.scalars().all())
 
-    async def get_workflow_cache_entry(self, cache_key: str) -> WorkflowCacheEntry | None:
+    async def get_workflow_cache_entry(
+        self, cache_key: str
+    ) -> WorkflowCacheEntry | None:
         return await self.session.get(WorkflowCacheEntry, cache_key)
 
     async def flush_changes(self) -> None:
@@ -236,8 +294,14 @@ class StudioRepository:
 
     async def list_projects_with_asset_counts(self) -> list[tuple[Project, int]]:
         projects = (
-            await self.session.execute(select(Project).order_by(Project.updated_at.desc()))
-        ).scalars().all()
+            (
+                await self.session.execute(
+                    select(Project).order_by(Project.updated_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
         counts_result = await self.session.execute(
             select(Asset.project_id, func.count(Asset.id)).group_by(Asset.project_id)
         )
@@ -270,7 +334,10 @@ class StudioRepository:
         return await self.session.get(GenerationTaskRecord, task_id)
 
     async def list_active_generation_tasks(
-        self, project_id: str, connection_id: str | None = None, limit: int | None = None
+        self,
+        project_id: str,
+        connection_id: str | None = None,
+        limit: int | None = None,
     ) -> list[GenerationTaskRecord]:
         stmt = (
             select(GenerationTaskRecord)
@@ -315,16 +382,22 @@ class StudioRepository:
         result = await self.session.execute(
             select(GenerationTaskRecord)
             .where(GenerationTaskRecord.state.in_(SCHEDULABLE_GENERATION_TASK_STATES))
-            .order_by(GenerationTaskRecord.updated_at.asc(), GenerationTaskRecord.id.asc())
+            .order_by(
+                GenerationTaskRecord.updated_at.asc(), GenerationTaskRecord.id.asc()
+            )
             .limit(limit)
         )
         return list(result.scalars().all())
 
-    async def list_project_generation_tasks(self, project_id: str) -> list[GenerationTaskRecord]:
+    async def list_project_generation_tasks(
+        self, project_id: str
+    ) -> list[GenerationTaskRecord]:
         result = await self.session.execute(
             select(GenerationTaskRecord)
             .where(GenerationTaskRecord.project_id == project_id)
-            .order_by(GenerationTaskRecord.created_at.asc(), GenerationTaskRecord.id.asc())
+            .order_by(
+                GenerationTaskRecord.created_at.asc(), GenerationTaskRecord.id.asc()
+            )
         )
         return list(result.scalars().all())
 
@@ -343,7 +416,9 @@ class StudioRepository:
         result = await self.session.execute(
             select(GenerationTaskRecord)
             .where(GenerationTaskRecord.shot_id == shot_id)
-            .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
+            .order_by(
+                GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc()
+            )
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -357,12 +432,16 @@ class StudioRepository:
                 GenerationTaskRecord.shot_id == shot_id,
                 GenerationTaskRecord.state == QueueTaskState.SUCCEEDED,
             )
-            .order_by(GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc())
+            .order_by(
+                GenerationTaskRecord.created_at.desc(), GenerationTaskRecord.id.desc()
+            )
             .limit(1)
         )
         return result.scalar_one_or_none()
 
-    async def create_batch_render_job(self, batch_job: BatchRenderJobRecord) -> BatchRenderJobRecord:
+    async def create_batch_render_job(
+        self, batch_job: BatchRenderJobRecord
+    ) -> BatchRenderJobRecord:
         self.session.add(batch_job)
         await self.session.commit()
         return batch_job
@@ -423,15 +502,19 @@ class StudioRepository:
         result = await self.session.execute(stmt)
         return int(result.scalar_one())
 
-    async def summarize_queue_tasks(self, *, project_id: str | None = None) -> dict[str, int]:
-        stmt = select(GenerationTaskRecord.state, func.count(GenerationTaskRecord.id)).group_by(
-            GenerationTaskRecord.state
-        )
+    async def summarize_queue_tasks(
+        self, *, project_id: str | None = None
+    ) -> dict[str, int]:
+        stmt = select(
+            GenerationTaskRecord.state, func.count(GenerationTaskRecord.id)
+        ).group_by(GenerationTaskRecord.state)
         if project_id:
             stmt = stmt.where(GenerationTaskRecord.project_id == project_id)
         result = await self.session.execute(stmt)
         by_state = {state.value: int(count) for state, count in result.all()}
-        active = sum(by_state.get(state.value, 0) for state in SCHEDULABLE_GENERATION_TASK_STATES)
+        active = sum(
+            by_state.get(state.value, 0) for state in SCHEDULABLE_GENERATION_TASK_STATES
+        )
         failed = by_state.get(QueueTaskState.FAILED.value, 0) + by_state.get(
             QueueTaskState.POLL_TIMEOUT.value, 0
         )
@@ -439,7 +522,9 @@ class StudioRepository:
             "total_tasks": sum(by_state.values()),
             "active_tasks": active,
             "failed_tasks": failed,
-            "awaiting_input_tasks": by_state.get(QueueTaskState.AWAITING_INPUT.value, 0),
+            "awaiting_input_tasks": by_state.get(
+                QueueTaskState.AWAITING_INPUT.value, 0
+            ),
         }
 
     async def save_queue_task(
@@ -489,9 +574,14 @@ class StudioRepository:
 
     async def list_script_revisions(self, project_id: str) -> list[ScriptRevision]:
         result = await self.session.execute(
-            select(ScriptRevision).where(ScriptRevision.project_id == project_id)
+            select(ScriptRevision)
+            .where(ScriptRevision.project_id == project_id)
+            .order_by(ScriptRevision.version_number.desc())
         )
         return list(result.scalars().all())
+
+    async def get_script_revision(self, revision_id: str) -> ScriptRevision | None:
+        return await self.session.get(ScriptRevision, revision_id)
 
     async def get_story_bible_entry(
         self, project_id: str, code_name: str
@@ -522,8 +612,12 @@ class StudioRepository:
 
     async def delete_project_pipeline_records(self, project_id: str) -> None:
         # Preserve the original deletion order for child records and associated constraints.
-        await self.session.execute(delete(ShotRecord).where(ShotRecord.project_id == project_id))
-        await self.session.execute(delete(SceneRecord).where(SceneRecord.project_id == project_id))
+        await self.session.execute(
+            delete(ShotRecord).where(ShotRecord.project_id == project_id)
+        )
+        await self.session.execute(
+            delete(SceneRecord).where(SceneRecord.project_id == project_id)
+        )
         await self.session.execute(
             delete(StoryBibleEntry).where(StoryBibleEntry.project_id == project_id)
         )
@@ -545,7 +639,9 @@ class StudioRepository:
         )
         return list(result.scalars().all())
 
-    async def create_connection(self, connection: ProviderConnection) -> ProviderConnection:
+    async def create_connection(
+        self, connection: ProviderConnection
+    ) -> ProviderConnection:
         self.session.add(connection)
         await self.session.commit()
         await self.session.refresh(connection)
@@ -560,7 +656,9 @@ class StudioRepository:
     async def get_connection(self, connection_id: str) -> ProviderConnection | None:
         return await self.session.get(ProviderConnection, connection_id)
 
-    async def save_connection(self, connection: ProviderConnection) -> ProviderConnection:
+    async def save_connection(
+        self, connection: ProviderConnection
+    ) -> ProviderConnection:
         self.session.add(connection)
         await self.session.commit()
         await self.session.refresh(connection)
@@ -575,7 +673,9 @@ class StudioRepository:
         await self.session.refresh(asset)
         return asset
 
-    async def has_other_asset_with_storage_path(self, storage_rel_path: str, asset_id: str) -> bool:
+    async def has_other_asset_with_storage_path(
+        self, storage_rel_path: str, asset_id: str
+    ) -> bool:
         result = await self.session.execute(
             select(Asset.id)
             .where(Asset.storage_rel_path == storage_rel_path, Asset.id != asset_id)
@@ -599,7 +699,9 @@ class StudioRepository:
         result = await self.session.execute(
             select(ConnectionAccount)
             .where(ConnectionAccount.connection_id == connection_id)
-            .order_by(ConnectionAccount.priority.asc(), ConnectionAccount.created_at.asc())
+            .order_by(
+                ConnectionAccount.priority.asc(), ConnectionAccount.created_at.asc()
+            )
         )
         return list(result.scalars().all())
 
@@ -656,11 +758,15 @@ class StudioRepository:
     async def list_audit_events(self, limit: int = 100) -> list[AuditEvent]:
         """M7: newest audit events first."""
         result = await self.session.execute(
-            select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(max(1, limit))
+            select(AuditEvent)
+            .order_by(AuditEvent.created_at.desc())
+            .limit(max(1, limit))
         )
         return list(result.scalars().all())
 
-    async def create_structured_log(self, entry: StructuredLogRecord) -> StructuredLogRecord:
+    async def create_structured_log(
+        self, entry: StructuredLogRecord
+    ) -> StructuredLogRecord:
         """M7: persist a structured operational log entry (ported from PR #9)."""
         self.session.add(entry)
         await self.session.commit()
@@ -677,7 +783,9 @@ class StudioRepository:
         limit: int = 100,
     ) -> list[StructuredLogRecord]:
         """M7: newest structured logs first, with optional filters."""
-        stmt = select(StructuredLogRecord).order_by(StructuredLogRecord.created_at.desc())
+        stmt = select(StructuredLogRecord).order_by(
+            StructuredLogRecord.created_at.desc()
+        )
         if level:
             stmt = stmt.where(StructuredLogRecord.level == level)
         if event:

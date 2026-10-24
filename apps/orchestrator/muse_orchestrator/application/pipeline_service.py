@@ -3,6 +3,7 @@
 All mutations follow one rule: stage changes, flush, recompile prompts/lint in the SAME
 transaction, then commit once. A failure anywhere leaves the database untouched.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,7 +71,9 @@ class ShotPromptHashes:
     current: str
     legacy: str
 
-    def take_is_current(self, take_prompt_hash: str, task: GenerationTaskRecord | None) -> bool:
+    def take_is_current(
+        self, take_prompt_hash: str, task: GenerationTaskRecord | None
+    ) -> bool:
         """Whether a selected take still matches this shot's prompt.
 
         The legacy hash is accepted only for a take whose task predates the prompt
@@ -118,7 +121,9 @@ class PipelineService:
 
     async def count_project_takes(self, project_id: str) -> int:
         result = await self.repository.session.execute(
-            select(func.count(ShotTakeRecord.id)).where(ShotTakeRecord.project_id == project_id)
+            select(func.count(ShotTakeRecord.id)).where(
+                ShotTakeRecord.project_id == project_id
+            )
         )
         return int(result.scalar_one())
 
@@ -128,15 +133,23 @@ class PipelineService:
         requested_ids = set(asset_ids or [])
         if not requested_ids:
             return
-        project_asset_ids = set(await self.repository.list_project_asset_ids(project_id))
+        project_asset_ids = set(
+            await self.repository.list_project_asset_ids(project_id)
+        )
         if not requested_ids.issubset(project_asset_ids):
-            raise ApplicationError(422, "Mọi reference_asset_ids phải thuộc project đang thao tác.")
+            raise ApplicationError(
+                422, "Mọi reference_asset_ids phải thuộc project đang thao tác."
+            )
 
     # --- prompt compilation ---------------------------------------------------------
 
-    async def recompile_project_shots(self, project_id: str, *, commit: bool = True) -> list[ShotRecord]:
+    async def recompile_project_shots(
+        self, project_id: str, *, commit: bool = True
+    ) -> list[ShotRecord]:
         """Recompile prompts/lint state and (optionally) commit the current transaction."""
-        shots, _hashes = await self.recompile_project_shots_with_prompt_hashes(project_id, commit=commit)
+        shots, _hashes = await self.recompile_project_shots_with_prompt_hashes(
+            project_id, commit=commit
+        )
         return shots
 
     async def recompile_project_shots_with_prompt_hashes(
@@ -156,7 +169,9 @@ class PipelineService:
         self, project_id: str, shot_id: str, overrides: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Compile the would-be state of one shot without mutating anything."""
-        result = await self._compile(project_id, dry_run_shot_id=shot_id, dry_run_overrides=overrides)
+        result = await self._compile(
+            project_id, dry_run_shot_id=shot_id, dry_run_overrides=overrides
+        )
         assert isinstance(result, list)
         return result
 
@@ -180,10 +195,18 @@ class PipelineService:
             negative_constraints=["3d cgi", "deformed hands"],
         )
         for b in sorted(bible_rows, key=lambda row: (row.entry_type, row.code_name)):
-            attrs = b.mutable_attributes if isinstance(b.mutable_attributes, dict) else {}
+            attrs = (
+                b.mutable_attributes if isinstance(b.mutable_attributes, dict) else {}
+            )
             if b.entry_type == "character":
-                req_asset = b.reference_asset_ids[0] if (b.requires_reference_lock and b.reference_asset_ids) else (
-                    "MISSING_REQUIRED_CHAR_REF" if b.requires_reference_lock else None
+                req_asset = (
+                    b.reference_asset_ids[0]
+                    if (b.requires_reference_lock and b.reference_asset_ids)
+                    else (
+                        "MISSING_REQUIRED_CHAR_REF"
+                        if b.requires_reference_lock
+                        else None
+                    )
                 )
                 characters[b.code_name] = CharacterLock(
                     character_id=b.code_name,
@@ -204,9 +227,13 @@ class PipelineService:
                 style_lock = StyleBibleLock(
                     medium=b.display_name,
                     art_direction=b.immutable_traits,
-                    color_palette=_string_value(attrs.get("color_palette"), "cinematic"),
+                    color_palette=_string_value(
+                        attrs.get("color_palette"), "cinematic"
+                    ),
                     negative_constraints=_string_list(
-                        attrs.get("negative_constraints", _DEFAULT_NEGATIVE_CONSTRAINTS),
+                        attrs.get(
+                            "negative_constraints", _DEFAULT_NEGATIVE_CONSTRAINTS
+                        ),
                         _DEFAULT_NEGATIVE_CONSTRAINTS,
                     ),
                     forbidden_terms=_string_list(attrs.get("forbidden_terms", []), []),
@@ -215,7 +242,11 @@ class PipelineService:
         shots = await self.repository.list_project_shots(project_id)
         if shots is None:
             raise ApplicationError(404, "Project không tồn tại.")
-        busy_shot_ids = set() if dry_run_overrides is not None else await self.active_task_shot_ids(project_id)
+        busy_shot_ids = (
+            set()
+            if dry_run_overrides is not None
+            else await self.active_task_shot_ids(project_id)
+        )
 
         previous_spec: ShotSpec | None = None
         dry_run_lint: list[dict[str, Any]] = []
@@ -238,7 +269,9 @@ class PipelineService:
                 "reference_asset_ids": s.reference_asset_ids,
             }
             if dry_run_overrides is not None and s.id == dry_run_shot_id:
-                values.update({k: v for k, v in dry_run_overrides.items() if k in values})
+                values.update(
+                    {k: v for k, v in dry_run_overrides.items() if k in values}
+                )
             spec = ShotSpec(
                 shot_id=s.id,
                 scene_id=s.scene_id,
@@ -268,7 +301,12 @@ class PipelineService:
             )
             previous_spec = spec
             lint = [
-                {"code": i.code, "severity": i.severity, "message": i.message, "field": i.field}
+                {
+                    "code": i.code,
+                    "severity": i.severity,
+                    "message": i.message,
+                    "field": i.field,
+                }
                 for i in compiled.lint_issues
             ]
             if dry_run_overrides is not None:
@@ -288,8 +326,9 @@ class PipelineService:
                 continue
             if any(i.code == "BLOCKED_REFERENCE" for i in compiled.lint_issues):
                 s.generation_state = ShotGenerationState.BLOCKED_REFERENCE
-            elif s.generation_state == ShotGenerationState.BLOCKED_UPSTREAM_FRAME and not (
-                s.continuity_mode == "frame_chain" and s.previous_shot_id
+            elif (
+                s.generation_state == ShotGenerationState.BLOCKED_UPSTREAM_FRAME
+                and not (s.continuity_mode == "frame_chain" and s.previous_shot_id)
             ):
                 # The shot no longer waits on an upstream frame (continuity changed).
                 s.generation_state = (
@@ -297,7 +336,10 @@ class PipelineService:
                     if s.selected_take_id
                     else ShotGenerationState.NOT_STARTED
                 )
-            elif s.generation_state == ShotGenerationState.BLOCKED_REFERENCE and not compiled.has_blockers:
+            elif (
+                s.generation_state == ShotGenerationState.BLOCKED_REFERENCE
+                and not compiled.has_blockers
+            ):
                 # Only unblock once no linter blocker remains; restore SUCCEEDED when the
                 # shot still has a selected take instead of discarding finished work.
                 s.generation_state = (
@@ -325,7 +367,9 @@ class PipelineService:
         try:
             # CPU-bound parsing must not block the event loop.
             proposal = await asyncio.to_thread(
-                ScriptAnalyzerService.analyze_script, raw_content, default_style=proj.style_preset
+                ScriptAnalyzerService.analyze_script,
+                raw_content,
+                default_style=proj.style_preset,
             )
         except ScriptParseError as exc:
             raise ApplicationError(422, str(exc)) from exc
@@ -340,7 +384,9 @@ class PipelineService:
                 # of the project, then re-check under those locks so a task created after
                 # the early guard above is either seen here or cannot be inserted.
                 await self.repository.session.execute(
-                    select(ShotRecord.id).where(ShotRecord.project_id == project_id).with_for_update()
+                    select(ShotRecord.id)
+                    .where(ShotRecord.project_id == project_id)
+                    .with_for_update()
                 )
                 try:
                     await self._guard_destructive_reimport(project_id, replace_existing)
@@ -388,9 +434,60 @@ class PipelineService:
                 category="conflict",
                 retryable=True,
             ) from exc
-        return ScriptImportResult(revision=script_rev, proposal=proposal, generated_shots=generated)
+        return ScriptImportResult(
+            revision=script_rev, proposal=proposal, generated_shots=generated
+        )
 
-    async def _guard_destructive_reimport(self, project_id: str, replace_existing: bool) -> None:
+    async def list_script_revisions(self, project_id: str) -> list[ScriptRevision]:
+        await self.require_project(project_id)
+        return await self.repository.list_script_revisions(project_id)
+
+    async def apply_script_revision(
+        self,
+        project_id: str,
+        revision_id: str,
+        *,
+        replace_existing: bool,
+    ) -> ScriptImportResult:
+        proj = await self.require_project(project_id)
+        revision = await self.repository.get_script_revision(revision_id)
+        if revision is None or revision.project_id != project_id:
+            raise ApplicationError(404, "Script revision không tồn tại.")
+        try:
+            proposal = await asyncio.to_thread(
+                ScriptAnalyzerService.analyze_script,
+                revision.raw_content,
+                default_style=proj.style_preset,
+            )
+        except ScriptParseError as exc:
+            raise ApplicationError(422, str(exc)) from exc
+
+        await self._guard_destructive_reimport(project_id, replace_existing)
+        await self._lock_project(project_id)
+        await self.repository.session.execute(
+            select(ShotRecord.id)
+            .where(ShotRecord.project_id == project_id)
+            .with_for_update()
+        )
+        try:
+            await self._guard_destructive_reimport(project_id, replace_existing)
+        except ApplicationError:
+            await self.repository.session.rollback()
+            raise
+
+        revision.is_approved = True
+        await self._replace_pipeline_records(project_id, replace_existing)
+        generated = await self._stage_proposal(project_id, proj, proposal)
+        await self.repository.session.flush()
+        await self.recompile_project_shots(project_id, commit=False)
+        await self.repository.commit_pipeline_changes()
+        return ScriptImportResult(
+            revision=revision, proposal=proposal, generated_shots=generated
+        )
+
+    async def _guard_destructive_reimport(
+        self, project_id: str, replace_existing: bool
+    ) -> None:
         if await self.active_task_shot_ids(project_id):
             raise ApplicationError(
                 409,
@@ -411,57 +508,80 @@ class PipelineService:
                     "Retry with replace_existing=true to confirm.",
                 )
 
-    async def _replace_pipeline_records(self, project_id: str, replace_existing: bool) -> None:
+    async def _replace_pipeline_records(
+        self, project_id: str, replace_existing: bool
+    ) -> None:
         session = self.repository.session
         if replace_existing:
             # PostgreSQL cascades these from shots; delete explicitly so every backend
             # ends in the same state. Active tasks were refused above.
-            task_ids = select(GenerationTaskRecord.id).where(GenerationTaskRecord.project_id == project_id)
-            await session.execute(delete(ShotTakeRecord).where(ShotTakeRecord.project_id == project_id))
-            await session.execute(
-                delete(GenerationDispatchLeaseRecord).where(GenerationDispatchLeaseRecord.task_id.in_(task_ids))
+            task_ids = select(GenerationTaskRecord.id).where(
+                GenerationTaskRecord.project_id == project_id
             )
-            await session.execute(delete(GenerationTaskRecord).where(GenerationTaskRecord.project_id == project_id))
+            await session.execute(
+                delete(ShotTakeRecord).where(ShotTakeRecord.project_id == project_id)
+            )
+            await session.execute(
+                delete(GenerationDispatchLeaseRecord).where(
+                    GenerationDispatchLeaseRecord.task_id.in_(task_ids)
+                )
+            )
+            await session.execute(
+                delete(GenerationTaskRecord).where(
+                    GenerationTaskRecord.project_id == project_id
+                )
+            )
         await self.repository.delete_project_pipeline_records(project_id)
 
-    async def _stage_proposal(self, project_id: str, proj: Project, proposal: ParsedScriptProposal) -> int:
+    async def _stage_proposal(
+        self, project_id: str, proj: Project, proposal: ParsedScriptProposal
+    ) -> int:
         stage = self.repository.stage_pipeline_entity
         style_data = proposal.style
-        stage(StoryBibleEntry(
-            id=f"bib_{uuid.uuid4().hex[:8]}",
-            project_id=project_id,
-            entry_type="style",
-            code_name=style_data["code_name"],
-            display_name=style_data["display_name"],
-            immutable_traits=style_data["immutable_traits"],
-            mutable_attributes=style_data["mutable_attributes"],
-        ))
-        for entry_type, rows in (("character", proposal.characters), ("location", proposal.locations)):
+        stage(
+            StoryBibleEntry(
+                id=f"bib_{uuid.uuid4().hex[:8]}",
+                project_id=project_id,
+                entry_type="style",
+                code_name=style_data["code_name"],
+                display_name=style_data["display_name"],
+                immutable_traits=style_data["immutable_traits"],
+                mutable_attributes=style_data["mutable_attributes"],
+            )
+        )
+        for entry_type, rows in (
+            ("character", proposal.characters),
+            ("location", proposal.locations),
+        ):
             for row in rows:
-                stage(StoryBibleEntry(
-                    id=f"bib_{uuid.uuid4().hex[:8]}",
-                    project_id=project_id,
-                    entry_type=entry_type,
-                    code_name=row["code_name"],
-                    display_name=row["display_name"],
-                    immutable_traits=row["immutable_traits"],
-                    mutable_attributes=row["mutable_attributes"],
-                ))
+                stage(
+                    StoryBibleEntry(
+                        id=f"bib_{uuid.uuid4().hex[:8]}",
+                        project_id=project_id,
+                        entry_type=entry_type,
+                        code_name=row["code_name"],
+                        display_name=row["display_name"],
+                        immutable_traits=row["immutable_traits"],
+                        mutable_attributes=row["mutable_attributes"],
+                    )
+                )
 
         scene_id_by_idx: dict[int, str] = {}
         for sc in proposal.scenes:
             sc_id = f"scn_{uuid.uuid4().hex[:8]}"
             scene_id_by_idx[sc["scene_index"]] = sc_id
-            stage(SceneRecord(
-                id=sc_id,
-                project_id=project_id,
-                scene_index=sc["scene_index"],
-                title=sc["title"][:255],
-                location_code=sc["location_code"],
-                time_of_day=sc["time_of_day"],
-                lighting_mood=sc["lighting_mood"],
-                summary=sc["summary"],
-            ))
+            stage(
+                SceneRecord(
+                    id=sc_id,
+                    project_id=project_id,
+                    scene_index=sc["scene_index"],
+                    title=sc["title"][:255],
+                    location_code=sc["location_code"],
+                    time_of_day=sc["time_of_day"],
+                    lighting_mood=sc["lighting_mood"],
+                    summary=sc["summary"],
+                )
+            )
 
         # No relationship(): insert scenes before the shots that reference them.
         await self.repository.flush_changes()
@@ -500,7 +620,9 @@ class PipelineService:
 
     # --- story bible ----------------------------------------------------------------
 
-    async def upsert_bible_entry(self, project_id: str, values: dict[str, Any]) -> StoryBibleEntry:
+    async def upsert_bible_entry(
+        self, project_id: str, values: dict[str, Any]
+    ) -> StoryBibleEntry:
         """Create or update one entry by (project_id, code_name) and recompile atomically.
 
         A concurrent create of the same code_name loses on the unique constraint; the
@@ -508,8 +630,12 @@ class PipelineService:
         """
         for attempt in range(2):
             await self.require_project(project_id)
-            await self.validate_project_asset_references(project_id, values.get("reference_asset_ids"))
-            existing = await self.repository.get_story_bible_entry(project_id, values["code_name"])
+            await self.validate_project_asset_references(
+                project_id, values.get("reference_asset_ids")
+            )
+            existing = await self.repository.get_story_bible_entry(
+                project_id, values["code_name"]
+            )
             if existing is not None:
                 if existing.entry_type != values["entry_type"]:
                     raise ApplicationError(
@@ -554,33 +680,48 @@ class PipelineService:
 
     # --- shot review ----------------------------------------------------------------
 
-    async def update_shot(self, project_id: str, shot_id: str, updates: dict[str, Any]) -> ShotRecord:
+    async def update_shot(
+        self, project_id: str, shot_id: str, updates: dict[str, Any]
+    ) -> ShotRecord:
         repo = self.repository
         shot = await repo.get_shot(shot_id)
         if not shot or shot.project_id != project_id:
             raise ApplicationError(404, "Không tìm thấy Shot trong dự án.")
 
         nullable_fields = {"previous_shot_id", "first_frame_asset_id"}
-        invalid_null_fields = [k for k, v in updates.items() if v is None and k not in nullable_fields]
+        invalid_null_fields = [
+            k for k, v in updates.items() if v is None and k not in nullable_fields
+        ]
         if invalid_null_fields:
-            raise ApplicationError(422, f"Trường '{invalid_null_fields[0]}' không được phép là null.")
+            raise ApplicationError(
+                422, f"Trường '{invalid_null_fields[0]}' không được phép là null."
+            )
 
         new_prev: ShotRecord | None = None
         old_prev_id = shot.previous_shot_id
-        relink = "previous_shot_id" in updates and updates["previous_shot_id"] != old_prev_id
+        relink = (
+            "previous_shot_id" in updates and updates["previous_shot_id"] != old_prev_id
+        )
         if relink and updates["previous_shot_id"] is not None:
-            new_prev = await self._validate_new_predecessor(shot, updates["previous_shot_id"])
+            new_prev = await self._validate_new_predecessor(
+                shot, updates["previous_shot_id"]
+            )
         if updates.get("reference_asset_ids") is not None:
-            await self.validate_project_asset_references(project_id, updates["reference_asset_ids"])
+            await self.validate_project_asset_references(
+                project_id, updates["reference_asset_ids"]
+            )
         if updates.get("first_frame_asset_id") is not None:
             ff_asset = await repo.get_asset(updates["first_frame_asset_id"])
             if not ff_asset or ff_asset.project_id != project_id:
-                raise ApplicationError(422, "first_frame_asset_id không thuộc dự án này.")
+                raise ApplicationError(
+                    422, "first_frame_asset_id không thuộc dự án này."
+                )
 
         # C1: first_frame_asset_id is only a conditioning input. Changing the continuity
         # source invalidates it unless the operator sets a new one in the same request.
         continuity_changed = relink or (
-            "continuity_mode" in updates and updates["continuity_mode"] != shot.continuity_mode
+            "continuity_mode" in updates
+            and updates["continuity_mode"] != shot.continuity_mode
         )
         if continuity_changed and "first_frame_asset_id" not in updates:
             updates = {**updates, "first_frame_asset_id": None}
@@ -613,10 +754,14 @@ class PipelineService:
         await repo.refresh_pipeline_entity(shot)
         return shot
 
-    async def _validate_new_predecessor(self, shot: ShotRecord, prev_id: str) -> ShotRecord:
+    async def _validate_new_predecessor(
+        self, shot: ShotRecord, prev_id: str
+    ) -> ShotRecord:
         repo = self.repository
         if prev_id == shot.id:
-            raise ApplicationError(422, "Shot không thể trỏ previous_shot_id vào chính nó.")
+            raise ApplicationError(
+                422, "Shot không thể trỏ previous_shot_id vào chính nó."
+            )
         prev_shot = await repo.get_shot(prev_id)
         if not prev_shot or prev_shot.project_id != shot.project_id:
             raise ApplicationError(422, "previous_shot_id không thuộc dự án này.")
@@ -626,13 +771,17 @@ class PipelineService:
         cursor: ShotRecord | None = prev_shot
         while cursor is not None and cursor.previous_shot_id is not None:
             if cursor.previous_shot_id == shot.id:
-                raise ApplicationError(422, "previous_shot_id tạo thành vòng lặp continuity giữa các Shot.")
+                raise ApplicationError(
+                    422, "previous_shot_id tạo thành vòng lặp continuity giữa các Shot."
+                )
             if cursor.previous_shot_id in visited:
                 break
             visited.add(cursor.previous_shot_id)
             cursor = await repo.get_shot(cursor.previous_shot_id)
         if prev_shot.scene_id != shot.scene_id:
-            raise ApplicationError(422, "previous_shot_id phải thuộc cùng Scene với Shot này.")
+            raise ApplicationError(
+                422, "previous_shot_id phải thuộc cùng Scene với Shot này."
+            )
         if prev_shot.next_shot_id is not None and prev_shot.next_shot_id != shot.id:
             successor = await repo.get_shot(prev_shot.next_shot_id)
             # A stale next_shot_id (successor gone or relinked) may be overwritten.

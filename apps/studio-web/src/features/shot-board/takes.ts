@@ -20,6 +20,15 @@ export function takeLabel(take: Pick<ShotTake, "take_number">): string {
   return `Take ${take.take_number}`;
 }
 
+/** Parse an ISO-8601 `ShotTakeOut.created_at` string, returning `null` if unparseable. */
+export function parseTakeCreatedAt(value: string | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+}
+
 /** Takes in take-number order (the API orders them, but do not depend on it). */
 export function sortTakes(takes: readonly ShotTake[]): ShotTake[] {
   return [...takes].sort(

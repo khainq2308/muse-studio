@@ -6,6 +6,7 @@ import { TakeMedia } from "@/features/shot-board/components/take-media";
 import {
   FRAME_PREVIEW_MAX_BYTES,
   TAKE_PREVIEW_MAX_BYTES,
+  parseTakeCreatedAt,
   takeLabel,
   type ShotTake,
 } from "@/features/shot-board/takes";
@@ -46,6 +47,7 @@ export function TakeList({
     <ul className="space-y-3" aria-label="Takes">
       {takes.map((take) => {
         const label = takeLabel(take);
+        const createdAt = parseTakeCreatedAt(take.created_at);
         const compareIndex = compareIds.indexOf(take.id);
         const inCompare = compareIndex >= 0;
         const isBusy = busyTakeId === take.id;
@@ -105,7 +107,21 @@ export function TakeList({
                     </StateBadge>
                   )}
                 </div>
-                <dl className="grid gap-2 text-sm sm:grid-cols-3">
+                <dl className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Created</dt>
+                    <dd className="break-words">
+                      {createdAt ? (
+                        <time dateTime={createdAt.toISOString()} data-testid="take-created-at">
+                          {createdAt.toLocaleString()}
+                        </time>
+                      ) : (
+                        <span data-testid="take-created-at">
+                          {take.created_at?.trim() || "Not recorded"}
+                        </span>
+                      )}
+                    </dd>
+                  </div>
                   <div className="min-w-0">
                     <dt className="text-xs text-muted-foreground">Model</dt>
                     <dd className="break-all font-medium">{take.model_id}</dd>
@@ -119,7 +135,7 @@ export function TakeList({
                     <dd className="break-all">{take.account_used ?? "Not recorded"}</dd>
                   </div>
                   {take.continuity_flagged && (
-                    <div className="min-w-0 sm:col-span-3">
+                    <div className="min-w-0 sm:col-span-2 lg:col-span-4">
                       <dt className="text-xs text-muted-foreground">Director notes</dt>
                       <dd className="whitespace-pre-wrap break-words" data-testid="take-notes">
                         {take.director_notes || "None"}

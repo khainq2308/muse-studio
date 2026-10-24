@@ -1,6 +1,6 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { apiPatch, apiPost, apiPut } from "@/lib/api/client";
+import { apiGet, apiPatch, apiPost, apiPut } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/queryKeys";
 import type { components } from "@/lib/api/schema";
 import { useSessionStore } from "@/lib/stores/session-store";
@@ -16,8 +16,22 @@ export type WorkflowExecutionResponse = components["schemas"]["WorkflowExecution
 export type WorkflowRunResponse = WorkflowDryRunResponse | WorkflowExecutionResponse;
 export type WorkflowApprovalResponse = components["schemas"]["WorkflowApprovalOut"];
 
+export function useProjectWorkflow(projectId: string) {
+  const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  return useQuery({
+    queryKey: queryKeys.projectWorkflow(sessionVersion, projectId),
+    queryFn: ({ signal }) =>
+      apiGet("/api/v1/projects/{project_id}/workflows", {
+        signal,
+        pathParams: { project_id: projectId },
+      }),
+    retry: false,
+  });
+}
+
 export function useCreateWorkflow(projectId: string) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationKey: queryKeys.workflowActions(sessionVersion, projectId),
     mutationFn: ({
@@ -26,10 +40,17 @@ export function useCreateWorkflow(projectId: string) {
     }: {
       request: WorkflowCreateRequest;
       projectId: string;
+      sessionVersion: number;
     }) =>
       apiPost("/api/v1/projects/{project_id}/workflows", request, {
         pathParams: { project_id: scopeProjectId },
       }),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(
+        queryKeys.projectWorkflow(variables.sessionVersion, variables.projectId),
+        data,
+      );
+    },
   });
   const { mutate: rawMutate } = mutation;
   const mutate = useCallback(
@@ -41,19 +62,20 @@ export function useCreateWorkflow(projectId: string) {
       },
     ) =>
       rawMutate(
-        { request, projectId },
+        { request, projectId, sessionVersion },
         {
           onSuccess: (data) => callbacks?.onSuccess?.(data),
           onError: (error) => callbacks?.onError?.(error),
         },
       ),
-    [projectId, rawMutate],
+    [projectId, rawMutate, sessionVersion],
   );
   return { ...mutation, mutate };
 }
 
 export function useSaveWorkflowLayout(projectId: string) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
+  const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationKey: queryKeys.workflowActions(sessionVersion, projectId),
     mutationFn: ({
@@ -64,6 +86,7 @@ export function useSaveWorkflowLayout(projectId: string) {
       workflowId: string;
       uiLayout: Record<string, unknown>;
       projectId: string;
+      sessionVersion: number;
     }) =>
       apiPatch<WorkflowLayoutSaveResponse>(
         "/api/v1/projects/{project_id}/workflows/{workflow_id}/layout",
@@ -72,6 +95,19 @@ export function useSaveWorkflowLayout(projectId: string) {
           pathParams: { project_id: scopeProjectId, workflow_id: workflowId },
         },
       ),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData<WorkflowCreateResponse | undefined>(
+        queryKeys.projectWorkflow(variables.sessionVersion, variables.projectId),
+        (current) =>
+          current && current.id === variables.workflowId
+            ? {
+                ...current,
+                current_version: data.version_number,
+                ui_layout: variables.uiLayout as WorkflowCreateResponse["ui_layout"],
+              }
+            : current,
+      );
+    },
   });
   const { mutate: rawMutate } = mutation;
   const mutate = useCallback(
@@ -84,13 +120,13 @@ export function useSaveWorkflowLayout(projectId: string) {
       },
     ) =>
       rawMutate(
-        { workflowId, uiLayout, projectId },
+        { workflowId, uiLayout, projectId, sessionVersion },
         {
           onSuccess: (data) => callbacks?.onSuccess?.(data),
           onError: (error) => callbacks?.onError?.(error),
         },
       ),
-    [projectId, rawMutate],
+    [projectId, rawMutate, sessionVersion],
   );
   return { ...mutation, mutate };
 }
