@@ -7,7 +7,6 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: unknown }) => <a href="/">{children as string}</a>,
 }));
 
-import { ShotBoardPage } from "@/features/shot-board/pages/shot-board-page";
 import {
   makeComparison,
   makeConnection,
@@ -16,6 +15,7 @@ import {
   makeShot,
   makeTake,
 } from "@/features/shot-board/test-fixtures";
+import { ShotBoardHarness } from "@/features/shot-board/test-harness";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 // Exercises the real hooks, API client and object-URL lifecycle; only fetch and the
@@ -141,7 +141,7 @@ function mount() {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <ShotBoardPage projectId="project-1" />
+      <ShotBoardHarness projectId="project-1" />
     </QueryClientProvider>,
   );
 }
@@ -156,14 +156,16 @@ afterEach(() => {
   useSessionStore.getState().clearAdminToken();
 });
 
+/** Opens the shot from the navigator, then its Takes tab. */
 async function openReview(shotLabel: string) {
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: `Review takes for ${shotLabel}` }));
+  await user.click(await screen.findByRole("button", { name: shotLabel }));
+  await user.click(await screen.findByRole("tab", { name: /^Takes/ }));
   return user;
 }
 
 describe("Shot Board take review", () => {
-  it("lists takes with badges, notes and authenticated frame thumbnails, revoking URLs on close", async () => {
+  it("lists takes with badges, notes and authenticated frame thumbnails, revoking URLs when the tab closes", async () => {
     const { create, revoke } = stubObjectUrls();
     const requests = stubApi(baseHandler());
     mount();
@@ -207,9 +209,9 @@ describe("Shot Board take review", () => {
     expect(create.mock.calls.some(([blob]) => (blob as Blob).type === "video/mp4")).toBe(true);
 
     const created = create.mock.results.map((result) => result.value as string);
-    await user.click(
-      within(panel).getByRole("button", { name: "Close takes for Shot 1 · Hero enters" }),
-    );
+    // Leaving the Takes tab unmounts the review and releases every object URL it created.
+    await user.click(screen.getByRole("tab", { name: "Details" }));
+    expect(screen.queryByTestId("shot-take-review-shot-1")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(new Set(revoke.mock.calls.map(([url]) => url))).toEqual(new Set(created)),
     );
@@ -430,7 +432,7 @@ describe("Shot Board take review", () => {
 });
 
 describe("Predecessor order warning", () => {
-  it("warns on the card and in the edit panel without blocking the save", async () => {
+  it("warns in the shot panel and in the edit panel without blocking the save", async () => {
     stubObjectUrls();
     const outOfOrder = [
       makeShot({
@@ -471,22 +473,24 @@ describe("Predecessor order warning", () => {
     });
     mount();
 
-    // shot-4 points at a later shot of another scene: the backend only links shots within a
-    // scene, so no order warning is shown for it.
-    expect(
-      within(await screen.findByTestId("shot-card-shot-4")).queryByTestId(
-        "shot-predecessor-warning",
-      ),
-    ).not.toBeInTheDocument();
-    const first = await screen.findByTestId("shot-card-shot-1");
+    // shot-4 (#0) is first in the navigator and opens by default. It points at a later shot of
+    // another scene: the backend only links shots within a scene, so no order warning is shown.
+    const prologue = await screen.findByTestId("shot-workspace-shot-4");
+    expect(within(prologue).queryByTestId("shot-predecessor-warning")).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Shot 1 · Hero enters" }));
+    const first = await screen.findByTestId("shot-workspace-shot-1");
     expect(within(first).getByTestId("shot-predecessor-warning")).toHaveTextContent(
       "Previous shot comes after this shot in the sequence: Shot 2 · Chase is #2; this shot is #1.",
     );
+    await user.click(screen.getByRole("button", { name: "Shot 2 · Chase" }));
     expect(
-      within(screen.getByTestId("shot-card-shot-2")).queryByTestId("shot-predecessor-warning"),
+      within(await screen.findByTestId("shot-workspace-shot-2")).queryByTestId(
+        "shot-predecessor-warning",
+      ),
     ).not.toBeInTheDocument();
 
-    const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Edit Shot 2 · Chase" }));
     const panel = screen.getByTestId("shot-edit-panel-shot-2");
     const previous = within(panel).getByLabelText("Previous shot (same scene)");
@@ -685,12 +689,7 @@ describe("Take review: uncertain outcomes, focus and sessions", () => {
     await openReview("Shot 1 · Hero enters");
     await screen.findByText("Loading takes...");
     act(() => useSessionStore.getState().setAdminToken("another-token"));
-    // The page closes take review for the new session.
-    await waitFor(() =>
-      expect(screen.queryByTestId("shot-take-review-shot-1")).not.toBeInTheDocument(),
-    );
-
-    await openReview("Shot 1 · Hero enters");
+    // The new session reloads the takes under its own cache key; the review is remounted.
     const panel = await screen.findByTestId("shot-take-review-shot-1");
     await within(panel).findByTestId("take-take-1");
     releaseOld();

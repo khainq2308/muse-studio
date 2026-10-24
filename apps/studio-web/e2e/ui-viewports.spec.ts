@@ -57,7 +57,20 @@ const MODULES: ModuleCase[] = [
   {
     module: "shot-board",
     ready: async (page) => {
-      await expect(page.getByTestId("shot-card-shot-1")).toBeVisible();
+      // Shot 1 opens by default on its Takes tab (it has takes), with frame thumbnails loaded.
+      const panel = page.getByTestId("shot-workspace-shot-1");
+      await expect(panel.getByRole("tab", { name: /^Takes/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      // Frames load lazily near the viewport; on narrow screens the take list starts below it.
+      const take = panel.getByTestId("take-take-1");
+      await take.scrollIntoViewIfNeeded();
+      await expect(take.getByRole("img", { name: "Take 1 first frame" })).toHaveAttribute(
+        "src",
+        /^blob:/,
+      );
+      await page.evaluate(() => window.scrollTo(0, 0));
     },
   },
   {

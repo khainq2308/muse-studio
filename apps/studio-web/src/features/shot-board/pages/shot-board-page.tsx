@@ -1,13 +1,14 @@
 import { Link } from "@tanstack/react-router";
 import {
   BookOpenText,
+  ChevronDown,
   Clapperboard,
   FolderCog,
   LayoutGrid,
   RefreshCw,
-  SlidersHorizontal,
+  Rocket,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import { useConnections } from "@/entities/connection/api";
@@ -15,6 +16,7 @@ import {
   useEnqueueShotTask,
   useLaunchBatch,
   useProjectShots,
+  useShotTakes,
   useUpdateShot,
 } from "@/features/shot-board/api";
 import { BatchLaunchPanel } from "@/features/shot-board/components/batch-launch-panel";
@@ -28,8 +30,14 @@ import {
   ShotEnqueueResult,
   ShotGenerateConfirm,
 } from "@/features/shot-board/components/shot-generate-confirm";
-import { ShotList } from "@/features/shot-board/components/shot-list";
+import { ShotRail } from "@/features/shot-board/components/shot-rail";
 import { ShotTakeReview } from "@/features/shot-board/components/shot-take-review";
+import { ShotWorkspace } from "@/features/shot-board/components/shot-workspace";
+import {
+  isShotBoardTab,
+  type ShotBoardSearch,
+  type ShotBoardTab,
+} from "@/features/shot-board/search";
 import {
   buildEnqueueRequest,
   generationErrorMessage,
@@ -39,17 +47,32 @@ import {
   type ShotEditField,
   type ShotUpdate,
 } from "@/features/shot-board/state";
+import {
+  defaultShotTab,
+  orderedShots,
+  resolveSelectedShot,
+  type ShotFilter,
+} from "@/features/shot-board/workspace";
 import { authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
 
+export interface ShotBoardNavigateOptions {
+  /** Replace the current history entry instead of pushing a new one. */
+  replace?: boolean;
+}
+
 interface ShotBoardPageProps {
   projectId: string;
+  /** Navigation state from the URL (`?shot=&tab=`), validated by the route. */
+  search: ShotBoardSearch;
+  /** Writes navigation state back to the URL. */
+  onSearchChange: (search: ShotBoardSearch, options?: ShotBoardNavigateOptions) => void;
 }
 
 const NO_FIELD_ERRORS: Partial<Record<ShotEditField, string>> = {};
 
-export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
+export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPageProps) {
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const shotsQuery = useProjectShots(projectId);
@@ -57,6 +80,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
   const updateMutation = useUpdateShot(projectId);
   const enqueueMutation = useEnqueueShotTask(projectId);
   const batchMutation = useLaunchBatch(projectId);
+  const batchPanelId = useId();
 
   const [settings, setSettings] = useState<GenerationSettingsValue>({
     connectionId: "",
@@ -65,29 +89,31 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
   });
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
   const [generateShotId, setGenerateShotId] = useState<string | null>(null);
-  const [reviewShotId, setReviewShotId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<ShotFilter>("all");
+  const [batchOpen, setBatchOpen] = useState(false);
 
   const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
   const sceneIds = useMemo(() => groupShotsByScene(shots).map((group) => group.sceneId), [shots]);
-  const shotStats = useMemo(() => {
-    let approved = 0;
-    let succeeded = 0;
-    let frameChained = 0;
-    let blocked = 0;
-    for (const shot of shots) {
-      if (shot.approval_state === "approved") approved += 1;
-      if (shot.generation_state === "succeeded") succeeded += 1;
-      if (shot.continuity_mode === "frame_chain") frameChained += 1;
-      if (
-        shot.generation_state === "blocked_reference" ||
-        shot.generation_state === "blocked_upstream_frame" ||
-        shot.lint_report.some((issue) => issue.severity === "blocker")
-      ) {
-        blocked += 1;
-      }
-    }
-    return { total: shots.length, approved, succeeded, frameChained, blocked };
-  }, [shots]);
+  const navigatorOrder = useMemo(() => orderedShots(shots), [shots]);
+  const selectedShot = useMemo(() => resolveSelectedShot(shots, search.shot), [shots, search.shot]);
+  const missingShotId =
+    shotsQuery.data && search.shot && selectedShot?.id !== search.shot ? search.shot : null;
+  const selectedIndex = selectedShot ? navigatorOrder.indexOf(selectedShot) : -1;
+
+  // Loaded for the selected shot only: it decides the default tab and shares its cache entry
+  // with the take review.
+  const takesQuery = useShotTakes(projectId, selectedShot?.id ?? "", {
+    enabled: Boolean(selectedShot),
+  });
+  const tab: ShotBoardTab = isShotBoardTab(search.tab)
+    ? search.tab
+    : selectedShot
+      ? defaultShotTab(selectedShot, {
+          status: takesQuery.status,
+          count: takesQuery.data?.length ?? 0,
+        })
+      : "details";
+
   const connection = (connectionsQuery.data ?? []).find(
     (item) => item.enabled && item.id === settings.connectionId,
   );
@@ -104,7 +130,6 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
     resetEnqueue();
     resetBatch();
     setGenerateShotId(null);
-    setReviewShotId(null);
   }, [resetBatch, resetEnqueue, resetUpdate, sessionVersion]);
 
   const generateDisabledReason = !connection
@@ -118,6 +143,16 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
     () => (updateMutation.error ? mapShotUpdateError(updateMutation.error) : null),
     [updateMutation.error],
   );
+
+  const selectShot = (shotId: string) => {
+    if (shotId !== selectedShot?.id) setGenerateShotId(null);
+    // A new shot opens on its default tab.
+    onSearchChange({ shot: shotId });
+  };
+  const changeTab = (next: ShotBoardTab) => {
+    if (!selectedShot) return;
+    onSearchChange({ shot: selectedShot.id, tab: next }, { replace: true });
+  };
 
   const openEditor = (shotId: string) => {
     resetUpdate();
@@ -151,50 +186,15 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
   };
   const enqueueShotId = enqueueMutation.variables?.request.shot_id ?? null;
 
-  // Shots whose card shows an inline panel (confirm dialog, queue status or result)
-  // and therefore needs the full row width, not a half-width card.
-  const expandedShotIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (generateShotId && connection) ids.add(generateShotId);
-    if (
-      enqueueShotId &&
-      (enqueueMutation.isPending || enqueueMutation.data || enqueueMutation.error)
-    ) {
-      ids.add(enqueueShotId);
-    }
-    return ids;
-  }, [
-    connection,
-    enqueueMutation.data,
-    enqueueMutation.error,
-    enqueueMutation.isPending,
-    enqueueShotId,
-    generateShotId,
-  ]);
-
-  const toggleTakeReview = (shotId: string) => {
-    setReviewShotId((current) => (current === shotId ? null : shotId));
-  };
-
   const refresh = () => {
     void shotsQuery.refetch({ cancelRefetch: true });
   };
 
-  const renderShotDetail = (shot: ProjectShot) => (
+  const renderShotActions = (shot: ProjectShot) => (
     <>
-      {reviewShotId === shot.id && (
-        <ShotTakeReview
-          projectId={projectId}
-          shot={shot}
-          shots={shots}
-          connection={connection}
-          modelId={settings.modelId}
-          regenerateDisabledReason={generateDisabledReason}
-          onClose={() => setReviewShotId(null)}
-        />
-      )}
       {editingShotId === shot.id && (
         <ShotEditPanel
+          key={shot.id}
           shot={shot}
           shots={shots}
           isSaving={updateMutation.isPending && updateShotId === shot.id}
@@ -219,7 +219,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
         />
       )}
       {enqueueShotId === shot.id && enqueueMutation.isPending && (
-        <p role="status" className="mt-4 text-sm text-muted-foreground">
+        <p role="status" className="text-sm text-muted-foreground">
           Queueing generation...
         </p>
       )}
@@ -233,7 +233,7 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
       {enqueueShotId === shot.id && enqueueMutation.error && (
         <p
           role="alert"
-          className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+          className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
         >
           {generationErrorMessage(enqueueMutation.error, "enqueue")}
         </p>
@@ -246,93 +246,92 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
       data-testid="shot-board-page"
       data-project-id={projectId}
       aria-labelledby="shot-board-heading"
-      className="space-y-5"
+      className="space-y-4"
     >
-      {/* LTX Studio-inspired Top Bar + Secondary Studio Ribbon */}
-      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-2xs">
-        <header className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3.5">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary">
-              <LayoutGrid className="size-5" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded bg-primary px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-primary-foreground">
-                  STUDIO
-                </span>
-                <h2
-                  id="shot-board-heading"
-                  className="text-xl font-bold tracking-tight sm:text-2xl"
-                >
-                  Shot Board
-                </h2>
-                <span className="break-all rounded-full bg-secondary px-2.5 py-0.5 font-mono text-xs text-muted-foreground">
-                  {projectId}
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
-                Review, edit and generate shots for project{" "}
-                <span className="break-all font-medium text-foreground">{projectId}</span>.
-              </p>
-            </div>
+      <header className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-2xs lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
+            <LayoutGrid className="size-4" aria-hidden="true" />
           </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="shot-board-heading" className="text-xl font-bold tracking-tight">
+                Shot Board
+              </h2>
+              <span className="break-all rounded-full bg-secondary px-2.5 py-0.5 font-mono text-xs text-muted-foreground">
+                {projectId}
+              </span>
+              {shotsQuery.data && (
+                <span className="font-mono text-xs text-muted-foreground">
+                  {sceneIds.length} {sceneIds.length === 1 ? "scene" : "scenes"} · {shots.length}{" "}
+                  {shots.length === 1 ? "shot" : "shots"}
+                </span>
+              )}
+            </div>
+            <nav
+              aria-label="Related modules"
+              className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"
+            >
+              <Link
+                to="/projects/$projectId/$module"
+                params={{ projectId, module: "projects" }}
+                className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <FolderCog className="size-3.5 text-primary" aria-hidden="true" />
+                Project settings
+              </Link>
+              <Link
+                to="/projects/$projectId/$module"
+                params={{ projectId, module: "timeline-editor" }}
+                className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <Clapperboard className="size-3.5 text-primary" aria-hidden="true" />
+                Timeline
+              </Link>
+              <Link
+                to="/projects/$projectId/$module"
+                params={{ projectId, module: "script-studio" }}
+                className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <BookOpenText className="size-3.5 text-primary" aria-hidden="true" />
+                Characters &amp; Story Bible
+              </Link>
+            </nav>
+          </div>
+        </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <QueueMonitorLink projectId={projectId} />
-
+        <div className="flex flex-wrap items-center gap-2">
+          <QueueMonitorLink projectId={projectId} />
+          {shots.length > 0 && (
             <Button
               type="button"
               variant="outline"
-              onClick={refresh}
-              aria-busy={shotsQuery.isFetching}
+              aria-expanded={batchOpen}
+              aria-controls={batchPanelId}
+              onClick={() => setBatchOpen((current) => !current)}
             >
-              <RefreshCw
-                className={cn("size-4", shotsQuery.isFetching && "animate-spin")}
+              <Rocket className="size-4" aria-hidden="true" />
+              Batch launch
+              <ChevronDown
+                className={cn("size-4 transition-transform", batchOpen && "rotate-180")}
                 aria-hidden="true"
               />
-              Refresh
             </Button>
-          </div>
-        </header>
-
-        {/* Secondary quick-links bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-secondary/35 px-5 py-2.5 text-xs">
-          <div className="flex flex-wrap items-center gap-4">
-            <Link
-              to="/projects/$projectId/$module"
-              params={{ projectId, module: "projects" }}
-              className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <FolderCog className="size-3.5 text-primary" aria-hidden="true" />
-              Project settings
-            </Link>
-            <Link
-              to="/projects/$projectId/$module"
-              params={{ projectId, module: "timeline-editor" }}
-              className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <Clapperboard className="size-3.5 text-primary" aria-hidden="true" />
-              Timeline
-            </Link>
-            <Link
-              to="/projects/$projectId/$module"
-              params={{ projectId, module: "script-studio" }}
-              className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <BookOpenText className="size-3.5 text-primary" aria-hidden="true" />
-              Characters &amp; Story Bible
-            </Link>
-          </div>
-
-          <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
-            <SlidersHorizontal className="size-3.5 text-primary" aria-hidden="true" />
-            <span>
-              {sceneIds.length} {sceneIds.length === 1 ? "Scene" : "Scenes"} · {shotStats.total}{" "}
-              {shotStats.total === 1 ? "Shot" : "Shots"}
-            </span>
-          </div>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={refresh}
+            aria-busy={shotsQuery.isFetching}
+          >
+            <RefreshCw
+              className={cn("size-4", shotsQuery.isFetching && "animate-spin")}
+              aria-hidden="true"
+            />
+            Refresh
+          </Button>
         </div>
-      </div>
+      </header>
 
       <GenerationSettings
         connections={connectionsQuery.data ?? []}
@@ -348,37 +347,8 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
         onChange={setSettings}
       />
 
-      {shots.length > 0 && (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
-              <p className="text-xs font-medium text-muted-foreground">Total Shots</p>
-              <p className="mt-0.5 text-lg font-bold tabular-nums">{shotStats.total}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
-              <p className="text-xs font-medium text-muted-foreground">Scenes</p>
-              <p className="mt-0.5 text-lg font-bold tabular-nums">{sceneIds.length}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
-              <p className="text-xs font-medium text-muted-foreground">Rendered / Succeeded</p>
-              <p className="mt-0.5 text-lg font-bold tabular-nums text-success">
-                {shotStats.succeeded}
-              </p>
-            </div>
-            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
-              <p className="text-xs font-medium text-muted-foreground">Frame-Chained</p>
-              <p className="mt-0.5 text-lg font-bold tabular-nums text-primary">
-                {shotStats.frameChained}
-              </p>
-            </div>
-            <div className="rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-2xs">
-              <p className="text-xs font-medium text-muted-foreground">Blocked / Needs Lock</p>
-              <p className="mt-0.5 text-lg font-bold tabular-nums text-destructive">
-                {shotStats.blocked}
-              </p>
-            </div>
-          </div>
-
+      {shots.length > 0 && batchOpen && (
+        <div id={batchPanelId}>
           <BatchLaunchPanel
             projectId={projectId}
             shots={shots}
@@ -393,10 +363,10 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
             }
             onLaunch={(request) => batchMutation.mutate(request)}
           />
-        </>
+        </div>
       )}
 
-      <section aria-label="Shots" className="space-y-3">
+      <section aria-label="Shots">
         <QueryState
           isLoading={shotsQuery.isPending}
           isError={shotsQuery.isError}
@@ -408,18 +378,59 @@ export function ShotBoardPage({ projectId }: ShotBoardPageProps) {
           emptyDescription="Import a script to break it into scenes and shots; they will appear here."
           onRetry={refresh}
         >
-          <ShotList
-            shots={shots}
-            editingShotId={editingShotId}
-            onEdit={openEditor}
-            onGenerate={openGenerate}
-            reviewingShotId={reviewShotId}
-            expandedShotIds={expandedShotIds}
-            onReviewTakes={toggleTakeReview}
-            canGenerate={!generateDisabledReason && !enqueueMutation.isPending}
-            generateDisabledReason={generateDisabledReason}
-            renderShotDetail={renderShotDetail}
-          />
+          <div className="grid items-start gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
+            <ShotRail
+              shots={shots}
+              selectedShotId={selectedShot?.id}
+              filter={filter}
+              onFilterChange={setFilter}
+              onSelect={selectShot}
+            />
+            <div className="min-w-0 space-y-3">
+              {missingShotId && (
+                <p
+                  role="note"
+                  className="rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-xs text-warning"
+                >
+                  Shot <span className="break-all font-mono">{missingShotId}</span> is not in this
+                  project; showing the first shot instead.
+                </p>
+              )}
+              {selectedShot && (
+                <ShotWorkspace
+                  key={selectedShot.id}
+                  shot={selectedShot}
+                  shots={shots}
+                  previousInOrder={
+                    selectedIndex > 0 ? navigatorOrder[selectedIndex - 1] : undefined
+                  }
+                  nextInOrder={selectedIndex >= 0 ? navigatorOrder[selectedIndex + 1] : undefined}
+                  onSelectShot={selectShot}
+                  tab={tab}
+                  onTabChange={changeTab}
+                  takeCount={takesQuery.data ? takesQuery.data.length : null}
+                  takesFailed={takesQuery.isError}
+                  canGenerate={!generateDisabledReason && !enqueueMutation.isPending}
+                  generateDisabledReason={generateDisabledReason}
+                  onGenerate={() => openGenerate(selectedShot.id)}
+                  isEditing={editingShotId === selectedShot.id}
+                  onEdit={() => openEditor(selectedShot.id)}
+                  actions={renderShotActions(selectedShot)}
+                  takesPanel={
+                    <ShotTakeReview
+                      key={`${selectedShot.id}:${sessionVersion}`}
+                      projectId={projectId}
+                      shot={selectedShot}
+                      shots={shots}
+                      connection={connection}
+                      modelId={settings.modelId}
+                      regenerateDisabledReason={generateDisabledReason}
+                    />
+                  }
+                />
+              )}
+            </div>
+          </div>
         </QueryState>
       </section>
     </section>

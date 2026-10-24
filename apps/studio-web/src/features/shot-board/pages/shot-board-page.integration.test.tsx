@@ -7,13 +7,15 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: unknown }) => <a href="/">{children as string}</a>,
 }));
 
-import { ShotBoardPage } from "@/features/shot-board/pages/shot-board-page";
+import type { ShotBoardSearch } from "@/features/shot-board/search";
 import {
   makeConnection,
   makeEnqueuedTask,
   makeReview,
   makeShot,
+  makeTake,
 } from "@/features/shot-board/test-fixtures";
+import { ShotBoardHarness } from "@/features/shot-board/test-harness";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 // Exercises the real hooks and API client; only fetch is stubbed.
@@ -68,15 +70,32 @@ const shots = [
   makeShot({ id: "shot-3", scene_id: "scene-2", sequence_index: 3, title: "Rooftop" }),
 ];
 
-function mount() {
+function mount(initialSearch: ShotBoardSearch = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  const onNavigate = vi.fn();
   render(
     <QueryClientProvider client={queryClient}>
-      <ShotBoardPage projectId="project-1" />
+      <ShotBoardHarness
+        projectId="project-1"
+        initialSearch={initialSearch}
+        onNavigate={onNavigate}
+      />
     </QueryClientProvider>,
   );
+  return { onNavigate };
+}
+
+/** Shots and connections; every shot has no takes unless `takes` says otherwise. */
+function boardHandler(takes: Record<string, unknown[]> = {}): Handler {
+  return ({ method, pathname }) => {
+    if (pathname === "/api/v1/projects/project-1/shots") return { status: 200, body: shots };
+    if (pathname === "/api/v1/connections") return { status: 200, body: [makeConnection()] };
+    const match = /^\/api\/v1\/queue\/shots\/([^/]+)\/takes$/.exec(pathname);
+    if (method === "GET" && match) return { status: 200, body: takes[match[1]!] ?? [] };
+    return undefined;
+  };
 }
 
 beforeEach(() => {
@@ -90,34 +109,51 @@ afterEach(() => {
 });
 
 describe("ShotBoardPage", () => {
-  it("lists shots grouped by scene with their state, continuity and first-frame indicators", async () => {
-    stubApi(({ pathname }) =>
-      pathname === "/api/v1/projects/project-1/shots"
-        ? { status: 200, body: shots }
-        : pathname === "/api/v1/connections"
-          ? { status: 200, body: [makeConnection()] }
-          : undefined,
-    );
+  it("lists shots by scene in the navigator with scannable status and opens one in the panel", async () => {
+    const user = userEvent.setup();
+    stubApi(boardHandler());
     mount();
 
     const sceneOne = await screen.findByTestId("shot-scene-scene-1");
-    expect(within(sceneOne).getAllByRole("article")).toHaveLength(2);
-    expect(within(screen.getByTestId("shot-scene-scene-2")).getAllByRole("article")).toHaveLength(
+    expect(within(sceneOne).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(screen.getByTestId("shot-scene-scene-2")).getAllByRole("listitem")).toHaveLength(
       1,
     );
 
     const chase = screen.getByTestId("shot-card-shot-2");
+    expect(chase).toHaveAccessibleName("Shot 2 · Chase");
     expect(within(chase).getByTestId("shot-generation-state")).toHaveTextContent(
       "Blocked: upstream frame missing",
     );
     expect(within(chase).getByTestId("shot-approval-state")).toHaveTextContent("Needs review");
-    expect(within(chase).getByTestId("shot-first-frame")).toHaveTextContent("First frame set");
-    expect(chase).toHaveTextContent("Frame chain");
-    expect(chase).toHaveTextContent("Shot 1 · Hero enters");
+    expect(within(chase).getByTestId("shot-continuity")).toHaveTextContent("Frame chain");
+    // The first shot is open by default.
+    expect(screen.getByTestId("shot-card-shot-1")).toHaveAttribute("aria-current", "true");
+    expect(chase).not.toHaveAttribute("aria-current");
+    expect(screen.getByTestId("shot-workspace-shot-1")).toBeInTheDocument();
+
+    await user.click(chase);
+    const panel = await screen.findByTestId("shot-workspace-shot-2");
+    expect(chase).toHaveAttribute("aria-current", "true");
     expect(
-      within(chase).getByRole("button", { name: "Review takes for Shot 2 · Chase" }),
-    ).toHaveAttribute("aria-expanded", "false");
-    expect(within(chase).queryByTestId("shot-predecessor-warning")).not.toBeInTheDocument();
+      within(panel).getByRole("heading", { level: 3, name: "Shot 2 · Chase" }),
+    ).toBeInTheDocument();
+    expect(within(panel).getByTestId("shot-generation-state")).toHaveTextContent(
+      "Blocked: upstream frame missing",
+    );
+    // No takes: the panel opens on Details, which shows the stored fields read-only.
+    expect(await within(panel).findByRole("tab", { name: "Details" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await waitFor(() =>
+      expect(within(panel).getByRole("tab", { name: /^Takes/ })).toHaveTextContent("Takes0"),
+    );
+    const details = within(panel).getByTestId("shot-details");
+    expect(within(details).getByTestId("shot-first-frame")).toHaveTextContent("asset-ff");
+    expect(details).toHaveTextContent("Frame chain");
+    expect(details).toHaveTextContent("Shot 1 · Hero enters");
+    expect(within(panel).queryByTestId("shot-predecessor-warning")).not.toBeInTheDocument();
 
     // No dead Storyboard/Shot Editor toggle, and no implied soundtrack.
     expect(screen.queryByRole("button", { name: "Storyboard" })).not.toBeInTheDocument();
@@ -146,8 +182,9 @@ describe("ShotBoardPage", () => {
   it("maps a 422 PATCH response to the field and then shows the recompiled prompt", async () => {
     const user = userEvent.setup();
     let patchCount = 0;
-    const requests = stubApi(({ method, pathname }) => {
-      if (pathname === "/api/v1/projects/project-1/shots") return { status: 200, body: shots };
+    const base = boardHandler();
+    const requests = stubApi((request) => {
+      const { method, pathname } = request;
       if (pathname === "/api/v1/connections") return { status: 200, body: [] };
       if (method === "PATCH" && pathname === "/api/v1/projects/project-1/shots/shot-1") {
         patchCount += 1;
@@ -168,7 +205,7 @@ describe("ShotBoardPage", () => {
             }
           : { status: 200, body: makeReview({ id: "shot-1" }) };
       }
-      return undefined;
+      return base(request);
     });
     mount();
 
@@ -200,16 +237,15 @@ describe("ShotBoardPage", () => {
 
   it("confirms and enqueues one shot, reporting a deduplicated request honestly", async () => {
     const user = userEvent.setup();
-    const requests = stubApi(({ method, pathname }) => {
-      if (pathname === "/api/v1/projects/project-1/shots") return { status: 200, body: shots };
-      if (pathname === "/api/v1/connections") return { status: 200, body: [makeConnection()] };
-      if (method === "POST" && pathname === "/api/v1/queue/tasks") {
+    const base = boardHandler();
+    const requests = stubApi((request) => {
+      if (request.method === "POST" && request.pathname === "/api/v1/queue/tasks") {
         return {
           status: 201,
           body: makeEnqueuedTask({ id: "task-old", state: "failed", created_new: false }),
         };
       }
-      return undefined;
+      return base(request);
     });
     mount();
 
@@ -222,17 +258,16 @@ describe("ShotBoardPage", () => {
     );
 
     await user.click(generate);
-    const dialog = screen.getByRole("alertdialog");
-    // The confirm dialog gets the full row, not a half-width card.
-    expect(screen.getByTestId("shot-card-shot-1")).toHaveClass("md:col-span-2");
+    // The confirmation opens inside the selected shot's panel, under its header.
+    const workspace = screen.getByTestId("shot-workspace-shot-1");
+    const dialog = within(workspace).getByRole("alertdialog");
     expect(dialog).toHaveTextContent("Queue video generation for Shot 1 · Hero enters?");
     expect(dialog).toHaveTextContent("Mock provider (no provider cost)");
     await user.click(within(dialog).getByRole("button", { name: "Confirm and queue" }));
 
-    const result = await screen.findByTestId("shot-enqueue-result");
+    const result = await within(workspace).findByTestId("shot-enqueue-result");
     expect(result).toHaveTextContent("matched an existing task task-old (state: failed)");
     expect(result).toHaveTextContent("No new generation was started.");
-    expect(screen.getByTestId("shot-card-shot-1")).toHaveClass("md:col-span-2");
     await waitFor(() =>
       expect(requests.find((request) => request.method === "POST")?.body).toEqual({
         shot_id: "shot-1",
@@ -244,5 +279,190 @@ describe("ShotBoardPage", () => {
         force_retry: false,
       }),
     );
+  });
+});
+
+describe("ShotBoardPage workspace navigation", () => {
+  it("opens the shot named by the URL and writes rail and tab choices back to it", async () => {
+    const user = userEvent.setup();
+    stubApi(boardHandler({ "shot-3": [makeTake({ id: "take-9", shot_id: "shot-3" })] }));
+    const { onNavigate } = mount({ shot: "shot-3" });
+
+    const panel = await screen.findByTestId("shot-workspace-shot-3");
+    expect(screen.getByTestId("shot-card-shot-3")).toHaveAttribute("aria-current", "true");
+    expect(screen.getByTestId("shot-card-shot-1")).not.toHaveAttribute("aria-current");
+    // The shot has a take, so the panel opens on Takes.
+    await waitFor(() =>
+      expect(within(panel).getByRole("tab", { name: /^Takes/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    expect(await within(panel).findByTestId("take-take-9")).toBeInTheDocument();
+
+    await user.click(within(panel).getByRole("tab", { name: /^Prompt & lint/ }));
+    expect(onNavigate).toHaveBeenLastCalledWith(
+      { shot: "shot-3", tab: "prompt" },
+      { replace: true },
+    );
+    expect(within(panel).getByTestId("shot-prompt-final")).toHaveTextContent(
+      "wide static shot of the hero walking into the hall",
+    );
+    expect(within(panel).getByText("Prompt Linter: no issues")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("shot-card-shot-2"));
+    // Selecting a shot pushes a history entry and resets the tab to the shot's default.
+    expect(onNavigate).toHaveBeenLastCalledWith({ shot: "shot-2" }, undefined);
+    const chase = await screen.findByTestId("shot-workspace-shot-2");
+    await waitFor(() =>
+      expect(within(chase).getByRole("tab", { name: "Details" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+  });
+
+  it("explains an unknown shot ID from the URL and falls back to the first shot", async () => {
+    stubApi(boardHandler());
+    mount({ shot: "shot-deleted", tab: "details" });
+
+    expect(await screen.findByTestId("shot-workspace-shot-1")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Shot shot-deleted is not in this project; showing the first shot instead.",
+    );
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("moves focus through the navigator with the keyboard and opens the focused shot", async () => {
+    const user = userEvent.setup();
+    stubApi(boardHandler());
+    const { onNavigate } = mount();
+
+    const first = await screen.findByTestId("shot-card-shot-1");
+    first.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByTestId("shot-card-shot-2")).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(screen.getByTestId("shot-card-shot-3")).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByTestId("shot-card-shot-3")).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(first).toHaveFocus();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(onNavigate).toHaveBeenLastCalledWith({ shot: "shot-2" }, undefined);
+    expect(await screen.findByTestId("shot-workspace-shot-2")).toBeInTheDocument();
+
+    // Tabs follow the ARIA tabs pattern: arrows move between them and activate the focused tab.
+    const details = await screen.findByRole("tab", { name: "Details" });
+    details.focus();
+    await user.keyboard("{ArrowRight}");
+    const prompt = screen.getByRole("tab", { name: /^Prompt & lint/ });
+    expect(prompt).toHaveFocus();
+    expect(prompt).toHaveAttribute("aria-selected", "true");
+    expect(onNavigate).toHaveBeenLastCalledWith(
+      { shot: "shot-2", tab: "prompt" },
+      { replace: true },
+    );
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: /^Takes/ })).toHaveFocus();
+
+    // Previous/next step through the navigator order.
+    await user.click(screen.getByRole("button", { name: "Next shot: Shot 3 · Rooftop" }));
+    expect(await screen.findByTestId("shot-workspace-shot-3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next shot" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Previous shot: Shot 2 · Chase" }));
+    expect(await screen.findByTestId("shot-workspace-shot-2")).toBeInTheDocument();
+  });
+
+  it("filters the navigator by real shot fields and keeps the open shot visible in the panel", async () => {
+    const user = userEvent.setup();
+    const approvedShots = [
+      ...shots.slice(0, 2),
+      makeShot({
+        id: "shot-3",
+        scene_id: "scene-2",
+        sequence_index: 3,
+        title: "Rooftop",
+        approval_state: "approved",
+        selected_take_id: "take-3",
+      }),
+    ];
+    stubApi((request) =>
+      request.pathname === "/api/v1/projects/project-1/shots"
+        ? { status: 200, body: approvedShots }
+        : boardHandler()(request),
+    );
+    mount();
+
+    const filters = await screen.findByRole("group", { name: "Filter shots" });
+    expect(within(filters).getByRole("button", { name: "All 3" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(filters).getByRole("button", { name: "Needs take 2" })).toBeInTheDocument();
+
+    await user.click(within(filters).getByRole("button", { name: "Blocked 1" }));
+    expect(screen.queryByTestId("shot-card-shot-1")).not.toBeInTheDocument();
+    expect(screen.getByTestId("shot-card-shot-2")).toBeInTheDocument();
+    expect(screen.queryByTestId("shot-card-shot-3")).not.toBeInTheDocument();
+    // Shot 1 stays open in the panel and the rail says why it is not listed.
+    expect(screen.getByTestId("shot-workspace-shot-1")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Shot navigator" })).getByRole("note"),
+    ).toHaveTextContent('Shot 1 · Hero enters is open but hidden by the "Blocked" filter.');
+
+    await user.click(within(filters).getByRole("button", { name: "Approved 1" }));
+    expect(screen.getByTestId("shot-card-shot-3")).toBeInTheDocument();
+    expect(screen.queryByTestId("shot-card-shot-2")).not.toBeInTheDocument();
+
+    await user.click(within(filters).getByRole("button", { name: "Needs take 2" }));
+    expect(screen.getByTestId("shot-card-shot-1")).toBeInTheDocument();
+    expect(screen.getByTestId("shot-card-shot-2")).toBeInTheDocument();
+    expect(screen.queryByTestId("shot-card-shot-3")).not.toBeInTheDocument();
+  });
+
+  it("keeps batch launch behind a toggle in the toolbar", async () => {
+    const user = userEvent.setup();
+    stubApi(boardHandler());
+    mount();
+
+    const toggle = await screen.findByRole("button", { name: "Batch launch" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("batch-launch-panel")).not.toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("batch-launch-panel")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Launch batch" })).toBeDisabled();
+  });
+
+  it("opens Details when the take list fails, marks the Takes tab and does not refetch in a loop", async () => {
+    const user = userEvent.setup();
+    const requests = stubApi((request) =>
+      request.pathname === "/api/v1/queue/shots/shot-1/takes"
+        ? { status: 500, body: { detail: "Database unavailable", retryable: true } }
+        : boardHandler()(request),
+    );
+    mount();
+
+    const panel = await screen.findByTestId("shot-workspace-shot-1");
+    const takesTab = within(panel).getByRole("tab", { name: /^Takes/ });
+    await waitFor(() => expect(takesTab).toHaveAccessibleName("Takes (failed to load)"));
+    expect(within(panel).getByRole("tab", { name: "Details" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const takeLoads = () =>
+      requests.filter((request) => request.pathname === "/api/v1/queue/shots/shot-1/takes").length;
+    expect(takeLoads()).toBe(1);
+
+    // Opening the tab retries once and shows the error with Retry.
+    await user.click(takesTab);
+    const review = await within(panel).findByTestId("shot-take-review-shot-1");
+    expect(await within(review).findByRole("alert")).toHaveTextContent(
+      "Could not load takes: Database unavailable",
+    );
+    expect(within(review).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(takeLoads()).toBe(2);
   });
 });

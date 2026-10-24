@@ -242,13 +242,25 @@ async function mockApi(page: Page) {
   return requests;
 }
 
+/**
+ * Opens a shot from the navigator. Shot 1 has a selected take, so its panel opens on the Takes
+ * tab without another click; the tab must already be selected.
+ */
+async function openTakes(page: Page, shotLabel: string) {
+  await page
+    .getByRole("navigation", { name: "Shot navigator" })
+    .getByRole("button", { name: shotLabel, exact: true })
+    .click();
+  await expect(page.getByRole("tab", { name: /^Takes/ })).toHaveAttribute("aria-selected", "true");
+}
+
 test("selects a take from the A/B compare and reports re-pointed downstream shots", async ({
   page,
 }) => {
   const requests = await mockApi(page);
   await page.goto("/projects/test-project/shot-board");
 
-  await page.getByRole("button", { name: "Review takes for Shot 1 · Hero enters" }).click();
+  await openTakes(page, "Shot 1 · Hero enters");
   const panel = page.getByTestId("shot-take-review-shot-1");
   await expect(panel.getByRole("listitem")).toHaveCount(2);
 
@@ -256,6 +268,8 @@ test("selects a take from the A/B compare and reports re-pointed downstream shot
   const firstFrame = panel.getByTestId("take-take-1").getByRole("img", {
     name: "Take 1 first frame",
   });
+  // Frames load lazily near the viewport; the take list starts below the shot header.
+  await panel.getByTestId("take-take-1").scrollIntoViewIfNeeded();
   await expect(firstFrame).toHaveAttribute("src", /^blob:/);
   await expect
     .poll(() => firstFrame.evaluate((image: HTMLImageElement) => image.naturalWidth))
@@ -314,7 +328,7 @@ test("flags continuity with regenerate after confirmation and links to the Queue
   await page.getByLabel("Connection").selectOption("conn-mock");
   await expect(page.getByLabel("Model")).toHaveValue("muse-video-mock-v1");
 
-  await page.getByRole("button", { name: "Review takes for Shot 1 · Hero enters" }).click();
+  await openTakes(page, "Shot 1 · Hero enters");
   const panel = page.getByTestId("shot-take-review-shot-1");
   await panel.getByRole("button", { name: "Flag continuity on Take 2" }).click();
 

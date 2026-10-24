@@ -1,5 +1,6 @@
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Film, LoaderCircle } from "lucide-react";
+import { useCallback } from "react";
 import NotFoundPage from "@/app/not-found-page";
 import { ProjectModuleNav } from "@/app/project-module-nav";
 import { useProjects } from "@/entities/project/api";
@@ -7,7 +8,10 @@ import ConnectionsPage from "@/features/connections";
 import ProjectsPage from "@/features/projects";
 import QueueMonitorPage from "@/features/queue-monitor";
 import ScriptStudioPage from "@/features/script-studio";
-import ShotBoardPage from "@/features/shot-board";
+import ShotBoardPage, {
+  type ShotBoardNavigateOptions,
+  type ShotBoardSearch,
+} from "@/features/shot-board";
 import SystemOpsPage from "@/features/system-ops";
 import TimelineEditorPage from "@/features/timeline-editor";
 import WorkflowCanvasPage from "@/features/workflow-canvas";
@@ -56,7 +60,7 @@ export default function ProjectModuleRoute() {
     ) : module === "queue-monitor" ? (
       <QueueMonitorPage key={projectId} projectId={projectId} />
     ) : module === "shot-board" ? (
-      <ShotBoardPage key={projectId} projectId={projectId} />
+      <ShotBoardModule key={projectId} projectId={projectId} />
     ) : module === "workflow-canvas" ? (
       <WorkflowCanvasPage key={projectId} projectId={projectId} />
     ) : module === "timeline-editor" ? (
@@ -112,4 +116,21 @@ export default function ProjectModuleRoute() {
       </section>
     </>
   );
+}
+
+/** Connects the Shot Board to its URL state (`?shot=<id>&tab=<tab>`). */
+function ShotBoardModule({ projectId }: { projectId: string }) {
+  const search = useSearch({ from: "/_shell/projects/$projectId/$module" });
+  const navigate = useNavigate();
+  const onSearchChange = useCallback(
+    (next: ShotBoardSearch, options?: ShotBoardNavigateOptions) =>
+      void navigate({
+        to: "/projects/$projectId/$module",
+        params: { projectId, module: "shot-board" },
+        search: next,
+        replace: options?.replace ?? false,
+      }),
+    [navigate, projectId],
+  );
+  return <ShotBoardPage projectId={projectId} search={search} onSearchChange={onSearchChange} />;
 }

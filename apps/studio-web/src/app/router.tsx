@@ -10,6 +10,7 @@ import AppShell from "@/app/app-shell";
 import NotFoundPage from "@/app/not-found-page";
 import ProjectModuleRoute from "@/app/project-module-route";
 import { isProjectModule } from "@/app/project-modules";
+import { validateShotBoardSearch } from "@/features/shot-board/search";
 import OverviewPage from "@/features/workspace-overview/pages/overview-page";
 
 const rootRoute = createRootRoute({
@@ -36,6 +37,9 @@ const indexRoute = createRoute({
 const projectModuleRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: "/projects/$projectId/$module",
+  // Optional module navigation state; only the Shot Board reads it (`?shot=&tab=`). Links to
+  // another module do not carry it over.
+  validateSearch: validateShotBoardSearch,
   beforeLoad: ({ params }) => {
     // Unknown modules get the same 404 page as any other unknown URL.
     if (!isProjectModule(params.module)) {
@@ -46,7 +50,7 @@ const projectModuleRoute = createRoute({
 });
 
 const shellChildren = shellRoute.addChildren([indexRoute, projectModuleRoute]);
-const routeTree = rootRoute.addChildren([shellChildren]);
+export const routeTree = rootRoute.addChildren([shellChildren]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 
