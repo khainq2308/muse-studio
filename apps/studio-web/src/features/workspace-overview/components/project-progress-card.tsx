@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, ArrowRight, LoaderCircle, RefreshCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import type { Project } from "@/entities/project/api";
 import {
@@ -7,6 +8,7 @@ import {
   type NextStep,
   type ProjectProgress,
 } from "@/features/workspace-overview/progress";
+import { formatDateTime } from "@/lib/i18n/formatters";
 import { cn } from "@/lib/utils";
 
 type ProgressState =
@@ -72,6 +74,8 @@ function NextStepLink({ projectId, step }: { projectId: string; step: NextStep }
 
 /** One recent project: shot progress from `GET /projects/{id}/shots` and the next action. */
 export function ProjectProgressCard({ project, state }: ProjectProgressCardProps) {
+  const { t } = useTranslation("workspace-overview");
+
   return (
     <li
       aria-label={project.name}
@@ -87,7 +91,7 @@ export function ProjectProgressCard({ project, state }: ProjectProgressCardProps
             {project.name}
           </Link>
           <p className="text-xs text-muted-foreground">
-            Updated {new Date(project.updated_at).toLocaleString()}
+            {t("updatedAt", { time: formatDateTime(project.updated_at) })}
           </p>
         </div>
         <span className="shrink-0 rounded bg-secondary px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
@@ -98,7 +102,7 @@ export function ProjectProgressCard({ project, state }: ProjectProgressCardProps
       {state.status === "loading" && (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-          Checking progress...
+          {t("loadingProjects", { defaultValue: "Checking progress..." })}
         </p>
       )}
 
@@ -115,7 +119,7 @@ export function ProjectProgressCard({ project, state }: ProjectProgressCardProps
             onClick={state.onRetry}
           >
             <RefreshCw aria-hidden="true" />
-            Retry
+            {t("common:actions.retry", { defaultValue: "Retry" })}
           </Button>
         </div>
       )}
@@ -125,14 +129,22 @@ export function ProjectProgressCard({ project, state }: ProjectProgressCardProps
           {state.progress.total > 0 && (
             <div className="space-y-2">
               <div className="flex items-baseline justify-between gap-2 text-xs">
-                <span className="text-muted-foreground">Shots with a selected take</span>
+                <span className="text-muted-foreground">
+                  {t("shotsProgress", {
+                    withTake: state.progress.withTake,
+                    total: state.progress.total,
+                  })}
+                </span>
                 <span className="font-semibold tabular-nums">
                   {state.progress.withTake} / {state.progress.total}
                 </span>
               </div>
               <div
                 role="progressbar"
-                aria-label="Shots with a selected take"
+                aria-label={t("shotsProgress", {
+                  withTake: state.progress.withTake,
+                  total: state.progress.total,
+                })}
                 aria-valuemin={0}
                 aria-valuemax={state.progress.total}
                 aria-valuenow={state.progress.withTake}
@@ -144,10 +156,24 @@ export function ProjectProgressCard({ project, state }: ProjectProgressCardProps
                 />
               </div>
               <dl className="grid grid-cols-4 gap-2">
-                <Stat label="Blocked" value={state.progress.blocked} tone="bad" />
-                <Stat label="Failed" value={state.progress.failed} tone="bad" />
-                <Stat label="Generating" value={state.progress.inFlight} />
-                <Stat label="Approved" value={state.progress.approved} />
+                <Stat
+                  label={t("stats.labels.blocked", { defaultValue: "Blocked" })}
+                  value={state.progress.blocked}
+                  tone="bad"
+                />
+                <Stat
+                  label={t("stats.labels.failed", { defaultValue: "Failed" })}
+                  value={state.progress.failed}
+                  tone="bad"
+                />
+                <Stat
+                  label={t("stats.labels.generating", { defaultValue: "Generating" })}
+                  value={state.progress.inFlight}
+                />
+                <Stat
+                  label={t("stats.labels.approved", { defaultValue: "Approved" })}
+                  value={state.progress.approved}
+                />
               </dl>
             </div>
           )}
@@ -162,7 +188,7 @@ export function ProjectProgressCard({ project, state }: ProjectProgressCardProps
           >
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Next step
+                {t("nextSteps.title", { defaultValue: "Next step" })}
               </p>
               <p className="text-sm font-semibold">{nextStepCopy(state.nextStep).title}</p>
               <p className="text-xs text-muted-foreground">{nextStepCopy(state.nextStep).detail}</p>

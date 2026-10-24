@@ -112,10 +112,10 @@ describe("ProjectsPage", () => {
   it("only offers aspect ratios the backend accepts", async () => {
     stubApi();
     renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "New project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dự án mới" }));
 
-    const form = screen.getByRole("form", { name: "Create new project" });
-    const options = within(within(form).getByLabelText("Aspect ratio"))
+    const form = screen.getByRole("form", { name: "Tạo dự án mới" });
+    const options = within(within(form).getByLabelText("Tỉ lệ khung hình (Aspect ratio)"))
       .getAllByRole("option")
       .map((option) => option.getAttribute("value"));
     expect(options).toEqual([...PROJECT_ASPECT_RATIO_OPTIONS]);
@@ -127,15 +127,18 @@ describe("ProjectsPage", () => {
   it("creates a project with a valid body and points to the script as the first step", async () => {
     const calls = stubApi();
     renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "New project" }));
-    const form = screen.getByRole("form", { name: "Create new project" });
-    await userEvent.type(within(form).getByLabelText("Project name"), "Glass Citadel");
-    await userEvent.selectOptions(within(form).getByLabelText("Aspect ratio"), "21:9");
-    await userEvent.click(within(form).getByRole("button", { name: "Create project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dự án mới" }));
+    const form = screen.getByRole("form", { name: "Tạo dự án mới" });
+    await userEvent.type(within(form).getByLabelText("Tên dự án"), "Glass Citadel");
+    await userEvent.selectOptions(
+      within(form).getByLabelText("Tỉ lệ khung hình (Aspect ratio)"),
+      "21:9",
+    );
+    await userEvent.click(within(form).getByRole("button", { name: "Tạo dự án" }));
 
     const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("Created project Glass Citadel (proj_new).");
-    expect(within(status).getByRole("link", { name: /Start with the script/ })).toHaveAttribute(
+    expect(status).toHaveTextContent("Đã tạo dự án Glass Citadel (proj_new).");
+    expect(within(status).getByRole("link", { name: /Bắt đầu với kịch bản/ })).toHaveAttribute(
       "href",
       "/projects/proj_new/script-studio",
     );
@@ -165,11 +168,11 @@ describe("ProjectsPage", () => {
     );
     renderPage();
 
-    const list = await screen.findByRole("region", { name: "All projects" });
-    const opens = await within(list).findAllByRole("link", { name: /^Open / });
-    expect(opens[0]).toHaveAccessibleName("Open New Cut");
+    const list = await screen.findByRole("region", { name: /Tất cả dự án/ });
+    const opens = await within(list).findAllByRole("link", { name: /^Mở / });
+    expect(opens[0]).toHaveAccessibleName("Mở New Cut");
     expect(opens[0]).toHaveAttribute("href", "/projects/proj_new/shot-board");
-    expect(within(list).getAllByRole("link", { name: "Settings" })[1]).toHaveAttribute(
+    expect(within(list).getAllByRole("link", { name: "Cài đặt" })[1]).toHaveAttribute(
       "href",
       "/projects/proj_old/settings",
     );
@@ -179,13 +182,13 @@ describe("ProjectsPage", () => {
     stubApi({ createStatus: 422 });
     renderPage();
 
-    await userEvent.click(screen.getByRole("button", { name: "New project" }));
-    const form = screen.getByRole("form", { name: "Create new project" });
-    await userEvent.type(within(form).getByLabelText("Project name"), "X");
-    await userEvent.click(within(form).getByRole("button", { name: "Create project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dự án mới" }));
+    const form = screen.getByRole("form", { name: "Tạo dự án mới" });
+    await userEvent.type(within(form).getByLabelText("Tên dự án"), "X");
+    await userEvent.click(within(form).getByRole("button", { name: "Tạo dự án" }));
     await waitFor(() =>
       expect(within(form).getByRole("alert")).toHaveTextContent(
-        "Could not create project: Project name cannot be blank.",
+        "Không thể create project: Project name cannot be blank.",
       ),
     );
     expect(screen.queryByRole("status")).toBeNull();

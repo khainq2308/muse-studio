@@ -1,0 +1,66 @@
+{
+  "title": "Dự án",
+  "description": "Mỗi dự án chứa một bộ phim: kịch bản, Story Bible, các shot, take và timeline.",
+  "newProject": "Dự án mới",
+  "closeForm": "Đóng biểu mẫu",
+  "createdNotice": "Đã tạo dự án {{name}} ({{projectId}}).",
+  "startWithScript": "Bắt đầu với kịch bản →",
+  "form": {
+    "title": "Tạo dự án mới",
+    "endpoint": "POST /api/v1/projects",
+    "name": "Tên dự án",
+    "namePlaceholder": "Ví dụ: Tập 02 — Thành phố thủy tinh",
+    "stylePreset": "Phong cách (Style preset)",
+    "description": "Mô tả",
+    "descriptionPlaceholder": "Ghi chú sản xuất hoặc đối tượng khán giả",
+    "aspectRatio": "Tỉ lệ khung hình (Aspect ratio)",
+    "frameRate": "Tốc độ khung hình (Frame rate)",
+    "fpsUnit": "{{value}} fps",
+    "language": "Ngôn ngữ kịch bản",
+    "outputProfile": "Cấu hình xuất (Output profile)",
+    "outputProfileHint": "Cấu hình xem trước cơ bản (H.264 / AAC trong MP4, 1080p, stereo)",
+    "cancel": "Hủy",
+    "submit": "Tạo dự án",
+    "submitting": "Đang tạo..."
+  },
+  "allProjects": {
+    "title": "Tất cả dự án ({{count}})",
+    "loading": "Đang tải danh sách dự án...",
+    "emptyTitle": "Chưa có dự án nào",
+    "emptyDescription": "Tạo dự án để nhập kịch bản và bắt đầu phân tách thành các shot.",
+    "updated": "Cập nhật {{time}}",
+    "open": "Mở",
+    "openAria": "Mở {{name}}",
+    "settings": "Cài đặt"
+  },
+  "settings": {
+    "title": "Cài đặt dự án",
+    "description": "Hồ sơ dự án và lịch sử revision. Thao tác nhân bản sẽ sao chép cấu hình này sang một dự án mới, rỗng.",
+    "duplicate": "Nhân bản cài đặt",
+    "duplicating": "Đang nhân bản...",
+    "duplicatedNotice": "Đã nhân bản cài đặt dự án thành {{name}} ({{projectId}}). {{scopeNote}}",
+    "scopeNote": "Chỉ sao chép cấu hình cài đặt; các shot, take và asset không được sao chép.",
+    "openCopyInScript": "Mở bản sao trong Kịch bản & Story Bible →",
+    "profile": {
+      "ariaLabel": "Hồ sơ dự án đang hoạt động",
+      "nameAndId": "Tên dự án & ID",
+      "formatAndFps": "Định dạng & Tốc độ khung hình",
+      "langInfo": "lang: {{language}}",
+      "stylePreset": "Phong cách (Style Preset)",
+      "noDescription": "Chưa có logline cấu hình",
+      "stateAndAssets": "Trạng thái & Asset",
+      "revisionNum": "Revision #{{number}}",
+      "assetCount": "{{count}} asset media đã đăng ký"
+    },
+    "revisions": {
+      "ariaLabel": "Lịch sử revision",
+      "title": "Lịch sử revision dự án ({{count}})",
+      "endpoint": "GET /api/v1/projects/{{projectId}}/revisions",
+      "loading": "Đang tải lịch sử revision...",
+      "emptyTitle": "Chưa có revision nào được ghi lại",
+      "emptyDescription": "Các revision dự án được tự động ghi lại khi tạo mới hoặc nhân bản dự án.",
+      "itemsCount": "{{count}} mục",
+      "objectLabel": "đối tượng"
+    }
+  }
+}

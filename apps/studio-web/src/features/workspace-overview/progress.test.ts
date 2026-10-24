@@ -132,9 +132,9 @@ describe("nextStepCopy", () => {
         shotId: "s",
         tab: "prompt",
       }).title,
-    ).toBe("Resolve 1 blocked shot");
+    ).toBe("Xử lý 1 shot bị chặn");
     expect(nextStepCopy({ kind: "check_failed", module: "queue-monitor", count: 3 }).title).toBe(
-      "Check 3 failed shots",
+      "Kiểm tra 3 shot thất bại",
     );
   });
 });

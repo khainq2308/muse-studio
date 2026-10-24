@@ -1,0 +1,70 @@
+{
+  "title": "Connections",
+  "description": "Provider gateways every project generates through: health and capability probes, and the account pool each one rotates through.",
+  "newConnection": "New connection",
+  "closeForm": "Close form",
+  "form": {
+    "ariaLabel": "Create provider connection",
+    "name": "Connection name",
+    "namePlaceholder": "e.g. Studio muse2api Cluster",
+    "providerType": "Provider type",
+    "baseUrl": "Base URL",
+    "baseUrlPlaceholder": "https://api.muse2api.example.com",
+    "apiKey": "Default API key (optional)",
+    "apiKeyPlaceholder": "Masked & encrypted at rest",
+    "maxConcurrency": "Max concurrency",
+    "timeoutSeconds": "Timeout (s)",
+    "cancel": "Cancel",
+    "submit": "Create connection",
+    "submitting": "Creating..."
+  },
+  "list": {
+    "loading": "Loading provider connections...",
+    "emptyTitle": "No provider connections configured",
+    "emptyDescription": "Create a muse2api or mock provider connection above to begin queuing shot generations.",
+    "selectAria": "Select connection {{name}}",
+    "specs": "max {{max}} concurrent · timeout {{timeout}}s · key {{key}}",
+    "checked": "Checked {{time}}",
+    "neverProbed": "Never probed",
+    "testAndProbe": "Test & probe"
+  },
+  "pool": {
+    "title": "{{name}} — Account Pool",
+    "description": "Multi-account rotation pool with priority weighting, optional per-account proxy, and live capability probing. Secrets are encrypted at rest and masked in responses.",
+    "addAccount": "Add pool account",
+    "close": "Close",
+    "capabilitySnapshot": "Observed Capability Probe Snapshot",
+    "configured": "configured",
+    "itemsCount_one": "{{count}} item",
+    "itemsCount_other": "{{count}} items",
+    "form": {
+      "ariaLabel": "Add pool account",
+      "label": "Account label",
+      "labelPlaceholder": "e.g. Account #01 (Primary)",
+      "priority": "Priority (lower = preferred)",
+      "apiKey": "Account API key",
+      "apiKeyPlaceholder": "Provider bearer key or token",
+      "proxyUrl": "Proxy URL (optional, credentials redacted in UI)",
+      "proxyUrlPlaceholder": "http://proxy.example.internal:8080",
+      "cancel": "Cancel",
+      "submit": "Save account",
+      "submitting": "Saving..."
+    },
+    "accounts": {
+      "loading": "Loading pool accounts...",
+      "emptyTitle": "No pool accounts configured",
+      "emptyDescription": "Add one or more provider accounts to enable priority failover and per-account rate isolation.",
+      "priority": "priority {{priority}}",
+      "meta": "key: {{key}} · latency: {{latency}}",
+      "proxyPart": " · proxy: {{host}}",
+      "enable": "Enable",
+      "disable": "Disable",
+      "test": "Test",
+      "remove": "Remove",
+      "removeConfirmTitle": "Remove pool account \"{{label}}\"?",
+      "removeConfirmDesc": "The stored API key for this account is deleted permanently. To use this account again you must add it back and re-enter its API key.",
+      "removing": "Removing...",
+      "removeConfirmAction": "Remove account"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "title": "Workflow Automation",
+  "description": "Inspect the workflow DAG and trigger automated node executions.",
+  "reload": "Reload workflow",
+  "reloading": "Reloading...",
+  "runMode": "Run mode",
+  "runModes": {
+    "dry_run": "Dry run",
+    "full": "Full run",
+    "from_here": "Run from here",
+    "downstream": "Run downstream"
+  },
+  "trigger": "Trigger run",
+  "triggering": "Triggering...",
+  "canvas": {
+    "autoLoadNotice": "Auto-loaded workflow definition from orchestrator.",
+    "loading": "Loading workflow DAG...",
+    "emptyTitle": "No workflow definition",
+    "emptyDescription": "There is no active workflow DAG loaded for this project.",
+    "nodeStates": {
+      "pending": "Pending",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "skipped": "Skipped",
+      "waiting_approval": "Waiting for manual approval"
+    },
+    "approveGate": "Approve gate",
+    "approvingGate": "Approving...",
+    "gateApproved": "Gate approved"
+  },
+  "errors": {
+    "loadFailed": "Could not load workflow: {{message}}",
+    "triggerFailed": "Could not trigger workflow execution: {{message}}",
+    "approveFailed": "Could not approve manual gate: {{message}}"
+  }
+}

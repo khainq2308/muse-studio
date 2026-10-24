@@ -1,0 +1,8 @@
+{
+  "ariaLabel": "Studio admin token",
+  "placeholderEmpty": "Studio admin token",
+  "placeholderActive": "Session active · update token",
+  "connect": "Connect",
+  "updateToken": "Update token",
+  "disconnect": "Disconnect"
+}

@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Cable } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { QueryState } from "@/components/shared/query-state";
 import type { Connection } from "@/entities/connection/api";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,8 @@ export function ConnectionHealth({
   errorMessage,
   onRetry,
 }: ConnectionHealthProps) {
+  const { t } = useTranslation("workspace-overview");
+
   return (
     <section
       aria-labelledby="overview-connections"
@@ -45,13 +48,13 @@ export function ConnectionHealth({
       <div className="flex items-center justify-between gap-2">
         <h3 id="overview-connections" className="flex items-center gap-2 text-sm font-semibold">
           <Cable className="size-4 text-primary" aria-hidden="true" />
-          Provider connections
+          {t("connectionHealth.title")}
         </h3>
         <Link
           to="/connections"
           className="text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          Manage
+          {t("connectionHealth.manage")}
         </Link>
       </div>
       <QueryState
@@ -59,10 +62,10 @@ export function ConnectionHealth({
         isError={isError}
         isEmpty={connections.length === 0}
         hasData={connections.length > 0}
-        loadingMessage="Loading connections..."
+        loadingMessage={t("connectionHealth.loading")}
         errorMessage={errorMessage}
-        emptyTitle="No provider connection"
-        emptyDescription="Shots cannot be generated until a provider connection is added on the Connections page."
+        emptyTitle={t("connectionHealth.noConnections")}
+        emptyDescription={t("connectionHealth.description")}
         onRetry={onRetry}
       >
         <ul className="space-y-2">

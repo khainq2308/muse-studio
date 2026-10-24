@@ -62,6 +62,17 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/lib/i18n/**/*.{ts,tsx}"],
+    rules: {
+      // Non-credential UI locale preference is persisted in localStorage.
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: "Use the shared authenticated API client." },
+        { name: "sessionStorage", message: "Admin credentials must remain memory-only." },
+      ],
+    },
+  },
+  {
     files: ["src/entities/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [

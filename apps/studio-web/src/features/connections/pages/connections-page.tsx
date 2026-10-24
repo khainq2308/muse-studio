@@ -10,7 +10,9 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
+import { PageHeader } from "@/components/shared/page-header";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,9 +27,9 @@ import {
   type Connection,
 } from "@/entities/connection/api";
 import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
+import { formatTime } from "@/lib/i18n/formatters";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/shared/page-header";
 
 /** Limits mirrored from the OpenAPI ConnectionCreateIn / AccountCreateIn schemas. */
 const MAX_CONCURRENCY_LIMITS = { min: 1, max: 20 } as const;
@@ -65,6 +67,7 @@ function healthBadgeClass(state: Connection["health_state"]): string {
 }
 
 function AccountPoolPanel({ connection }: { connection: Connection }) {
+  const { t } = useTranslation("connections");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const accountsQuery = useConnectionAccounts(connection.id);
   const createAccount = useCreateAccount(connection.id);
@@ -98,12 +101,11 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
         <div>
           <div className="flex items-center gap-2">
             <Server className="size-4 text-primary" aria-hidden="true" />
-            <h3 className="text-base font-semibold">{connection.name} — Account Pool</h3>
+            <h3 className="text-base font-semibold">
+              {t("pool.title", { name: connection.name })}
+            </h3>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Multi-account rotation pool with priority weighting, optional per-account proxy, and
-            live capability probing. Secrets are encrypted at rest and masked in responses.
-          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t("pool.description")}</p>
         </div>
 
         <Button
@@ -122,12 +124,12 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
           {showAddAccount ? (
             <>
               <X className="size-4" aria-hidden="true" />
-              Close
+              {t("pool.close")}
             </>
           ) : (
             <>
               <Plus className="size-4" aria-hidden="true" />
-              Add pool account
+              {t("pool.addAccount")}
             </>
           )}
         </Button>
@@ -135,9 +137,7 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
 
       {capabilitiesEntries.length > 0 && (
         <div className="rounded-lg border border-border bg-card p-3">
-          <p className="text-xs font-semibold text-foreground">
-            Observed Capability Probe Snapshot
-          </p>
+          <p className="text-xs font-semibold text-foreground">{t("pool.capabilitySnapshot")}</p>
           <dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             {capabilitiesEntries.slice(0, 8).map(([key, value]) => (
               <div key={key} className="min-w-0">
@@ -145,8 +145,8 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
                 <dd className="truncate font-medium text-foreground">
                   {typeof value === "object" && value !== null
                     ? Array.isArray(value)
-                      ? `${value.length} items`
-                      : "configured"
+                      ? t("pool.itemsCount", { count: value.length })
+                      : t("pool.configured")
                     : String(value)}
                 </dd>
               </div>
@@ -157,7 +157,7 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
 
       {showAddAccount && (
         <form
-          aria-label="Add pool account"
+          aria-label={t("pool.form.ariaLabel")}
           className="space-y-3 rounded-xl border border-primary/20 bg-card p-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -183,17 +183,17 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1 text-xs font-medium">
-              <span>Account label</span>
+              <span>{t("pool.form.label")}</span>
               <input
                 required
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
-                placeholder="e.g. Account #01 (Primary)"
+                placeholder={t("pool.form.labelPlaceholder")}
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
             <label className="space-y-1 text-xs font-medium">
-              <span>Priority (lower = preferred)</span>
+              <span>{t("pool.form.priority")}</span>
               <input
                 type="number"
                 min={PRIORITY_LIMITS.min}
@@ -206,23 +206,23 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
               />
             </label>
             <label className="space-y-1 text-xs font-medium sm:col-span-2">
-              <span>Account API key</span>
+              <span>{t("pool.form.apiKey")}</span>
               <input
                 required
                 type="password"
                 autoComplete="off"
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
-                placeholder="Provider bearer key or token"
+                placeholder={t("pool.form.apiKeyPlaceholder")}
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
             <label className="space-y-1 text-xs font-medium sm:col-span-2">
-              <span>Proxy URL (optional, credentials redacted in UI)</span>
+              <span>{t("pool.form.proxyUrl")}</span>
               <input
                 value={proxyUrl}
                 onChange={(event) => setProxyUrl(event.target.value)}
-                placeholder="http://proxy.example.internal:8080"
+                placeholder={t("pool.form.proxyUrlPlaceholder")}
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
@@ -236,14 +236,14 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
 
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={closeAddAccount}>
-              Cancel
+              {t("pool.form.cancel")}
             </Button>
             <Button
               type="submit"
               size="sm"
               disabled={!label.trim() || !apiKey.trim() || createAccount.isPending}
             >
-              {createAccount.isPending ? "Saving..." : "Save account"}
+              {createAccount.isPending ? t("pool.form.submitting") : t("pool.form.submit")}
             </Button>
           </div>
         </form>
@@ -254,14 +254,14 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
         isError={accountsQuery.isError}
         isEmpty={accounts.length === 0}
         hasData={accounts.length > 0}
-        loadingMessage="Loading pool accounts..."
+        loadingMessage={t("pool.accounts.loading")}
         errorMessage={authErrorMessage(
           accountsQuery.error,
           activeAdminToken,
           "connection accounts",
         )}
-        emptyTitle="No pool accounts configured"
-        emptyDescription="Add one or more provider accounts to enable priority failover and per-account rate isolation."
+        emptyTitle={t("pool.accounts.emptyTitle")}
+        emptyDescription={t("pool.accounts.emptyDescription")}
         onRetry={() => void accountsQuery.refetch()}
       >
         <ul className="space-y-2.5">
@@ -284,12 +284,17 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
                       {account.health_state}
                     </span>
                     <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                      priority {account.priority}
+                      {t("pool.accounts.priority", { priority: account.priority })}
                     </span>
                   </div>
                   <p className="font-mono text-xs text-muted-foreground">
-                    key: {account.api_key_masked} · latency: {formatLatency(account.latency_ms)}
-                    {account.proxy_display_host ? ` · proxy: ${account.proxy_display_host}` : ""}
+                    {t("pool.accounts.meta", {
+                      key: account.api_key_masked,
+                      latency: formatLatency(account.latency_ms),
+                    })}
+                    {account.proxy_display_host
+                      ? t("pool.accounts.proxyPart", { host: account.proxy_display_host })
+                      : ""}
                   </p>
                   {account.last_error_redacted && (
                     <p className="text-xs text-destructive">{account.last_error_redacted}</p>
@@ -318,7 +323,7 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
                       );
                     }}
                   >
-                    {account.enabled ? "Disable" : "Enable"}
+                    {account.enabled ? t("pool.accounts.disable") : t("pool.accounts.enable")}
                   </Button>
                   <Button
                     type="button"
@@ -342,7 +347,7 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
                     ) : (
                       <Activity className="size-3.5" aria-hidden="true" />
                     )}
-                    Test
+                    {t("pool.accounts.test")}
                   </Button>
                   <Button
                     type="button"
@@ -358,18 +363,18 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
                     }}
                   >
                     <Trash2 className="size-3.5 text-destructive" aria-hidden="true" />
-                    Remove
+                    {t("pool.accounts.remove")}
                   </Button>
                 </div>
               </div>
 
               {confirmDeleteAccountId === account.id && (
                 <ConfirmActionDialog
-                  title={`Remove pool account "${account.label}"?`}
+                  title={t("pool.accounts.removeConfirmTitle", { label: account.label })}
                   confirmLabel={
                     deleteAccount.isPending && deletingAccountId === account.id
-                      ? "Removing..."
-                      : "Remove account"
+                      ? t("pool.accounts.removing")
+                      : t("pool.accounts.removeConfirmAction")
                   }
                   destructive
                   isSubmitting={deleteAccount.isPending && deletingAccountId === account.id}
@@ -389,10 +394,7 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
                     });
                   }}
                 >
-                  <p>
-                    The stored API key for this account is deleted permanently. To use this account
-                    again you must add it back and re-enter its API key.
-                  </p>
+                  <p>{t("pool.accounts.removeConfirmDesc")}</p>
                 </ConfirmActionDialog>
               )}
 
@@ -411,6 +413,7 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
 
 /** Workspace-level provider connections; every project generates through these. */
 export function ConnectionsPage() {
+  const { t } = useTranslation("connections");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const connectionsQuery = useConnections();
   const createConnection = useCreateConnection();
@@ -440,8 +443,8 @@ export function ConnectionsPage() {
   return (
     <div data-testid="connections-page" className="space-y-6">
       <PageHeader
-        title="Connections"
-        description="Provider gateways every project generates through: health and capability probes, and the account pool each one rotates through."
+        title={t("title")}
+        description={t("description")}
         actions={
           <>
             <Button
@@ -460,12 +463,12 @@ export function ConnectionsPage() {
               {showCreateForm ? (
                 <>
                   <X className="size-4" aria-hidden="true" />
-                  Close form
+                  {t("closeForm")}
                 </>
               ) : (
                 <>
                   <Plus className="size-4" aria-hidden="true" />
-                  New connection
+                  {t("newConnection")}
                 </>
               )}
             </Button>
@@ -475,7 +478,7 @@ export function ConnectionsPage() {
 
       {showCreateForm && (
         <form
-          aria-label="Create provider connection"
+          aria-label={t("form.ariaLabel")}
           className="space-y-4 rounded-xl border border-primary/20 bg-secondary/40 p-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -503,17 +506,17 @@ export function ConnectionsPage() {
         >
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="space-y-1 text-xs font-medium">
-              <span>Connection name</span>
+              <span>{t("form.name")}</span>
               <input
                 required
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="e.g. Studio muse2api Cluster"
+                placeholder={t("form.namePlaceholder")}
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
             <label className="space-y-1 text-xs font-medium">
-              <span>Provider type</span>
+              <span>{t("form.providerType")}</span>
               <select
                 value={providerType}
                 onChange={(event) => setProviderType(event.target.value)}
@@ -524,29 +527,29 @@ export function ConnectionsPage() {
               </select>
             </label>
             <label className="space-y-1 text-xs font-medium">
-              <span>Base URL</span>
+              <span>{t("form.baseUrl")}</span>
               <input
                 required
                 type="url"
                 value={baseUrl}
                 onChange={(event) => setBaseUrl(event.target.value)}
-                placeholder="https://api.muse2api.example.com"
+                placeholder={t("form.baseUrlPlaceholder")}
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
             <label className="space-y-1 text-xs font-medium">
-              <span>Default API key (optional)</span>
+              <span>{t("form.apiKey")}</span>
               <input
                 type="password"
                 autoComplete="off"
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
-                placeholder="Masked & encrypted at rest"
+                placeholder={t("form.apiKeyPlaceholder")}
                 className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
             <label className="space-y-1 text-xs font-medium">
-              <span>Max concurrency</span>
+              <span>{t("form.maxConcurrency")}</span>
               <input
                 type="number"
                 min={MAX_CONCURRENCY_LIMITS.min}
@@ -559,7 +562,7 @@ export function ConnectionsPage() {
               />
             </label>
             <label className="space-y-1 text-xs font-medium">
-              <span>Timeout (s)</span>
+              <span>{t("form.timeoutSeconds")}</span>
               <input
                 type="number"
                 min={TIMEOUT_SECONDS_LIMITS.min}
@@ -581,14 +584,14 @@ export function ConnectionsPage() {
 
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={closeCreateForm}>
-              Cancel
+              {t("form.cancel")}
             </Button>
             <Button
               type="submit"
               size="sm"
               disabled={!name.trim() || !baseUrl.trim() || createConnection.isPending}
             >
-              {createConnection.isPending ? "Creating..." : "Create connection"}
+              {createConnection.isPending ? t("form.submitting") : t("form.submit")}
             </Button>
           </div>
         </form>
@@ -599,14 +602,14 @@ export function ConnectionsPage() {
         isError={connectionsQuery.isError}
         isEmpty={connections.length === 0}
         hasData={connections.length > 0}
-        loadingMessage="Loading provider connections..."
+        loadingMessage={t("list.loading")}
         errorMessage={authErrorMessage(
           connectionsQuery.error,
           activeAdminToken,
           "provider connections",
         )}
-        emptyTitle="No provider connections configured"
-        emptyDescription="Create a muse2api or mock provider connection above to begin queuing shot generations."
+        emptyTitle={t("list.emptyTitle")}
+        emptyDescription={t("list.emptyDescription")}
         onRetry={() => void connectionsQuery.refetch()}
       >
         <div className="grid gap-6 lg:grid-cols-12">
@@ -629,7 +632,7 @@ export function ConnectionsPage() {
                   <button
                     type="button"
                     aria-pressed={isSelected}
-                    aria-label={`Select connection ${conn.name}`}
+                    aria-label={t("list.selectAria", { name: conn.name })}
                     aria-describedby={`connection-details-${conn.id}`}
                     onClick={() => setSelectedConnectionId(conn.id)}
                     className="flex w-full cursor-pointer items-start justify-between gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -645,8 +648,11 @@ export function ConnectionsPage() {
                         {conn.base_url}
                       </span>
                       <span className="mt-1 block break-words font-mono text-xs text-muted-foreground">
-                        max {conn.max_concurrency} concurrent · timeout {conn.timeout_seconds}s ·
-                        key {conn.api_key_masked}
+                        {t("list.specs", {
+                          max: conn.max_concurrency,
+                          timeout: conn.timeout_seconds,
+                          key: conn.api_key_masked,
+                        })}
                       </span>
                     </span>
 
@@ -680,8 +686,8 @@ export function ConnectionsPage() {
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <span className="text-[11px] text-muted-foreground">
                       {conn.last_checked_at
-                        ? `Checked ${new Date(conn.last_checked_at).toLocaleTimeString()}`
-                        : "Never probed"}
+                        ? t("list.checked", { time: formatTime(conn.last_checked_at) })
+                        : t("list.neverProbed")}
                     </span>
                     <Button
                       type="button"
@@ -706,7 +712,7 @@ export function ConnectionsPage() {
                       ) : (
                         <Activity className="size-3.5" aria-hidden="true" />
                       )}
-                      Test & probe
+                      {t("list.testAndProbe")}
                     </Button>
                   </div>
 

@@ -8,6 +8,7 @@ import {
   ListChecks,
   type LucideIcon,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { PIPELINE_MODULES, PROJECT_MODULE_LABELS, type ProjectModule } from "@/app/project-modules";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,23 @@ const MODULE_ICONS: Record<ProjectModule, LucideIcon> = {
   "timeline-editor": Clapperboard,
   "workflow-canvas": GitBranch,
   settings: FolderCog,
+};
+
+const MODULE_TRANSLATION_KEYS: Record<
+  ProjectModule,
+  | "nav.modules.scriptStudio"
+  | "nav.modules.shotBoard"
+  | "nav.modules.queueMonitor"
+  | "nav.modules.timelineEditor"
+  | "nav.modules.workflowCanvas"
+  | "nav.modules.settings"
+> = {
+  "script-studio": "nav.modules.scriptStudio",
+  "shot-board": "nav.modules.shotBoard",
+  "queue-monitor": "nav.modules.queueMonitor",
+  "timeline-editor": "nav.modules.timelineEditor",
+  "workflow-canvas": "nav.modules.workflowCanvas",
+  settings: "nav.modules.settings",
 };
 
 interface ProjectModuleNavProps {
@@ -38,7 +56,12 @@ function ModuleLink({
   step?: number;
   badge?: string;
 }) {
+  const { t } = useTranslation();
   const Icon = MODULE_ICONS[module];
+  const label = t(MODULE_TRANSLATION_KEYS[module], {
+    defaultValue: PROJECT_MODULE_LABELS[module],
+  });
+
   return (
     <Link
       to="/projects/$projectId/$module"
@@ -65,7 +88,7 @@ function ModuleLink({
       ) : (
         <Icon className="size-4 shrink-0" aria-hidden="true" />
       )}
-      <span>{PROJECT_MODULE_LABELS[module]}</span>
+      <span>{label}</span>
       {badge && (
         <span
           className={cn(
@@ -85,10 +108,12 @@ function ModuleLink({
  * the project's own settings. Workspace tools are in the app header, not here.
  */
 export function ProjectModuleNav({ projectId, activeModule }: ProjectModuleNavProps) {
+  const { t } = useTranslation();
+
   return (
-    <nav aria-label="Project modules" className="mb-5">
+    <nav aria-label={t("nav.projectModules", { defaultValue: "Project modules" })} className="mb-5">
       <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-card p-1.5 shadow-2xs lg:flex-row lg:items-center lg:justify-between">
-        <ol aria-label="Production steps" className="flex flex-wrap items-center gap-1">
+        <ol aria-label={t("nav.steps.production")} className="flex flex-wrap items-center gap-1">
           {PIPELINE_MODULES.map((module, index) => (
             <li key={module}>
               <ModuleLink
@@ -101,7 +126,7 @@ export function ProjectModuleNav({ projectId, activeModule }: ProjectModuleNavPr
           ))}
         </ol>
         <ul
-          aria-label="More project tools"
+          aria-label={t("nav.steps.moreTools")}
           className="flex flex-wrap items-center gap-1 border-t border-border pt-1.5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-1.5"
         >
           <li>
@@ -109,7 +134,7 @@ export function ProjectModuleNav({ projectId, activeModule }: ProjectModuleNavPr
               projectId={projectId}
               module="workflow-canvas"
               active={activeModule === "workflow-canvas"}
-              badge="Advanced"
+              badge={t("nav.steps.advanced")}
             />
           </li>
           <li>

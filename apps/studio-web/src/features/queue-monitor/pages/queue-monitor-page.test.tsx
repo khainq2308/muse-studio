@@ -270,9 +270,9 @@ describe("QueueMonitorPage", () => {
 
     expect(screen.getByTestId("queue-task-task-running-1")).toBeTruthy();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Refresh failed; showing the last loaded results/,
+      /Refresh failed; showing the last loaded results|Làm mới thất bại; đang hiển thị kết quả tải trước đó/,
     );
-    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /retry|thử lại/i })).toBeEnabled();
   });
 
   it("disables only tasks whose actions are pending", () => {
@@ -288,7 +288,7 @@ describe("QueueMonitorPage", () => {
     });
     render(<QueueMonitorPage projectId="project-1" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: /retry|thử lại/i }));
 
     expect(mutation.reset).toHaveBeenCalledTimes(1);
     expect(query.resetPollingWindow).toHaveBeenCalledTimes(1);

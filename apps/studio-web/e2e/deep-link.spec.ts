@@ -102,7 +102,9 @@ test("invalid project modules render the same 404 page as unknown routes", async
   await page.goto("/projects/test-project/not-a-real-module");
 
   await expect(page).toHaveURL(/\/projects\/test-project\/not-a-real-module$/);
-  await expect(page.getByRole("heading", { name: "404 - Page not found" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /404 - Page not found|Không tìm thấy trang/i }),
+  ).toBeVisible();
   await expect(page.getByTestId("project-module-route")).toHaveCount(0);
 });
 
@@ -127,16 +129,22 @@ test("a nonexistent project shows a not-found state instead of an empty module",
   await page.goto("/projects/missing-project/queue-monitor");
 
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Project not found|Không tìm thấy dự án/i }),
+  ).toBeVisible();
   await expect(page.getByTestId("queue-monitor-page")).toHaveCount(0);
-  await page.getByRole("link", { name: "Back to workspace overview" }).click();
+  await page.getByRole("link", { name: /Back to workspace overview|Về trang Tổng quan/i }).click();
   await expect(page).toHaveURL(/\/$/);
 });
 
 test("unknown routes render an explicit 404 page", async ({ page }) => {
   await page.goto("/not-a-real-route");
 
-  await expect(page.getByRole("heading", { name: "404 - Page not found" })).toBeVisible();
-  await expect(page.getByText("The page you requested doesn't exist.")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /404 - Page not found|Không tìm thấy trang/i }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/(?:The page you requested doesn't exist|Trang bạn yêu cầu không tồn tại)/i),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toHaveCount(0);
 });

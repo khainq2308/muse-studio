@@ -1,6 +1,7 @@
 import { useQueries } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FolderPlus } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/shared/page-header";
 import { QueryState } from "@/components/shared/query-state";
 import { useConnections } from "@/entities/connection/api";
@@ -22,6 +23,7 @@ import { useSessionStore } from "@/lib/stores/session-store";
 export const RECENT_PROJECT_LIMIT = 4;
 
 export function OverviewPage() {
+  const { t } = useTranslation("workspace-overview");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const projectQuery = useProjects();
@@ -56,15 +58,15 @@ export function OverviewPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Overview"
-        description="Recently updated projects, each with the next step its shots call for."
+        title={t("title")}
+        description={t("description")}
         actions={
           <Link
             to="/projects"
             className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3.5 text-sm font-medium transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <FolderPlus className="size-4 text-muted-foreground" aria-hidden="true" />
-            All projects & new project
+            {t("allProjectsAndNew")}
           </Link>
         }
       />
@@ -73,14 +75,14 @@ export function OverviewPage() {
         <section aria-labelledby="overview-recent" className="min-w-0 space-y-3">
           <div className="flex items-baseline justify-between gap-2">
             <h3 id="overview-recent" className="text-base font-semibold">
-              Recently updated
+              {t("recentlyUpdated")}
             </h3>
             {allProjects.length > recentProjects.length && (
               <Link
                 to="/projects"
                 className="text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                View all {allProjects.length} projects
+                {t("viewAllCount", { count: allProjects.length })}
               </Link>
             )}
           </div>
@@ -89,13 +91,16 @@ export function OverviewPage() {
             isError={projectQuery.isError}
             isEmpty={allProjects.length === 0}
             hasData={allProjects.length > 0}
-            loadingMessage="Loading projects..."
+            loadingMessage={t("loadingProjects")}
             errorMessage={authErrorMessage(projectQuery.error, activeAdminToken, "projects")}
-            emptyTitle="No projects yet"
-            emptyDescription="Create a project on the Projects page, then import a script to start."
+            emptyTitle={t("noProjectsTitle")}
+            emptyDescription={t("noProjectsDescription")}
             onRetry={() => void projectQuery.refetch()}
           >
-            <ul aria-label="Recently updated projects" className="grid gap-3 lg:grid-cols-2">
+            <ul
+              aria-label={t("recentlyUpdated", { defaultValue: "Recently updated projects" })}
+              className="grid gap-3 lg:grid-cols-2"
+            >
               {recentProjects.map((project, index) => (
                 <ProjectProgressCard
                   key={project.id}

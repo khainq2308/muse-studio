@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import {
@@ -224,6 +225,7 @@ export function ScriptImportPanel({
   onDismissResult,
   onReviewStoryBible,
 }: ScriptImportPanelProps) {
+  const { t } = useTranslation("script-studio");
   const headingId = useId();
   const outlineHeadingId = useId();
   const idPrefix = useId();
@@ -366,7 +368,7 @@ export function ScriptImportPanel({
             className="bg-background shadow-2xs"
           >
             <Sparkles className="size-3.5 text-primary" aria-hidden="true" />
-            Insert sample script
+            {t("import.insertSample")}
           </Button>
         </div>
       </div>
@@ -393,7 +395,10 @@ export function ScriptImportPanel({
               <div className="flex items-center gap-2 font-medium text-success">
                 <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
                 <span>
-                  Imported script revision v{result.version_number} ({result.script_revision_id})
+                  {t("import.importedRevision", {
+                    version: result.version_number,
+                    id: result.script_revision_id,
+                  })}
                 </span>
               </div>
               <Button
@@ -401,10 +406,10 @@ export function ScriptImportPanel({
                 size="sm"
                 variant="ghost"
                 onClick={onDismissResult}
-                aria-label="Dismiss script import result"
+                aria-label={t("import.result.dismiss")}
               >
                 <X className="size-3.5" aria-hidden="true" />
-                Dismiss
+                {t("import.result.dismiss")}
               </Button>
             </div>
 
@@ -412,19 +417,19 @@ export function ScriptImportPanel({
 
             <dl className="grid grid-cols-2 gap-2 rounded-lg bg-background/90 p-3 text-xs sm:grid-cols-4">
               <div>
-                <dt className="text-muted-foreground">Characters detected</dt>
+                <dt className="text-muted-foreground">{t("import.charactersDetected")}</dt>
                 <dd className="mt-0.5 text-sm font-semibold">{result.detected_characters}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Locations detected</dt>
+                <dt className="text-muted-foreground">{t("import.locationsDetected")}</dt>
                 <dd className="mt-0.5 text-sm font-semibold">{result.detected_locations}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Scenes detected</dt>
+                <dt className="text-muted-foreground">{t("import.scenesDetected")}</dt>
                 <dd className="mt-0.5 text-sm font-semibold">{result.detected_scenes}</dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Generated shots</dt>
+                <dt className="text-muted-foreground">{t("import.generatedShots")}</dt>
                 <dd className="mt-0.5 text-sm font-semibold">{result.generated_shots}</dd>
               </div>
             </dl>
@@ -437,7 +442,7 @@ export function ScriptImportPanel({
               >
                 <p className="flex items-center gap-1.5 font-medium">
                   <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
-                  Analyzer warnings ({result.warnings.length})
+                  {t("import.analyzerWarnings", { count: result.warnings.length })}
                 </p>
                 <ul className="mt-1.5 list-inside list-disc space-y-1">
                   {result.warnings.map((warning, index) => (
@@ -463,7 +468,7 @@ export function ScriptImportPanel({
                   ) : (
                     <Wand2 className="size-3.5" aria-hidden="true" />
                   )}
-                  Apply revision to Story Bible &amp; shots
+                  {t("import.applyRevision")}
                 </Button>
               )}
               {onReviewStoryBible && (
@@ -474,7 +479,7 @@ export function ScriptImportPanel({
                   onClick={onReviewStoryBible}
                 >
                   <BookOpenText className="size-3.5" aria-hidden="true" />
-                  Review Story Bible
+                  {t("import.reviewStoryBible")}
                 </Button>
               )}
               <Link
@@ -483,7 +488,7 @@ export function ScriptImportPanel({
                 className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 text-xs font-medium text-primary hover:bg-primary/20"
               >
                 <LayoutGrid className="size-3.5" aria-hidden="true" />
-                Open Shot Board
+                {t("import.openShotBoard")}
               </Link>
               {result.raw_content_preserved && (
                 <span className="text-xs text-muted-foreground">
@@ -626,7 +631,7 @@ export function ScriptImportPanel({
                 className="flex items-center gap-1.5 text-sm font-semibold"
               >
                 <AlignLeft className="size-4 text-primary" aria-hidden="true" />
-                Script content
+                {t("import.scriptContent")}
               </label>
               <span className="font-mono text-xs text-muted-foreground">
                 {rawContent.length.toLocaleString()} /{" "}
@@ -637,7 +642,7 @@ export function ScriptImportPanel({
             <div className="rounded-xl border border-border bg-background p-1 shadow-inner">
               <textarea
                 rows={12}
-                placeholder="Paste SCENE / SHOT blocks or screenplay paragraphs here..."
+                placeholder={t("import.scriptPlaceholder")}
                 maxLength={SCRIPT_IMPORT_LIMITS.maxScriptChars}
                 className={cn(
                   inputClass,
@@ -661,7 +666,7 @@ export function ScriptImportPanel({
 
             <div className="space-y-1.5">
               <label htmlFor={fieldId("source_format")} className="text-sm font-medium">
-                Source format
+                {t("import.sourceFormat")}
               </label>
               <select
                 className={inputClass}
@@ -686,10 +691,9 @@ export function ScriptImportPanel({
                   {...register("auto_apply_proposal")}
                 />
                 <span>
-                  Apply changes directly to Story Bible &amp; shots
+                  {t("import.autoApply")}
                   <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-                    Uncheck to save a versioned screenplay revision and run analyzer diagnostics
-                    without modifying active shots or Story Bible.
+                    {t("import.autoApplyHelp")}
                   </span>
                 </span>
               </label>
@@ -776,7 +780,7 @@ export function ScriptImportPanel({
                     {...register("replace_existing")}
                   />
                   <span>
-                    Confirm replacing existing shots and generated takes
+                    {t("import.confirmReplace")}
                     <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
                       Required when re-applying a script to a project that already has active Story
                       Bible entries, shots, or generated takes.
@@ -804,8 +808,8 @@ export function ScriptImportPanel({
               {isCheckingPipeline && autoApply
                 ? "Verifying pipeline..."
                 : autoApply
-                  ? "Import & apply script"
-                  : "Save draft revision & analyze"}
+                  ? t("import.submitApply")
+                  : t("import.submitDraft")}
             </Button>
 
             {revisions.length > 0 && (

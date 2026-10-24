@@ -1,6 +1,7 @@
 import type { ProjectShot } from "@/entities/shot/api";
 import { navigatorOrder } from "@/entities/shot/order";
 import { isShotBlocked } from "@/entities/shot/status";
+import i18n from "@/lib/i18n";
 
 /** Shot fields the overview reads; everything else in `ProjectShotOut` is irrelevant here. */
 export type ProgressShot = Pick<
@@ -102,51 +103,87 @@ export function deriveNextStep(shots: readonly ProgressShot[]): NextStep {
   return { kind: "assemble", module: "timeline-editor" };
 }
 
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
-
 export function nextStepCopy(step: NextStep): { title: string; detail: string; action: string } {
   switch (step.kind) {
     case "import_script":
       return {
-        title: "Import a script",
-        detail: "This project has no shots yet. Import a script to break it into scenes and shots.",
-        action: "Open Script & Story Bible",
+        title: i18n.t("workspace-overview:nextSteps.importScript.title", {
+          defaultValue: "Import a script",
+        }),
+        detail: i18n.t("workspace-overview:nextSteps.importScript.detail", {
+          defaultValue:
+            "This project has no shots yet. Import a script to break it into scenes and shots.",
+        }),
+        action: i18n.t("workspace-overview:nextSteps.importScript.action", {
+          defaultValue: "Open Script & Story Bible",
+        }),
       };
     case "resolve_blocked":
       return {
-        title: `Resolve ${plural(step.count, "blocked shot")}`,
-        detail:
-          "A missing reference, a missing upstream frame or a lint blocker stops generation. " +
-          "Open the first blocked shot to see why.",
-        action: "Open first blocked shot",
+        title: i18n.t("workspace-overview:nextSteps.resolveBlocked.title", {
+          count: step.count,
+          defaultValue: `Resolve ${step.count} blocked shot${step.count === 1 ? "" : "s"}`,
+        }),
+        detail: i18n.t("workspace-overview:nextSteps.resolveBlocked.detail", {
+          defaultValue:
+            "A missing reference, a missing upstream frame or a lint blocker stops generation. Open the first blocked shot to see why.",
+        }),
+        action: i18n.t("workspace-overview:nextSteps.resolveBlocked.action", {
+          defaultValue: "Open first blocked shot",
+        }),
       };
     case "check_failed":
       return {
-        title: `Check ${plural(step.count, "failed shot")}`,
-        detail: "The last generation of these shots failed. The queue shows each task's error.",
-        action: "Open Generation Queue",
+        title: i18n.t("workspace-overview:nextSteps.checkFailed.title", {
+          count: step.count,
+          defaultValue: `Check ${step.count} failed shot${step.count === 1 ? "" : "s"}`,
+        }),
+        detail: i18n.t("workspace-overview:nextSteps.checkFailed.detail", {
+          defaultValue:
+            "The last generation of these shots failed. The queue shows each task's error.",
+        }),
+        action: i18n.t("workspace-overview:nextSteps.checkFailed.action", {
+          defaultValue: "Open Generation Queue",
+        }),
       };
     case "pick_takes":
       return {
-        title: `${plural(step.count, "shot")} need a take`,
-        detail:
-          "No take is selected and nothing is generating. Generate a take, or review existing " +
-          "takes and select one for the timeline.",
-        action: "Open Shot Board",
+        title: i18n.t("workspace-overview:nextSteps.pickTakes.title", {
+          count: step.count,
+          defaultValue: `${step.count} shot${step.count === 1 ? "" : "s"} need a take`,
+        }),
+        detail: i18n.t("workspace-overview:nextSteps.pickTakes.detail", {
+          defaultValue:
+            "No take is selected and nothing is generating. Generate a take, or review existing takes and select one for the timeline.",
+        }),
+        action: i18n.t("workspace-overview:nextSteps.pickTakes.action", {
+          defaultValue: "Open Shot Board",
+        }),
       };
     case "wait_generation":
       return {
-        title: `${plural(step.count, "shot")} generating`,
-        detail: "Tasks are queued or running. Follow them in the queue.",
-        action: "Open Generation Queue",
+        title: i18n.t("workspace-overview:nextSteps.waitGeneration.title", {
+          count: step.count,
+          defaultValue: `${step.count} shot${step.count === 1 ? "" : "s"} generating`,
+        }),
+        detail: i18n.t("workspace-overview:nextSteps.waitGeneration.detail", {
+          defaultValue: "Tasks are queued or running. Follow them in the queue.",
+        }),
+        action: i18n.t("workspace-overview:nextSteps.waitGeneration.action", {
+          defaultValue: "Open Generation Queue",
+        }),
       };
     case "assemble":
       return {
-        title: "Assemble and export",
-        detail: "Every shot has a selected take. Assemble the timeline and export an MP4.",
-        action: "Open Timeline & Export",
+        title: i18n.t("workspace-overview:nextSteps.assemble.title", {
+          defaultValue: "Assemble and export",
+        }),
+        detail: i18n.t("workspace-overview:nextSteps.assemble.detail", {
+          defaultValue: "Every shot has a selected take. Assemble the timeline and export an MP4.",
+        }),
+        action: i18n.t("workspace-overview:nextSteps.assemble.action", {
+          defaultValue: "Open Timeline & Export",
+        }),
       };
   }
 }

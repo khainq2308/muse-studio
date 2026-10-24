@@ -1,5 +1,6 @@
 import { Link2 } from "lucide-react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { ShotLintReport } from "@/features/shot-board/components/shot-lint-report";
 import {
   shotApprovalLabel,
@@ -66,9 +67,10 @@ export function ShotDetails({
   /** All shots of the project, to name the previous/next shot. */
   shots: readonly ProjectShot[];
 }) {
+  const { t } = useTranslation("shot-board");
   return (
     <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3" data-testid="shot-details">
-      <Field label="Action & subjects" wide>
+      <Field label={t("details.action")} wide>
         {shot.subject_codes.length > 0 && (
           <span className="mr-1.5 inline-flex flex-wrap gap-1 align-middle">
             {shot.subject_codes.map((code) => (
@@ -83,30 +85,30 @@ export function ShotDetails({
         )}
         {textOrMissing(shot.action)}
       </Field>
-      <Field label="Location">{textOrMissing(shot.location_code)}</Field>
-      <Field label="Shot size">{textOrMissing(shot.shot_size)}</Field>
-      <Field label="Camera motion">{textOrMissing(shot.camera_motion)}</Field>
-      <Field label="Duration">{formatSeconds(shot.duration_seconds)}</Field>
-      <Field label="Approval">{shotApprovalLabel(shot.approval_state)}</Field>
-      <Field label="Generation">{shotGenerationLabel(shot.generation_state)}</Field>
-      <Field label="Composition" wide>
+      <Field label={t("details.location")}>{textOrMissing(shot.location_code)}</Field>
+      <Field label={t("details.shotSize")}>{textOrMissing(shot.shot_size)}</Field>
+      <Field label={t("details.cameraMotion")}>{textOrMissing(shot.camera_motion)}</Field>
+      <Field label={t("details.duration")}>{formatSeconds(shot.duration_seconds)}</Field>
+      <Field label={t("details.approval")}>{shotApprovalLabel(shot.approval_state)}</Field>
+      <Field label={t("details.generation")}>{shotGenerationLabel(shot.generation_state)}</Field>
+      <Field label={t("details.composition")} wide>
         {textOrMissing(shot.composition)}
       </Field>
-      <Field label="Dialogue" wide testId="shot-dialogue">
+      <Field label={t("details.dialogue")} wide testId="shot-dialogue">
         {textOrMissing(shot.dialogue)}
       </Field>
-      <Field label="Continuity">{shotContinuityLabel(shot.continuity_mode)}</Field>
-      <Field label="Previous shot">{shotName(shot.previous_shot_id, shots)}</Field>
-      <Field label="Next shot">{shotName(shot.next_shot_id, shots)}</Field>
-      <Field label="First frame asset" testId="shot-first-frame">
+      <Field label={t("details.continuity")}>{shotContinuityLabel(shot.continuity_mode)}</Field>
+      <Field label={t("details.previousShot")}>{shotName(shot.previous_shot_id, shots)}</Field>
+      <Field label={t("details.nextShot")}>{shotName(shot.next_shot_id, shots)}</Field>
+      <Field label={t("details.firstFrame")} testId="shot-first-frame">
         {assetId(shot.first_frame_asset_id)}
       </Field>
-      <Field label="Last frame asset">{assetId(shot.last_frame_asset_id)}</Field>
-      <Field label="Selected take">{assetId(shot.selected_take_id)}</Field>
-      <Field label="Reference lock">
-        {shot.requires_reference_lock ? "Required" : "Not required"}
+      <Field label={t("details.lastFrame")}>{assetId(shot.last_frame_asset_id)}</Field>
+      <Field label={t("details.selectedTake")}>{assetId(shot.selected_take_id)}</Field>
+      <Field label={t("details.referenceLock")}>
+        {shot.requires_reference_lock ? t("details.required") : t("details.notRequired")}
       </Field>
-      <Field label="Reference assets">
+      <Field label={t("details.referenceAssets")}>
         {shot.reference_asset_ids.length > 0 ? (
           <span className="flex flex-wrap gap-1">
             {shot.reference_asset_ids.map((id) => (
@@ -125,13 +127,12 @@ export function ShotDetails({
 
 /** Compiled prompt (read-only) and the Prompt Linter report of the stored shot. */
 export function ShotPromptLint({ shot }: { shot: ProjectShot }) {
+  const { t } = useTranslation("shot-board");
   const label = shotLabel(shot);
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <p className="text-sm font-medium">
-          Final prompt (compiled from the shot fields, read-only)
-        </p>
+        <p className="text-sm font-medium">{t("details.finalPrompt")}</p>
         <p
           data-testid="shot-prompt-final"
           className="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-3 text-sm"
@@ -139,12 +140,12 @@ export function ShotPromptLint({ shot }: { shot: ProjectShot }) {
           {textOrMissing(shot.prompt_final)}
         </p>
         <p className="text-xs text-muted-foreground">
-          Prompt hash{" "}
+          {t("details.promptHash")}{" "}
           <code className="break-all">{shot.prompt_hash ? shot.prompt_hash : MISSING}</code>
         </p>
       </div>
       <div className="space-y-1">
-        <p className="text-sm font-medium">Negative prompt</p>
+        <p className="text-sm font-medium">{t("details.negativePrompt")}</p>
         <p
           data-testid="shot-negative-prompt"
           className="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-3 text-sm"
@@ -153,8 +154,11 @@ export function ShotPromptLint({ shot }: { shot: ProjectShot }) {
         </p>
       </div>
       <div className="space-y-2">
-        <p className="text-sm font-medium">Prompt Linter</p>
-        <ShotLintReport issues={shot.lint_report} label={`Prompt Linter for ${label}`} />
+        <p className="text-sm font-medium">{t("details.promptLinter")}</p>
+        <ShotLintReport
+          issues={shot.lint_report}
+          label={t("details.linterFor", { label, defaultValue: `Prompt Linter for ${label}` })}
+        />
       </div>
     </div>
   );

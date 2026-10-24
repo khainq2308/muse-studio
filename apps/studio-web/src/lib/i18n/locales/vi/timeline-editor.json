@@ -1,0 +1,43 @@
+{
+  "title": "Timeline & Xuất video",
+  "description": "Ghép các take đã chọn thành chuỗi hoàn chỉnh, xem trước các điểm cắt và xuất file video MP4 cuối cùng.",
+  "assemble": "Dựng timeline",
+  "assembling": "Đang dựng...",
+  "export": "Xuất video MP4",
+  "exporting": "Đang xuất video...",
+  "refresh": "Làm mới",
+  "loading": "Đang tải timeline...",
+  "track": {
+    "title": "Track Video ({{count}} clip)",
+    "emptyTitle": "Chưa có clip nào trên timeline",
+    "emptyDescription": "Hãy chọn take cho các shot trên Shot Board, sau đó bấm Dựng timeline ở trên.",
+    "clipLabel": "Clip {{index}}: Shot {{shot}}",
+    "duration": "{{seconds}} giây",
+    "dragHint": "Kéo thả để sắp xếp lại thứ tự clip"
+  },
+  "inspector": {
+    "title": "Chi tiết Clip — Shot {{shot}}",
+    "inPoint": "Điểm bắt đầu (In point)",
+    "outPoint": "Điểm kết thúc (Out point)",
+    "duration": "Thời lượng",
+    "speed": "Tốc độ phát",
+    "transition": "Hiệu ứng chuyển cảnh tiếp theo",
+    "transitionNone": "Cắt trực tiếp (Không hiệu ứng)",
+    "transitionCrossfade": "Hòa tan (Crossfade)",
+    "transitionDipToBlack": "Mờ sang đen (Dip to black)",
+    "subtitleWarning": "Phụ đề tùy chỉnh có thể không khớp với thời lượng thực tế của take."
+  },
+  "exportModal": {
+    "title": "Xuất video MP4",
+    "renderedNotice": "Quá trình xuất sẽ ghép các take đã sinh bằng FFmpeg trực tiếp trên máy chủ.",
+    "unrenderedWarning": "Một số shot chưa có take đã sinh hoàn tất; khung hình tạm sẽ được sử dụng.",
+    "progress": "Đang xử lý xuất video: {{percent}}%",
+    "download": "Tải về video MP4",
+    "failed": "Xuất video thất bại: {{error}}"
+  },
+  "errors": {
+    "loadFailed": "Không thể tải timeline: {{message}}",
+    "assembleFailed": "Không thể dựng timeline: {{message}}",
+    "exportFailed": "Không thể xuất video: {{message}}"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "title": "System",
+  "description": "Storage usage, backups, maintenance, orphan media cleanup, and system health.",
+  "refresh": "Refresh",
+  "tabs": {
+    "maintenance": "Maintenance",
+    "backups": "Backups",
+    "projectData": "Project Data"
+  },
+  "maintenance": {
+    "title": "Orphan Asset Cleanup",
+    "description": "Scan disk for media files no longer referenced by any project take or Story Bible entry.",
+    "dryRun": "Dry run scan",
+    "dryRunning": "Scanning...",
+    "execute": "Delete orphaned files",
+    "executing": "Cleaning up...",
+    "scanResult_one": "Scan found {{count}} orphan file ({{size}}).",
+    "scanResult_other": "Scan found {{count}} orphan files ({{size}}).",
+    "cleanupResult_one": "Cleaned {{count}} file. Reclaimed {{size}}.",
+    "cleanupResult_other": "Cleaned {{count}} files. Reclaimed {{size}}."
+  },
+  "backups": {
+    "title": "System Backups",
+    "create": "Create new backup",
+    "creating": "Creating backup...",
+    "restore": "Restore",
+    "restoring": "Restoring...",
+    "empty": "No backups available.",
+    "meta": "Created {{time}} ({{size}})"
+  },
+  "projectData": {
+    "title": "Project Data & Asset Management",
+    "deleteAsset": {
+      "title": "Delete Media Asset by ID",
+      "idLabel": "Asset ID",
+      "idPlaceholder": "Enter asset UUID...",
+      "submit": "Permanently delete asset",
+      "submitting": "Deleting asset...",
+      "confirmTitle": "Delete asset {{id}}?",
+      "confirmDesc": "This permanently deletes the file from disk and database records."
+    }
+  },
+  "errors": {
+    "loadFailed": "Could not load system data: {{message}}",
+    "scanFailed": "Scanning orphan assets failed: {{message}}",
+    "cleanupFailed": "Cleaning up assets failed: {{message}}",
+    "backupFailed": "Creating backup failed: {{message}}",
+    "restoreFailed": "Restoring backup failed: {{message}}",
+    "deleteAssetFailed": "Deleting asset failed: {{message}}"
+  }
+}

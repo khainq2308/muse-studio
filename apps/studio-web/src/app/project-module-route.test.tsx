@@ -117,9 +117,9 @@ describe("ProjectModuleRoute", () => {
 
     expect(screen.getByTestId("shot-board-stub").textContent).toBe("project-a");
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
-    const nav = screen.getByRole("navigation", { name: "Project modules" });
+    const nav = screen.getByRole("navigation", { name: /Project modules|Module dự án/i });
     const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
-    const queue = within(nav).getByRole("link", { name: "Generation Queue" });
+    const queue = within(nav).getByRole("link", { name: /Generation Queue|Hàng đợi sinh media/i });
     expect(shotBoard).toHaveAttribute("aria-current", "page");
     expect(shotBoard).toHaveAttribute("href", "/projects/project-a/shot-board");
     expect(queue).not.toHaveAttribute("aria-current");
@@ -132,8 +132,10 @@ describe("ProjectModuleRoute", () => {
 
     expect(screen.getByTestId("script-studio-stub").textContent).toBe("project-a");
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
-    const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const scriptStudio = within(nav).getByRole("link", { name: "Script & Story Bible" });
+    const nav = screen.getByRole("navigation", { name: /Project modules|Module dự án/i });
+    const scriptStudio = within(nav).getByRole("link", {
+      name: /Script & Story Bible|Kịch bản & Story Bible/i,
+    });
     const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
     expect(scriptStudio).toHaveAttribute("aria-current", "page");
     expect(scriptStudio).toHaveAttribute("href", "/projects/project-a/script-studio");
@@ -144,26 +146,25 @@ describe("ProjectModuleRoute", () => {
     mocks.params = { projectId: "project-a", module: "shot-board" };
     render(<ProjectModuleRoute />);
 
-    const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const steps = within(within(nav).getByRole("list", { name: "Production steps" })).getAllByRole(
-      "link",
-    );
+    const nav = screen.getByRole("navigation", { name: /Project modules|Module dự án/i });
+    const steps = within(
+      within(nav).getByRole("list", { name: /Production steps|Các bước sản xuất/i }),
+    ).getAllByRole("link");
     expect(steps.map((link) => link.textContent)).toEqual([
-      "1Script & Story Bible",
+      "1Kịch bản & Story Bible",
       "2Shot Board",
-      "3Generation Queue",
-      "4Timeline & Export",
+      "3Hàng đợi sinh media",
+      "4Timeline & Xuất video",
     ]);
-    const more = within(nav).getByRole("list", { name: "More project tools" });
-    expect(within(more).getByRole("link", { name: /Workflow Automation/ })).toHaveTextContent(
-      "Advanced",
-    );
-    expect(within(more).getByRole("link", { name: "Project Settings" })).toHaveAttribute(
-      "href",
-      "/projects/project-a/settings",
-    );
-    expect(within(nav).queryByRole("link", { name: /Connections/ })).toBeNull();
-    expect(within(nav).queryByRole("link", { name: /System/ })).toBeNull();
+    const more = within(nav).getByRole("list", { name: /More project tools|Công cụ dự án khác/i });
+    expect(
+      within(more).getByRole("link", { name: /Workflow Automation|Tự động hóa workflow/i }),
+    ).toHaveTextContent(/Advanced|Nâng cao/i);
+    expect(
+      within(more).getByRole("link", { name: /Project Settings|Cài đặt dự án/i }),
+    ).toHaveAttribute("href", "/projects/project-a/settings");
+    expect(within(nav).queryByRole("link", { name: /Connections|Kết nối/i })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: /System|Hệ thống/i })).toBeNull();
   });
 
   it("renders the project name in a breadcrumb back to the workspace project list", () => {
@@ -174,8 +175,8 @@ describe("ProjectModuleRoute", () => {
     };
     render(<ProjectModuleRoute />);
 
-    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(within(breadcrumb).getByRole("link", { name: "Projects" })).toHaveAttribute(
+    const breadcrumb = screen.getByRole("navigation", { name: /Breadcrumb/i });
+    expect(within(breadcrumb).getByRole("link", { name: /Projects|Dự án/i })).toHaveAttribute(
       "href",
       "/projects",
     );
@@ -188,11 +189,10 @@ describe("ProjectModuleRoute", () => {
 
     expect(screen.getByTestId("project-settings-stub").textContent).toBe("project-a");
     expect(screen.getByTestId("project-data-stub").textContent).toBe("project-a");
-    const nav = screen.getByRole("navigation", { name: "Project modules" });
-    expect(within(nav).getByRole("link", { name: "Project Settings" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    const nav = screen.getByRole("navigation", { name: /Project modules|Module dự án/i });
+    expect(
+      within(nav).getByRole("link", { name: /Project Settings|Cài đặt dự án/i }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("renders the Workflow Automation and Timeline & Export modules", () => {

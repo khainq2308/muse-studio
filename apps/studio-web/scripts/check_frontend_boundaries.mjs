@@ -243,6 +243,7 @@ for (const file of collectFiles(srcRoot)) {
   if (
     !relative.endsWith(".test.ts") &&
     !relative.endsWith(".test.tsx") &&
+    !relative.startsWith("lib/i18n/") &&
     containsBrowserStorageAccess(sourceFile)
   ) {
     failures.push(

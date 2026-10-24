@@ -78,8 +78,8 @@ describe("shot workspace helpers", () => {
   });
 
   it("summarises lint with blockers before warnings", () => {
-    expect(shotLintSummary({ lint_report: [warning, blocker] }).label).toBe("1 lint blocker");
-    expect(shotLintSummary({ lint_report: [warning, warning] }).label).toBe("2 lint warnings");
-    expect(shotLintSummary({ lint_report: [] }).label).toBe("Lint clear");
+    expect(shotLintSummary({ lint_report: [warning, blocker] }).label).toBe("1 lỗi chặn");
+    expect(shotLintSummary({ lint_report: [warning, warning] }).label).toBe("2 cảnh báo");
+    expect(shotLintSummary({ lint_report: [] }).label).toBe("Không có lỗi");
   });
 });

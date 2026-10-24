@@ -49,25 +49,24 @@ test.describe("Projects and project settings", () => {
     });
 
     await page.goto("/projects");
-    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "All projects" })).toContainText(
-      "Episode 02 - Glass Citadel",
-    );
+    await expect(
+      page.getByRole("heading", { name: /^(?:Projects|Dự án)$/i, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: /^(?:All projects|Tất cả dự án)/i }),
+    ).toContainText("Episode 02 - Glass Citadel");
 
-    await page.getByRole("button", { name: "New project" }).click();
-    const form = page.getByRole("form", { name: "Create new project" });
-    await form.getByLabel("Project name").fill("Episode 03 - Vertical teaser");
-    await expect(form.getByLabel("Aspect ratio").locator("option")).toHaveText([
-      "16:9",
-      "9:16",
-      "1:1",
-      "21:9",
-    ]);
-    await form.getByLabel("Aspect ratio").selectOption("9:16");
-    await form.getByRole("button", { name: "Create project" }).click();
+    await page.getByRole("button", { name: /^(?:New project|Dự án mới)$/i }).click();
+    const form = page.getByRole("form", { name: /^(?:Create new project|Tạo dự án mới)$/i });
+    await form.getByLabel(/^(?:Project name|Tên dự án)$/i).fill("Episode 03 - Vertical teaser");
+    await expect(
+      form.getByLabel(/^(?:Aspect ratio|Tỉ lệ khung hình)/i).locator("option"),
+    ).toHaveText(["16:9", "9:16", "1:1", "21:9"]);
+    await form.getByLabel(/^(?:Aspect ratio|Tỉ lệ khung hình)/i).selectOption("9:16");
+    await form.getByRole("button", { name: /^(?:Create project|Tạo dự án)$/i }).click();
 
     await expect(page.getByRole("status")).toContainText(
-      "Created project Episode 03 - Vertical teaser (created-project).",
+      /(?:Created project Episode 03 - Vertical teaser|Đã tạo dự án Episode 03 - Vertical teaser)/i,
     );
     const creates = requests.filter(
       (request) => request.method === "POST" && request.pathname === "/api/v1/projects",
@@ -86,22 +85,28 @@ test.describe("Projects and project settings", () => {
     });
 
     await page.goto(`/projects/${PROJECT_ID}/settings`);
-    await expect(page.getByRole("heading", { name: "Project settings" })).toBeVisible();
-    const profile = page.getByRole("region", { name: "Active project profile" });
+    await expect(
+      page.getByRole("heading", { name: /^(?:Project settings|Cài đặt dự án)$/i }),
+    ).toBeVisible();
+    const profile = page.getByRole("region", {
+      name: /^(?:Active project profile|Hồ sơ dự án đang hoạt động)$/i,
+    });
     await expect(profile).toContainText("Test project");
     await expect(profile).toContainText("16:9 · 24 fps");
     await expect(profile).toContainText("2d_anime_cinematic");
-    const history = page.getByRole("region", { name: "Revision history" });
-    await expect(history).toContainText("Project Revision History (2)");
-    await expect(history).toContainText("Imported script revision v2");
+    const history = page.getByRole("region", { name: /^(?:Revision history|Lịch sử revision)/i });
+    await expect(history).toContainText(/(?:Project Revision History|Lịch sử revision dự án)/i);
+    await expect(history).toContainText(
+      /(?:Imported script revision v2|Đã nhập revision kịch bản v2)/i,
+    );
 
-    await page.getByRole("button", { name: "Duplicate settings" }).click();
+    await page.getByRole("button", { name: /^(?:Duplicate settings|Nhân bản cài đặt)$/i }).click();
     const duplicated = page.getByRole("status");
     await expect(duplicated).toContainText(
-      "Duplicated project settings as Test project (copy) (duplicated-project).",
+      /(?:Duplicated project settings as Test project|Đã nhân bản cài đặt dự án thành Test project)/i,
     );
     await expect(duplicated).toContainText(
-      "Only project settings are copied; Story Bible, shots and assets are not copied.",
+      /(?:Only project settings are copied|Chỉ sao chép cấu hình cài đặt)/i,
     );
     expect(
       requests.filter((request) => request.pathname.endsWith("/duplicate")).map((r) => r.body),
@@ -121,29 +126,38 @@ test.describe("Connections module", () => {
 
     await page.goto("/connections");
 
-    await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^(?:Connections|Kết nối)$/i })).toBeVisible();
     await expect(page.getByText("Live gateway", { exact: true })).toBeVisible();
     await expect(page.getByText("Mock provider", { exact: true })).toBeVisible();
     await expect(page.getByText("Upstream returned HTTP 503")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Live gateway — Account Pool" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", {
+        name: /^(?:Live gateway — Account Pool|Live gateway — Nhóm tài khoản)$/i,
+      }),
+    ).toBeVisible();
 
     const primary = page.getByRole("listitem").filter({ hasText: "Primary account" });
     const backup = page.getByRole("listitem").filter({ hasText: "Backup account" });
-    await expect(primary).toContainText("priority 10");
+    await expect(primary).toContainText(/priority 10|ưu tiên 10/i);
     await expect(primary).toContainText("proxy: proxy.example:8080");
     await expect(backup).toContainText("auth_error");
     await expect(backup).toContainText("HTTP 401: invalid API key");
 
-    await primary.getByRole("button", { name: "Remove" }).click();
+    await primary.getByRole("button", { name: /^(?:Remove|Xóa)$/i }).click();
     const dialog = primary.getByRole("alertdialog");
-    await expect(dialog).toContainText('Remove pool account "Primary account"?');
-    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
-    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toContainText(
+      /(?:Remove pool account "Primary account"\?|Xóa tài khoản "Primary account" khỏi nhóm\?)/i,
+    );
+    await expect(dialog.getByRole("button", { name: /^(?:Cancel|Hủy)$/i })).toBeFocused();
+    await dialog.getByRole("button", { name: /^(?:Cancel|Hủy)$/i }).click();
     await expect(primary.getByRole("alertdialog")).toHaveCount(0);
     expect(requests.filter((request) => request.method === "DELETE")).toEqual([]);
 
-    await primary.getByRole("button", { name: "Remove" }).click();
-    await primary.getByRole("alertdialog").getByRole("button", { name: "Remove account" }).click();
+    await primary.getByRole("button", { name: /^(?:Remove|Xóa)$/i }).click();
+    await primary
+      .getByRole("alertdialog")
+      .getByRole("button", { name: /^(?:Remove account|Xóa tài khoản)$/i })
+      .click();
     await expect
       .poll(() => requests.filter((request) => request.method === "DELETE").map((r) => r.pathname))
       .toEqual(["/api/v1/connections/conn-live/accounts/acc-primary"]);
@@ -170,7 +184,9 @@ test.describe("Workflow Canvas module", () => {
     });
 
     await page.goto(`/projects/${PROJECT_ID}/workflow-canvas`);
-    await expect(page.getByRole("heading", { name: "Workflow Automation" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /^(?:Workflow Automation|Tự động hóa workflow)$/i }),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Create pipeline workflow" }).click();
     const canvas = page.getByRole("region", { name: "Workflow DAG canvas" });
@@ -207,7 +223,7 @@ test.describe("Workflow Canvas module", () => {
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toContainText("Approve manual gate n_approval?");
     await expect(dialog).toContainText("Approval cannot be undone.");
-    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await dialog.getByRole("button", { name: /^(?:Cancel|Hủy)$/i }).click();
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
     expect(approvals()).toEqual([]);
 
@@ -471,7 +487,7 @@ test.describe("Project backups and System maintenance", () => {
       .click();
     const dialog = backupsRegion.getByRole("alertdialog");
     await expect(dialog).toContainText(`Delete backup ${backups[0].filename}?`);
-    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await dialog.getByRole("button", { name: /^(?:Cancel|Hủy)$/i }).click();
     await expect(backupsRegion.getByRole("alertdialog")).toHaveCount(0);
     expect(deletes()).toEqual([]);
 
@@ -508,7 +524,7 @@ test.describe("Project backups and System maintenance", () => {
     await expect(cleanupDialog).toContainText(
       "Delete orphan files older than 24h across all projects?",
     );
-    await cleanupDialog.getByRole("button", { name: "Cancel" }).click();
+    await cleanupDialog.getByRole("button", { name: /^(?:Cancel|Hủy)$/i }).click();
     await expect(orphans.getByRole("alertdialog")).toHaveCount(0);
 
     // Changing the retention window invalidates the preview and disables real cleanup again.

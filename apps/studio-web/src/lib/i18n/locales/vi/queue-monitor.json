@@ -1,0 +1,45 @@
+{
+  "title": "Hàng đợi sinh media",
+  "description": "Theo dõi các tác vụ sinh media đang chờ, đang chạy, thành công hoặc thất bại.",
+  "refresh": "Làm mới",
+  "loading": "Đang tải hàng đợi...",
+  "summary": {
+    "inFlight": "Đang xử lý",
+    "waitingInput": "Chờ phản hồi",
+    "failed": "Thất bại",
+    "completed": "Hoàn thành"
+  },
+  "tabs": {
+    "all": "Tất cả tác vụ ({{count}})",
+    "inFlight": "Đang xử lý ({{count}})",
+    "awaitingInput": "Cần phản hồi ({{count}})",
+    "failed": "Thất bại ({{count}})"
+  },
+  "list": {
+    "emptyTitle": "Không có tác vụ nào trong hàng đợi",
+    "emptyDescription": "Khởi chạy một lượt sinh từ Shot Board để theo dõi tiến trình tác vụ tại đây.",
+    "taskHeading": "Tác vụ #{{id}} · {{type}}",
+    "status": "Trạng thái: {{status}}",
+    "retries": "Thử lại {{count}}/{{max}}",
+    "providerMeta": "Nhà cung cấp: {{provider}} · Mô hình: {{model}}",
+    "cancel": "Hủy tác vụ",
+    "canceling": "Đang hủy...",
+    "pause": "Tạm dừng hàng đợi",
+    "resume": "Tiếp tục hàng đợi"
+  },
+  "question": {
+    "title": "Cần người vận hành phản hồi cho Tác vụ #{{id}}",
+    "prompt": "Câu hỏi từ hệ thống:",
+    "choices": "Chọn một phương án:",
+    "textResponse": "Hoặc nhập câu trả lời:",
+    "submit": "Gửi phản hồi",
+    "submitting": "Đang gửi..."
+  },
+  "errors": {
+    "questionExpired": "Câu hỏi này không còn chờ phản hồi nữa. Hàng đợi đã được làm mới để hiển thị trạng thái hiện tại của tác vụ.",
+    "taskNotFound": "Tác vụ này không còn tồn tại. Hàng đợi đã được làm mới.",
+    "answerRejected": "Câu trả lời bị từ chối: {{message}}",
+    "replyAuthRequired": "Token quản trị bị từ chối khi gửi câu trả lời. Hãy cập nhật token và thử lại.",
+    "replyFailed": "Không thể gửi câu trả lời: {{message}}"
+  }
+}

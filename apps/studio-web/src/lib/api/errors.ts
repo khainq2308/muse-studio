@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/client";
+import i18n from "@/lib/i18n";
 
 export type AuthApiError = ApiError & { readonly status: 401 | 403 };
 
@@ -19,17 +20,34 @@ export function authErrorMessage(
 ): string {
   if (!isAuthError(error)) {
     if (error instanceof ApiError && error.category === "timeout") {
-      return `Loading ${resource} timed out. Check the Orchestrator and retry.`;
+      return i18n.t("common:errors.timeout", {
+        resource,
+        defaultValue: `Loading ${resource} timed out. Check the Orchestrator and retry.`,
+      });
     }
-    return `Could not load ${resource}. Check the Orchestrator and retry.`;
+    return i18n.t("common:errors.loadFailed", {
+      resource,
+      defaultValue: `Could not load ${resource}. Check the Orchestrator and retry.`,
+    });
   }
 
   if (error.status === 403) {
-    return `The current session does not have permission to read ${resource}. Connect with an admin token that has the required permission.`;
+    return i18n.t("common:errors.permissionDenied", {
+      resource,
+      defaultValue: `The current session does not have permission to read ${resource}. Connect with an admin token that has the required permission.`,
+    });
   }
 
-  if (!activeAdminToken.trim()) return `Admin token required to read ${resource}.`;
-  return `The configured admin token was rejected while reading ${resource}. Update the token and reconnect.`;
+  if (!activeAdminToken.trim()) {
+    return i18n.t("common:errors.authRequired", {
+      resource,
+      defaultValue: `Admin token required to read ${resource}.`,
+    });
+  }
+  return i18n.t("common:errors.tokenRejected", {
+    resource,
+    defaultValue: `The configured admin token was rejected while reading ${resource}. Update the token and reconnect.`,
+  });
 }
 
 /**
@@ -43,18 +61,46 @@ export function actionErrorMessage(
 ): string {
   if (isAuthError(error)) {
     if (error.status === 403) {
-      return `The current session does not have permission to ${action}.`;
+      return i18n.t("common:errors.actionPermissionDenied", {
+        action,
+        defaultValue: `The current session does not have permission to ${action}.`,
+      });
     }
-    if (!activeAdminToken.trim()) return `Admin token required to ${action}.`;
-    return `The configured admin token was rejected while trying to ${action}. Update the token and reconnect.`;
+    if (!activeAdminToken.trim()) {
+      return i18n.t("common:errors.actionAuthRequired", {
+        action,
+        defaultValue: `Admin token required to ${action}.`,
+      });
+    }
+    return i18n.t("common:errors.actionTokenRejected", {
+      action,
+      defaultValue: `The configured admin token was rejected while trying to ${action}. Update the token and reconnect.`,
+    });
   }
   if (error instanceof ApiError) {
     if (error.category === "timeout") {
-      return `Could not confirm whether the request to ${action} finished (timed out). Refresh before retrying.`;
+      return i18n.t("common:errors.actionTimeout", {
+        action,
+        defaultValue: `Could not confirm whether the request to ${action} finished (timed out). Refresh before retrying.`,
+      });
     }
-    return `Could not ${action}: ${error.message}`;
+    return i18n.t("common:errors.actionFailed", {
+      action,
+      message: error.message,
+      defaultValue: `Could not ${action}: ${error.message}`,
+    });
   }
-  return error instanceof Error ? `Could not ${action}: ${error.message}` : `Could not ${action}.`;
+  return error instanceof Error
+    ? i18n.t("common:errors.actionFailed", {
+        action,
+        message: error.message,
+        defaultValue: `Could not ${action}: ${error.message}`,
+      })
+    : i18n.t("common:errors.actionFailed", {
+        action,
+        message: "",
+        defaultValue: `Could not ${action}.`,
+      });
 }
 
 /**

@@ -175,9 +175,9 @@ describe("WorkflowCanvasPage", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "Could not load the project workflow. Check the Orchestrator and retry.",
+      "Không thể tải the project workflow. Kiểm tra Orchestrator và thử lại.",
     );
-    expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(within(alert).getByRole("button", { name: /thử lại|retry/i })).toBeInTheDocument();
   });
 
   it("creates the workflow with a typed POST and renders it on the React Flow canvas", async () => {
@@ -213,7 +213,7 @@ describe("WorkflowCanvasPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Create a new workflow/i }));
     const dialog = screen.getByRole("alertdialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel|hủy/i }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(requestsTo(fetchMock, "POST", BASE)).toHaveLength(1);
 
@@ -278,7 +278,7 @@ describe("WorkflowCanvasPage", () => {
     const review = await screen.findByRole("button", { name: "Review gate n_approval" });
     fireEvent.click(review);
     fireEvent.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }),
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: /cancel|hủy/i }),
     );
     expect(requestsTo(fetchMock, "POST", approvePath)).toHaveLength(0);
 
@@ -322,7 +322,7 @@ describe("WorkflowCanvasPage", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not approve the manual gate: Node is not waiting_approval.",
+      "Không thể approve the manual gate: Node is not waiting_approval.",
     );
   });
 
@@ -439,7 +439,7 @@ describe("WorkflowCanvasPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Create pipeline workflow/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not create the workflow: Name is too long.",
+      "Không thể create the workflow: Name is too long.",
     );
   });
 });

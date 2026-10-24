@@ -99,7 +99,7 @@ describe("mapShotUpdateError", () => {
       }),
     );
     expect(mapping.fieldErrors).toEqual({});
-    expect(mapping.formError).toBe("The shot was not saved: reference_asset_ids: Too many items");
+    expect(mapping.formError).toBe("Không thể lưu shot: reference_asset_ids: Too many items");
   });
 
   it("attaches plain-text approval and predecessor errors to their fields", () => {
@@ -120,19 +120,19 @@ describe("mapShotUpdateError", () => {
 
   it("reports auth, missing-shot and unknown failures at form level", () => {
     expect(mapShotUpdateError(new ApiError({ status: 401, detail: "no" })).formError).toMatch(
-      /admin token was rejected/,
+      /token quản trị/i,
     );
     expect(mapShotUpdateError(new ApiError({ status: 403, detail: "no" })).formError).toMatch(
-      /does not have permission/,
+      /không có quyền/i,
     );
     expect(mapShotUpdateError(new ApiError({ status: 404, detail: "gone" })).formError).toMatch(
-      /no longer exists/,
+      /không còn tồn tại/i,
     );
     expect(mapShotUpdateError(new ApiError({ status: 500, detail: "boom" })).formError).toBe(
-      "The shot was not saved: boom",
+      "Không thể lưu shot: boom",
     );
     expect(mapShotUpdateError(new TypeError("offline")).formError).toBe(
-      "Could not save the shot: offline",
+      "Không thể lưu shot: offline",
     );
   });
 });
@@ -194,7 +194,7 @@ describe("generation requests", () => {
     expect(message).toContain("bat_9");
     expect(message).toContain("do not relaunch");
     expect(generationErrorMessage(new ApiError({ status: 401, detail: "x" }), "enqueue")).toMatch(
-      /^The shot was not queued: the admin token was rejected/,
+      /token quản trị/i,
     );
   });
 });
@@ -225,9 +225,9 @@ describe("connection models", () => {
 
 describe("state labels", () => {
   it("labels unknown states from a newer backend instead of rendering blanks", () => {
-    expect(shotApprovalLabel("approved")).toBe("Approved");
+    expect(shotApprovalLabel("approved")).toBe("Đã duyệt");
     expect(shotApprovalLabel("archived" as ShotApprovalState)).toBe("Unknown approval (archived)");
-    expect(shotGenerationLabel("blocked_upstream_frame")).toBe("Blocked: upstream frame missing");
+    expect(shotGenerationLabel("blocked_upstream_frame")).toBe("Bị chặn: thiếu khung hình trước");
     expect(shotGenerationLabel("exploded" as ShotGenerationState)).toBe("Unknown state (exploded)");
   });
 });

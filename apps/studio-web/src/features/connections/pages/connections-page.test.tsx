@@ -116,12 +116,12 @@ describe("ConnectionsPage", () => {
     installFetch([], [connection, backup]);
     renderPage();
 
-    const primary = await screen.findByRole("button", { name: "Select connection Studio gateway" });
-    const secondary = screen.getByRole("button", { name: "Select connection Backup gateway" });
+    const primary = await screen.findByRole("button", { name: "Chọn kết nối Studio gateway" });
+    const secondary = screen.getByRole("button", { name: "Chọn kết nối Backup gateway" });
     expect(primary).toHaveAttribute("aria-pressed", "true");
     expect(secondary).toHaveAttribute("aria-pressed", "false");
     expect(
-      await screen.findByRole("heading", { name: "Studio gateway — Account Pool" }),
+      await screen.findByRole("heading", { name: "Studio gateway — Nhóm tài khoản" }),
     ).toBeInTheDocument();
 
     secondary.focus();
@@ -129,7 +129,7 @@ describe("ConnectionsPage", () => {
     expect(secondary).toHaveAttribute("aria-pressed", "true");
     expect(primary).toHaveAttribute("aria-pressed", "false");
     expect(
-      await screen.findByRole("heading", { name: "Backup gateway — Account Pool" }),
+      await screen.findByRole("heading", { name: "Backup gateway — Nhóm tài khoản" }),
     ).toBeInTheDocument();
 
     primary.focus();
@@ -142,11 +142,11 @@ describe("ConnectionsPage", () => {
     installFetch([]);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /Add pool account/i }));
-    const form = screen.getByRole("form", { name: "Add pool account" });
-    await user.type(within(form).getByLabelText("Account label"), "New account");
-    await user.type(within(form).getByLabelText("Account API key"), "sk-secret-value");
-    await user.click(within(form).getByRole("button", { name: "Save account" }));
+    await user.click(await screen.findByRole("button", { name: /Thêm tài khoản vào nhóm/i }));
+    const form = screen.getByRole("form", { name: "Thêm tài khoản vào nhóm" });
+    await user.type(within(form).getByLabelText("Nhãn tài khoản"), "New account");
+    await user.type(within(form).getByLabelText("API key của tài khoản"), "sk-secret-value");
+    await user.click(within(form).getByRole("button", { name: "Lưu tài khoản" }));
 
     await waitFor(() => expect(mutations("POST")).toHaveLength(1));
     const [createRequest] = mutations("POST");
@@ -160,10 +160,12 @@ describe("ConnectionsPage", () => {
     });
 
     await waitFor(() =>
-      expect(screen.queryByRole("form", { name: "Add pool account" })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("form", { name: "Thêm tài khoản vào nhóm" }),
+      ).not.toBeInTheDocument(),
     );
-    await user.click(screen.getByRole("button", { name: /Add pool account/i }));
-    expect(screen.getByLabelText("Account API key")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: /Thêm tài khoản vào nhóm/i }));
+    expect(screen.getByLabelText("API key của tài khoản")).toHaveValue("");
   });
 
   it("clears the typed API key when the add-account form is cancelled", async () => {
@@ -171,12 +173,12 @@ describe("ConnectionsPage", () => {
     installFetch([]);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /Add pool account/i }));
-    await user.type(screen.getByLabelText("Account API key"), "sk-secret-value");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    await user.click(screen.getByRole("button", { name: /Add pool account/i }));
+    await user.click(await screen.findByRole("button", { name: /Thêm tài khoản vào nhóm/i }));
+    await user.type(screen.getByLabelText("API key của tài khoản"), "sk-secret-value");
+    await user.click(screen.getByRole("button", { name: "Hủy" }));
+    await user.click(screen.getByRole("button", { name: /Thêm tài khoản vào nhóm/i }));
 
-    expect(screen.getByLabelText("Account API key")).toHaveValue("");
+    expect(screen.getByLabelText("API key của tài khoản")).toHaveValue("");
   });
 
   it("sends PATCH {enabled:false} when disabling an account", async () => {
@@ -184,7 +186,7 @@ describe("ConnectionsPage", () => {
     installFetch([makeAccount()]);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Disable" }));
+    await user.click(await screen.findByRole("button", { name: "Vô hiệu hóa" }));
 
     await waitFor(() => expect(mutations("PATCH")).toHaveLength(1));
     const [patchRequest] = mutations("PATCH");
@@ -197,18 +199,18 @@ describe("ConnectionsPage", () => {
     installFetch([makeAccount()]);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /Remove/i }));
+    await user.click(await screen.findByRole("button", { name: /Xóa/i }));
     let dialog = screen.getByRole("alertdialog");
-    expect(dialog).toHaveTextContent('Remove pool account "Account #01"?');
-    expect(dialog).toHaveTextContent(/re-enter its API key/i);
+    expect(dialog).toHaveTextContent('Xóa tài khoản "Account #01" khỏi nhóm?');
+    expect(dialog).toHaveTextContent(/nhập lại API key/i);
 
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(dialog).getByRole("button", { name: "Hủy" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(mutations("DELETE")).toHaveLength(0);
 
-    await user.click(screen.getByRole("button", { name: /Remove/i }));
+    await user.click(screen.getByRole("button", { name: /Xóa/i }));
     dialog = screen.getByRole("alertdialog");
-    await user.click(within(dialog).getByRole("button", { name: "Remove account" }));
+    await user.click(within(dialog).getByRole("button", { name: "Xóa tài khoản" }));
 
     await waitFor(() => expect(mutations("DELETE")).toHaveLength(1));
     expect(mutations("DELETE")[0].url).toMatch(/\/api\/v1\/connections\/conn-1\/accounts\/acct-1$/);
@@ -220,10 +222,10 @@ describe("ConnectionsPage", () => {
     failMutations = true;
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Disable" }));
+    await user.click(await screen.findByRole("button", { name: "Vô hiệu hóa" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/Could not disable account/i);
+    expect(alert).toHaveTextContent(/Không thể disable account/i);
     expect(alert).toHaveTextContent(/Upstream provider rejected the request/i);
   });
 
@@ -233,9 +235,9 @@ describe("ConnectionsPage", () => {
     failMutations = true;
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /Test & probe/i }));
+    await user.click(await screen.findByRole("button", { name: /Kiểm tra kết nối/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Could not test connection/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Không thể test connection/i);
   });
 
   it("keeps the base URL empty by default and clamps connection limits to the API schema", async () => {
@@ -243,20 +245,20 @@ describe("ConnectionsPage", () => {
     installFetch([]);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /New connection/i }));
-    const form = screen.getByRole("form", { name: "Create provider connection" });
+    await user.click(await screen.findByRole("button", { name: /Kết nối mới/i }));
+    const form = screen.getByRole("form", { name: "Tạo kết nối nhà cung cấp" });
     const baseUrl = within(form).getByLabelText("Base URL");
     expect(baseUrl).toHaveValue("");
     expect(baseUrl).toBeRequired();
-    expect(within(form).getByRole("button", { name: "Create connection" })).toBeDisabled();
+    expect(within(form).getByRole("button", { name: "Tạo kết nối" })).toBeDisabled();
 
-    const concurrency = within(form).getByLabelText("Max concurrency");
+    const concurrency = within(form).getByLabelText("Số tác vụ đồng thời tối đa");
     expect(concurrency).toHaveAttribute("max", "20");
     await user.clear(concurrency);
     await user.type(concurrency, "50");
     expect(concurrency).toHaveValue(20);
 
-    const timeout = within(form).getByLabelText("Timeout (s)");
+    const timeout = within(form).getByLabelText("Thời gian chờ (giây)");
     expect(timeout).toHaveAttribute("max", "120");
   });
 });

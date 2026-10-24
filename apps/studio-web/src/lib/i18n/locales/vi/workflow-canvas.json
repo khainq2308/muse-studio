@@ -1,0 +1,37 @@
+{
+  "title": "Tự động hóa workflow",
+  "description": "Kiểm tra biểu đồ DAG của workflow và kích hoạt thực thi các nút tự động.",
+  "reload": "Tải lại workflow",
+  "reloading": "Đang tải lại...",
+  "runMode": "Chế độ chạy",
+  "runModes": {
+    "dry_run": "Chạy thử (Dry run)",
+    "full": "Chạy toàn bộ (Full)",
+    "from_here": "Chạy từ nút này",
+    "downstream": "Chạy các nút phía sau"
+  },
+  "trigger": "Chạy workflow",
+  "triggering": "Đang khởi chạy...",
+  "canvas": {
+    "autoLoadNotice": "Đã tự động nạp cấu trúc workflow DAG từ orchestrator.",
+    "loading": "Đang nạp workflow DAG...",
+    "emptyTitle": "Chưa có định nghĩa workflow",
+    "emptyDescription": "Dự án này chưa có biểu đồ DAG workflow nào được nạp.",
+    "nodeStates": {
+      "pending": "Chờ thực thi",
+      "running": "Đang chạy",
+      "succeeded": "Thành công",
+      "failed": "Thất bại",
+      "skipped": "Đã bỏ qua",
+      "waiting_approval": "Chờ duyệt thủ công"
+    },
+    "approveGate": "Duyệt cổng",
+    "approvingGate": "Đang duyệt...",
+    "gateApproved": "Đã duyệt cổng thủ công"
+  },
+  "errors": {
+    "loadFailed": "Không thể tải workflow: {{message}}",
+    "triggerFailed": "Không thể kích hoạt chạy workflow: {{message}}",
+    "approveFailed": "Không thể duyệt cổng thủ công: {{message}}"
+  }
+}

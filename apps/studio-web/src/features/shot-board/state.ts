@@ -1,6 +1,7 @@
 import { groupShotsByScene as groupShotsByEntityScene } from "@/entities/shot/order";
 import { ApiError } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";
+import i18n from "@/lib/i18n";
 
 export type ProjectShot = components["schemas"]["ProjectShotOut"];
 export type ShotUpdate = components["schemas"]["ShotUpdateIn"];
@@ -90,7 +91,7 @@ function hasKey<T extends string>(record: Record<T, string>, key: string): key i
 /** A newer backend may add a state before the client is regenerated; show the raw value. */
 export function shotApprovalLabel(state: ShotApprovalState): string {
   return hasKey(SHOT_APPROVAL_LABELS, state)
-    ? SHOT_APPROVAL_LABELS[state]
+    ? i18n.t(`shot-board:states.approval.${state}`, { defaultValue: SHOT_APPROVAL_LABELS[state] })
     : `Unknown approval (${String(state) || "empty"})`;
 }
 
@@ -100,7 +101,9 @@ export function shotApprovalTone(state: ShotApprovalState): string {
 
 export function shotGenerationLabel(state: ShotGenerationState): string {
   return hasKey(SHOT_GENERATION_LABELS, state)
-    ? SHOT_GENERATION_LABELS[state]
+    ? i18n.t(`shot-board:states.generation.${state}`, {
+        defaultValue: SHOT_GENERATION_LABELS[state],
+      })
     : `Unknown state (${String(state) || "empty"})`;
 }
 
@@ -110,7 +113,9 @@ export function shotGenerationTone(state: ShotGenerationState): string {
 
 /** `ProjectShotOut.continuity_mode` is an untyped string in the contract; label known values. */
 export function shotContinuityLabel(mode: string): string {
-  return hasKey(SHOT_CONTINUITY_LABELS, mode) ? SHOT_CONTINUITY_LABELS[mode] : mode || "Unknown";
+  return hasKey(SHOT_CONTINUITY_LABELS, mode)
+    ? i18n.t(`shot-board:states.continuity.${mode}`, { defaultValue: SHOT_CONTINUITY_LABELS[mode] })
+    : mode || "Unknown";
 }
 
 export function isKnownContinuityMode(mode: string): mode is ShotContinuityMode {
@@ -261,8 +266,14 @@ export function mapShotUpdateError(error: unknown): ShotUpdateErrorMapping {
       fieldErrors: {},
       formError:
         error instanceof Error
-          ? `Could not save the shot: ${error.message}`
-          : "Could not save the shot.",
+          ? i18n.t("shot-board:errors.saveShotFailed", {
+              message: error.message,
+              defaultValue: `Could not save the shot: ${error.message}`,
+            })
+          : i18n.t("shot-board:errors.saveShotFailed", {
+              message: "",
+              defaultValue: "Could not save the shot.",
+            }),
     };
   }
   if (error.status === 401 || error.status === 403) {
@@ -270,14 +281,23 @@ export function mapShotUpdateError(error: unknown): ShotUpdateErrorMapping {
       fieldErrors: {},
       formError:
         error.status === 403
-          ? "The current session does not have permission to edit shots."
-          : "The admin token was rejected while saving the shot. Update the token and try again.",
+          ? i18n.t("common:errors.actionPermissionDenied", {
+              action: "lưu shot",
+              defaultValue: "The current session does not have permission to edit shots.",
+            })
+          : i18n.t("common:errors.actionTokenRejected", {
+              action: "lưu shot",
+              defaultValue:
+                "The admin token was rejected while saving the shot. Update the token and try again.",
+            }),
     };
   }
   if (error.status === 404) {
     return {
       fieldErrors: {},
-      formError: "This shot no longer exists in the project. Refresh the shot list.",
+      formError: i18n.t("shot-board:errors.shotNotFound", {
+        defaultValue: "This shot no longer exists in the project. Refresh the shot list.",
+      }),
     };
   }
 
@@ -302,8 +322,17 @@ export function mapShotUpdateError(error: unknown): ShotUpdateErrorMapping {
 
   const hasFieldErrors = Object.keys(fieldErrors).length > 0;
   let formError: string | null = null;
-  if (unmapped.length > 0) formError = `The shot was not saved: ${unmapped.join("; ")}`;
-  else if (!hasFieldErrors) formError = `The shot was not saved: ${error.message}`;
+  if (unmapped.length > 0) {
+    formError = i18n.t("shot-board:errors.saveShotFailed", {
+      message: unmapped.join("; "),
+      defaultValue: `The shot was not saved: ${unmapped.join("; ")}`,
+    });
+  } else if (!hasFieldErrors) {
+    formError = i18n.t("shot-board:errors.saveShotFailed", {
+      message: error.message,
+      defaultValue: `The shot was not saved: ${error.message}`,
+    });
+  }
   return { fieldErrors, formError };
 }
 
@@ -401,15 +430,28 @@ export function batchTargetShots(shots: readonly ProjectShot[], scope: BatchScop
 
 /** Operator-facing message for a failed enqueue or batch launch. */
 export function generationErrorMessage(error: unknown, action: "enqueue" | "batch"): string {
-  const subject = action === "batch" ? "The batch was not launched" : "The shot was not queued";
+  const errorKey =
+    action === "batch" ? "shot-board:errors.batchFailed" : "shot-board:errors.enqueueFailed";
+  const defaultSubject =
+    action === "batch" ? "The batch was not launched" : "The shot was not queued";
   if (!(error instanceof ApiError)) {
-    return error instanceof Error ? `${subject}: ${error.message}` : `${subject}.`;
+    const msg = error instanceof Error ? error.message : "";
+    return i18n.t(errorKey, {
+      message: msg,
+      defaultValue: msg ? `${defaultSubject}: ${msg}` : `${defaultSubject}.`,
+    });
   }
   if (error.status === 401) {
-    return `${subject}: the admin token was rejected. Update the token and try again.`;
+    return i18n.t("common:errors.actionTokenRejected", {
+      action: action === "batch" ? "khởi tạo đợt sinh" : "đưa shot vào hàng đợi",
+      defaultValue: `${defaultSubject}: the admin token was rejected. Update the token and try again.`,
+    });
   }
   if (error.status === 403) {
-    return `${subject}: the current session does not have permission to start generation.`;
+    return i18n.t("common:errors.actionPermissionDenied", {
+      action: action === "batch" ? "khởi tạo đợt sinh" : "bắt đầu sinh",
+      defaultValue: `${defaultSubject}: the current session does not have permission to start generation.`,
+    });
   }
   if (
     action === "batch" &&
@@ -420,5 +462,8 @@ export function generationErrorMessage(error: unknown, action: "enqueue" | "batc
     const batchId = typeof error.detail.batch_id === "string" ? ` (${error.detail.batch_id})` : "";
     return `The batch${batchId} was saved, but some tasks could not be scheduled yet: ${error.message}`;
   }
-  return `${subject}: ${error.message}`;
+  return i18n.t(errorKey, {
+    message: error.message,
+    defaultValue: `${defaultSubject}: ${error.message}`,
+  });
 }

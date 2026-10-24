@@ -1,0 +1,9 @@
+{
+  "badgeLabel": "API",
+  "states": {
+    "checking": "Đang kiểm tra...",
+    "online": "Trực tuyến",
+    "offline": "Ngoại tuyến (hãy khởi động Orchestrator)",
+    "unknown": "Không rõ"
+  }
+}

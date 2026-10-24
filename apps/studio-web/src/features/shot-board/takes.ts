@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";
 import { shotLabel, type ProjectShot } from "@/features/shot-board/state";
+import i18n from "@/lib/i18n";
 
 export type ShotTake = components["schemas"]["ShotTakeOut"];
 export type ShotTakeSelection = components["schemas"]["ShotTakeSelectionOut"];
@@ -17,7 +18,10 @@ export const FRAME_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 export const TAKE_PREVIEW_MAX_BYTES = 200 * 1024 * 1024;
 
 export function takeLabel(take: Pick<ShotTake, "take_number">): string {
-  return `Take ${take.take_number}`;
+  return i18n.t("shot-board:takes.takeLabel", {
+    number: take.take_number,
+    defaultValue: `Take ${take.take_number}`,
+  });
 }
 
 /** Parse an ISO-8601 `ShotTakeOut.created_at` string, returning `null` if unparseable. */
@@ -102,6 +106,14 @@ export const PREDECESSOR_ORDER_WARNING = "Previous shot comes after this shot in
 
 export type TakeAction = "select" | "flag" | "load" | "compare" | "preview";
 
+const ACTION_KEYS: Record<TakeAction, string> = {
+  select: "shot-board:errors.takeSelectFailed",
+  flag: "shot-board:errors.takeFlagFailed",
+  load: "shot-board:errors.loadTakesFailed",
+  compare: "shot-board:errors.compareTakesFailed",
+  preview: "shot-board:errors.previewTakeFailed",
+};
+
 const ACTION_SUBJECTS: Record<TakeAction, string> = {
   select: "The take was not selected",
   flag: "The continuity flag was not saved",
@@ -112,18 +124,41 @@ const ACTION_SUBJECTS: Record<TakeAction, string> = {
 
 /** Message for a failed take request: auth, 400/404/409/422 and size limits stay inline. */
 export function takeActionErrorMessage(error: unknown, action: TakeAction): string {
+  const errorKey = ACTION_KEYS[action];
   const subject = ACTION_SUBJECTS[action];
   if (!(error instanceof ApiError)) {
-    return error instanceof Error ? `${subject}: ${error.message}` : `${subject}.`;
+    const msg = error instanceof Error ? error.message : "";
+    return i18n.t(errorKey, {
+      message: msg,
+      defaultValue: msg ? `${subject}: ${msg}` : `${subject}.`,
+    });
   }
   if (error.status === 401) {
-    return `${subject}: the admin token was rejected. Update the token and try again.`;
+    return i18n.t("common:errors.actionTokenRejected", {
+      action: action,
+      defaultValue: `${subject}: the admin token was rejected. Update the token and try again.`,
+    });
   }
   if (error.status === 403) {
-    return `${subject}: the current session does not have permission for this action.`;
+    return i18n.t("common:errors.actionPermissionDenied", {
+      action: action,
+      defaultValue: `${subject}: the current session does not have permission for this action.`,
+    });
   }
-  if (error.category === "too_large") return `${subject}: ${error.message}`;
-  if (error.category === "timeout") return `${subject}: the request timed out. Try again.`;
+  if (error.category === "too_large") {
+    return i18n.t(errorKey, {
+      message: error.message,
+      defaultValue: `${subject}: ${error.message}`,
+    });
+  }
+  if (error.category === "timeout") {
+    return i18n.t(errorKey, {
+      message: i18n.t("common:errors.timeoutGeneric", {
+        defaultValue: "the request timed out. Try again.",
+      }),
+      defaultValue: `${subject}: the request timed out. Try again.`,
+    });
+  }
   if (error.status === 404) {
     const missing =
       action === "preview"
@@ -131,9 +166,15 @@ export function takeActionErrorMessage(error: unknown, action: TakeAction): stri
         : action === "flag"
           ? `the shot, take or connection was not found (${error.message})`
           : `the shot or take was not found (${error.message})`;
-    return `${subject}: ${missing}. Refresh and try again.`;
+    return i18n.t(errorKey, {
+      message: `${missing}. Refresh and try again.`,
+      defaultValue: `${subject}: ${missing}. Refresh and try again.`,
+    });
   }
-  return `${subject}: ${error.message}`;
+  return i18n.t(errorKey, {
+    message: error.message,
+    defaultValue: `${subject}: ${error.message}`,
+  });
 }
 
 /** Longer bound for a flag that also enqueues a regeneration (the server does more work). */
@@ -162,19 +203,24 @@ function isUncertainFailure(error: unknown): boolean {
 export function flagErrorFeedback(error: unknown, regenerate: boolean): FlagErrorFeedback {
   if (regenerate && isUncertainFailure(error)) {
     return {
-      message:
-        "The outcome is unknown: the continuity flag and a regeneration task may already exist. " +
-        "Check the Generation Queue and refresh the take list before retrying, otherwise a second " +
-        "generation may be started.",
+      message: i18n.t("shot-board:errors.flagOutcomeUnknown", {
+        defaultValue:
+          "The outcome is unknown: the continuity flag and a regeneration task may already exist. " +
+          "Check the Generation Queue and refresh the take list before retrying, otherwise a second " +
+          "generation may be started.",
+      }),
       outcomeUnknown: true,
     };
   }
   if (regenerate && error instanceof ApiError && error.status === 422) {
     return {
-      message:
-        `The regeneration was refused: ${error.message.replace(/\.+$/, "")}. ` +
-        "The continuity flag may already be " +
-        "saved; refresh the take list to check it before retrying.",
+      message: i18n.t("shot-board:errors.flagRefusedRegen", {
+        message: error.message.replace(/\.+$/, ""),
+        defaultValue:
+          `The regeneration was refused: ${error.message.replace(/\.+$/, "")}. ` +
+          "The continuity flag may already be " +
+          "saved; refresh the take list to check it before retrying.",
+      }),
       outcomeUnknown: true,
     };
   }

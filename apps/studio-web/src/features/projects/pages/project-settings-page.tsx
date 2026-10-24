@@ -1,14 +1,16 @@
 import { Link } from "@tanstack/react-router";
 import { Calendar, Copy, History, LoaderCircle } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/shared/page-header";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import { useDuplicateProject, useProjects } from "@/entities/project/api";
 import { PROJECT_DUPLICATE_SCOPE_NOTE } from "@/entities/project/options";
 import { useProjectRevisions } from "@/features/projects/api";
 import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
+import { formatDateTime } from "@/lib/i18n/formatters";
 import { useSessionStore } from "@/lib/stores/session-store";
-import { PageHeader } from "@/components/shared/page-header";
 
 interface ProjectSettingsPageProps {
   projectId: string;
@@ -16,6 +18,7 @@ interface ProjectSettingsPageProps {
 
 /** Settings of the open project: profile, revision history and duplication. */
 export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
+  const { t } = useTranslation("projects");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const projectsQuery = useProjects();
   const revisionsQuery = useProjectRevisions(projectId);
@@ -28,8 +31,8 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
   return (
     <div data-testid="project-settings-page" className="space-y-6">
       <PageHeader
-        title="Project settings"
-        description="The project profile and its revision history. Duplicating copies these settings into a new, empty project."
+        title={t("settings.title")}
+        description={t("settings.description")}
         actions={
           <>
             <Button
@@ -48,12 +51,12 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
               {duplicateMutation.isPending ? (
                 <>
                   <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                  Duplicating...
+                  {t("settings.duplicating")}
                 </>
               ) : (
                 <>
                   <Copy className="size-4" aria-hidden="true" />
-                  Duplicate settings
+                  {t("settings.duplicate")}
                 </>
               )}
             </Button>
@@ -67,16 +70,18 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
           className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-xs text-foreground"
         >
           <span>
-            Duplicated project settings as <strong>{duplicated.name}</strong>{" "}
-            <span className="font-mono">({duplicated.projectId})</span>.{" "}
-            {PROJECT_DUPLICATE_SCOPE_NOTE}
+            {t("settings.duplicatedNotice", {
+              name: duplicated.name,
+              projectId: duplicated.projectId,
+              scopeNote: PROJECT_DUPLICATE_SCOPE_NOTE,
+            })}
           </span>
           <Link
             to="/projects/$projectId/$module"
             params={{ projectId: duplicated.projectId, module: "script-studio" }}
             className="font-semibold text-primary underline underline-offset-4"
           >
-            Open the copy in Script & Story Bible →
+            {t("settings.openCopyInScript")}
           </Link>
         </div>
       )}
@@ -89,50 +94,61 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
 
       {currentProject && (
         <section
-          aria-label="Active project profile"
+          aria-label={t("settings.profile.ariaLabel")}
           className="grid gap-4 rounded-xl border border-border bg-secondary/25 p-5 sm:grid-cols-2 lg:grid-cols-4"
         >
           <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground">Project Name & ID</p>
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("settings.profile.nameAndId")}
+            </p>
             <p className="text-sm font-semibold">{currentProject.name}</p>
             <p className="font-mono text-xs text-muted-foreground">{currentProject.id}</p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground">Format & Frame Rate</p>
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("settings.profile.formatAndFps")}
+            </p>
             <p className="text-sm font-semibold">
               {currentProject.aspect_ratio} · {currentProject.fps} fps
             </p>
             <p className="font-mono text-xs text-muted-foreground">
-              {currentProject.output_profile} · lang: {currentProject.language}
+              {currentProject.output_profile} ·{" "}
+              {t("settings.profile.langInfo", { language: currentProject.language })}
             </p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground">Style Preset</p>
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("settings.profile.stylePreset")}
+            </p>
             <p className="font-mono text-sm font-semibold text-primary">
               {currentProject.style_preset}
             </p>
             <p className="text-xs text-muted-foreground">
-              {currentProject.description || "No custom logline configured"}
+              {currentProject.description || t("settings.profile.noDescription")}
             </p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground">State & Assets</p>
-            <p className="text-sm font-semibold">Revision #{currentProject.current_revision_num}</p>
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("settings.profile.stateAndAssets")}
+            </p>
+            <p className="text-sm font-semibold">
+              {t("settings.profile.revisionNum", { number: currentProject.current_revision_num })}
+            </p>
             <p className="text-xs text-muted-foreground">
-              {currentProject.asset_count} registered media assets
+              {t("settings.profile.assetCount", { count: currentProject.asset_count })}
             </p>
           </div>
         </section>
       )}
 
-      <section aria-label="Revision history" className="space-y-3">
+      <section aria-label={t("settings.revisions.ariaLabel")} className="space-y-3">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
             <History className="size-4 shrink-0 text-primary" aria-hidden="true" />
-            <span>Project Revision History ({revisions.length})</span>
+            <span>{t("settings.revisions.title", { count: revisions.length })}</span>
           </h3>
           <span className="break-all sm:text-right text-xs text-muted-foreground">
-            GET /api/v1/projects/{projectId}/revisions
+            {t("settings.revisions.endpoint", { projectId })}
           </span>
         </div>
 
@@ -141,14 +157,14 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
           isError={revisionsQuery.isError}
           isEmpty={revisions.length === 0}
           hasData={revisions.length > 0}
-          loadingMessage="Loading project revisions..."
+          loadingMessage={t("settings.revisions.loading")}
           errorMessage={authErrorMessage(
             revisionsQuery.error,
             activeAdminToken,
             "project revisions",
           )}
-          emptyTitle="No revisions committed yet"
-          emptyDescription="Project revisions are recorded when a project is created or duplicated."
+          emptyTitle={t("settings.revisions.emptyTitle")}
+          emptyDescription={t("settings.revisions.emptyDescription")}
           onRetry={() => void revisionsQuery.refetch()}
         >
           <ul className="space-y-3">
@@ -168,7 +184,7 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
                     </div>
                     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                       <Calendar className="size-3.5" aria-hidden="true" />
-                      {new Date(rev.created_at).toLocaleString()}
+                      {formatDateTime(rev.created_at)}
                     </span>
                   </div>
 
@@ -182,8 +198,8 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
                           <dd className="truncate font-medium text-foreground">
                             {typeof value === "object" && value !== null
                               ? Array.isArray(value)
-                                ? `${value.length} items`
-                                : "object"
+                                ? t("settings.revisions.itemsCount", { count: value.length })
+                                : t("settings.revisions.objectLabel")
                               : String(value)}
                           </dd>
                         </div>

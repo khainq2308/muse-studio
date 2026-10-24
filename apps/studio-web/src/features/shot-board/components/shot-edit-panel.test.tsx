@@ -101,7 +101,7 @@ describe("ShotEditPanel", () => {
     const prompt = screen.getByTestId("shot-review-prompt");
     expect(prompt.tagName).toBe("P");
     expect(prompt).toHaveTextContent("close-up handheld shot of the hero running");
-    expect(screen.getByRole("status")).toHaveTextContent("Approval: Needs review");
+    expect(screen.getByRole("status")).toHaveTextContent("Approval: Cần xem lại");
     expect(screen.getByRole("list", { name: "Prompt Linter after save" })).toHaveTextContent(
       "MISSING_REF",
     );

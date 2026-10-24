@@ -134,7 +134,7 @@ describe("System and project data pages", () => {
     );
     const dialog = screen.getByRole("alertdialog");
     expect(dialog).toHaveTextContent("proj-1-20261024.zip");
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(dialog).getByRole("button", { name: /cancel|hủy/i }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(requestsTo(fetchMock, "/backups/bk-1", "DELETE")).toHaveLength(0);
 
@@ -142,7 +142,11 @@ describe("System and project data pages", () => {
     await user.click(
       within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete backup" }),
     );
-    expect(await screen.findByText(/Could not delete the backup: Backup locked/)).toBeVisible();
+    expect(
+      await screen.findByText(
+        /(?:could not delete the backup|không thể delete the backup): Backup locked/i,
+      ),
+    ).toBeVisible();
     expect(requestsTo(fetchMock, "/backups/bk-1", "DELETE")).toHaveLength(1);
   });
 
@@ -235,7 +239,9 @@ describe("System and project data pages", () => {
       within(screen.getByRole("alertdialog")).getByRole("button", { name: "Restore backup" }),
     );
     expect(
-      await screen.findByText(/Could not restore the backup: Archive is corrupt/),
+      await screen.findByText(
+        /(?:could not restore the backup|không thể restore the backup): Archive is corrupt/i,
+      ),
     ).toBeVisible();
     expect(requestsTo(fetchMock, "/backups/restore", "POST")).toHaveLength(1);
   });
@@ -313,6 +319,8 @@ describe("System and project data pages", () => {
     );
     renderWithQueryClient(<SystemPage />);
 
-    expect(await screen.findByText(/Could not load metrics summary/)).toBeVisible();
+    expect(
+      await screen.findByText(/(?:could not load metrics summary|không thể tải metrics summary)/i),
+    ).toBeVisible();
   });
 });

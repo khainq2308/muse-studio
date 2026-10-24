@@ -1,4 +1,5 @@
 import { ImagePlus, TriangleAlert } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import type { BibleAttentionItem } from "@/features/script-studio/attention";
 import type { StoryBibleEntry } from "@/features/script-studio/state";
@@ -11,10 +12,6 @@ interface StoryBibleAttentionProps {
   onAddReference: (entry: StoryBibleEntry) => void;
 }
 
-function blockedLabel(count: number): string {
-  return count === 1 ? "Blocks 1 shot" : `Blocks ${count} shots`;
-}
-
 /** Characters missing a required reference image: the Story Bible fixes that unblock shots. */
 export function StoryBibleAttention({
   items,
@@ -22,6 +19,7 @@ export function StoryBibleAttention({
   isEditorBusy,
   onAddReference,
 }: StoryBibleAttentionProps) {
+  const { t } = useTranslation("script-studio");
   if (items.length === 0) return null;
   return (
     <section
@@ -35,12 +33,9 @@ export function StoryBibleAttention({
           className="flex items-center gap-2 text-sm font-semibold text-foreground"
         >
           <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden="true" />
-          Needs a reference image ({items.length})
+          {t("bible.attention.title", { count: items.length })}
         </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          These characters require a locked reference image. Shots using them cannot be generated
-          without one.
-        </p>
+        <p className="mt-1 text-xs text-muted-foreground">{t("bible.attention.description")}</p>
       </div>
       <ul className="divide-y divide-warning/20">
         {items.map(({ entry, blockedShots }) => (
@@ -55,7 +50,9 @@ export function StoryBibleAttention({
               </p>
               {shotCountsKnown && (
                 <p className="text-xs text-warning">
-                  {blockedShots > 0 ? blockedLabel(blockedShots) : "No blocked shots right now"}
+                  {blockedShots > 0
+                    ? t("bible.attention.blocksShots", { count: blockedShots })
+                    : t("bible.attention.noBlockedShots")}
                 </p>
               )}
             </div>
@@ -64,11 +61,11 @@ export function StoryBibleAttention({
               size="sm"
               variant="outline"
               disabled={isEditorBusy}
-              aria-label={`Add a reference image for ${entry.display_name}`}
+              aria-label={t("bible.attention.addReferenceAria", { name: entry.display_name })}
               onClick={() => onAddReference(entry)}
             >
               <ImagePlus className="size-4" aria-hidden="true" />
-              Add reference
+              {t("bible.attention.addReference")}
             </Button>
           </li>
         ))}
