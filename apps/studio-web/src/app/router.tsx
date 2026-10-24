@@ -11,9 +11,9 @@ import AppShell from "@/app/app-shell";
 import NotFoundPage from "@/app/not-found-page";
 import ProjectModuleRoute from "@/app/project-module-route";
 import { isProjectModule, legacyModuleTarget } from "@/app/project-modules";
+import { validateProjectModuleSearch } from "@/app/project-search";
 import ConnectionsPage from "@/features/connections";
 import ProjectsPage from "@/features/projects";
-import { validateShotBoardSearch } from "@/features/shot-board/search";
 import SystemPage from "@/features/system-ops";
 import OverviewPage from "@/features/workspace-overview/pages/overview-page";
 
@@ -73,9 +73,9 @@ const projectIndexRoute = createRoute({
 const projectModuleRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: "/projects/$projectId/$module",
-  // Optional module navigation state; only the Shot Board reads it (`?shot=&tab=`). Links to
-  // another module do not carry it over.
-  validateSearch: validateShotBoardSearch,
+  // Optional module navigation state: the Shot Board reads `?shot=&tab=`, Script & Story Bible
+  // reads `?view=`. Links to another module do not carry it over.
+  validateSearch: validateProjectModuleSearch,
   beforeLoad: ({ params }) => {
     const legacy = legacyModuleTarget(params.module);
     if (legacy?.kind === "workspace") throw redirect({ to: legacy.to, replace: true });
