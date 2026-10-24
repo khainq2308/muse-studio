@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { isBlockingMissingReference } from "@/features/script-studio/attention";
 import { ReferenceAssetPreview } from "@/features/script-studio/components/reference-asset-preview";
 import {
   STORY_BIBLE_ENTRY_LABELS,
@@ -237,10 +238,7 @@ export function StoryBibleList({
         >
           {visibleEntries.map((entry) => {
             const attributes = summarizeMutableAttributes(entry);
-            const missingRequiredReference =
-              entry.entry_type === "character" &&
-              entry.requires_reference_lock &&
-              entry.reference_asset_ids.length === 0;
+            const missingRequiredReference = isBlockingMissingReference(entry);
             const isEditing = editingCodeName === entry.code_name;
             const shownOnlyWhileEditing = isEditing && !matchingCodeNames.has(entry.code_name);
             const primaryAssetId = entry.reference_asset_ids[0] ?? null;

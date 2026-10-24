@@ -7,7 +7,7 @@ import { isProjectModule } from "@/app/project-modules";
 import { useProjects } from "@/entities/project/api";
 import { ProjectSettingsPage } from "@/features/projects";
 import QueueMonitorPage from "@/features/queue-monitor";
-import ScriptStudioPage from "@/features/script-studio";
+import ScriptStudioPage, { type ScriptStudioView } from "@/features/script-studio";
 import ShotBoardPage, {
   type ShotBoardNavigateOptions,
   type ShotBoardSearch,
@@ -56,7 +56,7 @@ export default function ProjectModuleRoute() {
   // Remount per project so no local UI state (filters, open editors) leaks across projects.
   const content =
     module === "script-studio" ? (
-      <ScriptStudioPage key={projectId} projectId={projectId} />
+      <ScriptStudioModule key={projectId} projectId={projectId} />
     ) : module === "queue-monitor" ? (
       <QueueMonitorPage key={projectId} projectId={projectId} />
     ) : module === "shot-board" ? (
@@ -124,6 +124,23 @@ export default function ProjectModuleRoute() {
       </section>
     </>
   );
+}
+
+/** Connects Script & Story Bible to its URL state (`?view=script|bible`). */
+function ScriptStudioModule({ projectId }: { projectId: string }) {
+  const { view } = useSearch({ from: "/_shell/projects/$projectId/$module" });
+  const navigate = useNavigate();
+  const onViewChange = useCallback(
+    (next: ScriptStudioView, options?: { replace?: boolean }) =>
+      void navigate({
+        to: "/projects/$projectId/$module",
+        params: { projectId, module: "script-studio" },
+        search: { view: next },
+        replace: options?.replace ?? false,
+      }),
+    [navigate, projectId],
+  );
+  return <ScriptStudioPage projectId={projectId} view={view} onViewChange={onViewChange} />;
 }
 
 /** Connects the Shot Board to its URL state (`?shot=<id>&tab=<tab>`). */

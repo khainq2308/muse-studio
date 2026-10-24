@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -18,6 +19,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 import { ScriptStudioPage } from "@/features/script-studio/pages/script-studio-page";
+import type { ScriptStudioView } from "@/features/script-studio/search";
 import type { StoryBibleEntry } from "@/features/script-studio/state";
 import { useSessionStore } from "@/lib/stores/session-store";
 
@@ -118,13 +120,19 @@ const bibleEntries: StoryBibleEntry[] = [
   },
 ];
 
-function mount() {
+/** Holds the `?view=` URL state the route would provide; `view` starts as the initial URL. */
+function Harness({ initialView }: { initialView?: ScriptStudioView }) {
+  const [view, setView] = useState<ScriptStudioView | undefined>(initialView);
+  return <ScriptStudioPage projectId="project-1" view={view} onViewChange={setView} />;
+}
+
+function mount(initialView?: ScriptStudioView) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <ScriptStudioPage projectId="project-1" />
+      <Harness initialView={initialView} />
     </QueryClientProvider>,
   );
 }
@@ -187,7 +195,7 @@ describe("ScriptStudioPage", () => {
 
     useSessionStore.getState().setAdminToken("test-token");
     stubApi(() => ({ status: 200, body: [] }));
-    mount();
+    mount("bible");
     expect(await screen.findByText("No Story Bible entries yet")).toBeInTheDocument();
   });
 
@@ -229,7 +237,7 @@ describe("ScriptStudioPage", () => {
       }
       return undefined;
     });
-    mount();
+    mount("bible");
 
     await screen.findByText("No Story Bible entries yet");
     await user.click(screen.getByRole("button", { name: "New Bible entry" }));
@@ -344,7 +352,7 @@ describe("ScriptStudioPage", () => {
       }
       return undefined;
     });
-    mount();
+    mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
     await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
@@ -405,10 +413,10 @@ describe("ScriptStudioPage", () => {
       }
       return undefined;
     });
-    mount();
+    mount("bible");
 
     await screen.findByText("No Story Bible entries yet");
-    await user.click(screen.getByRole("button", { name: "Export JSON" }));
+    await user.click(screen.getByRole("button", { name: "Export shot list as JSON" }));
     await waitFor(() =>
       expect(
         requests.some(
@@ -419,7 +427,7 @@ describe("ScriptStudioPage", () => {
       ).toBe(true),
     );
 
-    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    await user.click(screen.getByRole("button", { name: "Export shot list as CSV" }));
     expect(await screen.findByTestId("shot-export-error")).toHaveTextContent(
       "Could not export shots (CSV): Export storage unavailable",
     );
@@ -441,6 +449,8 @@ describe("ScriptStudioPage", () => {
               sequence_index: 0,
               title: "Shot 1",
               generation_state: "queued",
+              subject_codes: [],
+              lint_report: [],
             },
           ],
         };
@@ -448,7 +458,7 @@ describe("ScriptStudioPage", () => {
       return undefined;
     });
 
-    mount();
+    mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
     await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
@@ -474,7 +484,7 @@ describe("ScriptStudioPage", () => {
       return undefined;
     });
 
-    mount();
+    mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
     await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
@@ -512,7 +522,7 @@ describe("ScriptStudioPage", () => {
       }),
     );
 
-    mount();
+    mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
     await user.click(
@@ -589,16 +599,20 @@ describe("ScriptStudioPage", () => {
       }
       return undefined;
     });
+    const user = userEvent.setup();
     mount();
 
+    // A Story Bible that failed to load opens on its own view, with the error visible.
+    expect(await screen.findByRole("heading", { name: "Story Bible (—)" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Story Bible/ })).not.toHaveTextContent(/\d/);
+
+    await user.click(screen.getByRole("tab", { name: "Script import" }));
     const importPanel = await screen.findByTestId("script-import-panel");
     await waitFor(() => {
       expect(within(importPanel).getByTestId("active-shots-count")).toHaveTextContent(
         "— active shots",
       );
     });
-    expect(screen.getByRole("heading", { name: "Story Bible (—)" })).toBeInTheDocument();
-    expect(screen.getByTestId("story-bible-summary")).not.toHaveTextContent(/You have 0/);
   });
 
   it("labels the scene outline as a local preview without inventing scene headings", async () => {
@@ -606,7 +620,7 @@ describe("ScriptStudioPage", () => {
     stubApi(({ pathname }) =>
       pathname === "/api/v1/projects/project-1/story-bible" ? { status: 200, body: [] } : undefined,
     );
-    mount();
+    mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
     expect(within(importPanel).getByTestId("local-outline-disclaimer")).toHaveTextContent(
@@ -662,5 +676,243 @@ describe("ScriptStudioPage", () => {
     expect(retry).not.toHaveTextContent("Retry");
     await user.click(retry);
     expect(await screen.findByTestId("reference-asset-image-ast_ref2")).toBeInTheDocument();
+  });
+});
+
+describe("ScriptStudioPage views", () => {
+  const blockedShot = {
+    id: "shot-1",
+    generation_state: "blocked_reference",
+    subject_codes: ["char_minh"],
+    lint_report: [
+      {
+        code: "BLOCKED_REFERENCE",
+        severity: "blocker",
+        message: "Thiếu ref asset 'MISSING_REQUIRED_CHAR_REF'.",
+        field: "subject_ids",
+      },
+    ],
+  };
+
+  it("starts an empty project on the script import and a populated one on the Story Bible", async () => {
+    stubApi(() => ({ status: 200, body: [] }));
+    mount();
+    expect(await screen.findByRole("tab", { name: "Script import" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("script-import-panel")).toBeVisible();
+    cleanup();
+
+    stubApi(({ pathname }) =>
+      pathname === "/api/v1/projects/project-1/story-bible"
+        ? { status: 200, body: bibleEntries }
+        : undefined,
+    );
+    mount();
+    expect(await screen.findByRole("tab", { name: /^Story Bible/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("script-import-panel")).not.toBeVisible();
+  });
+
+  it("switches views with the arrow keys", async () => {
+    const user = userEvent.setup();
+    stubApi(() => ({ status: 200, body: [] }));
+    mount();
+
+    const scriptTab = await screen.findByRole("tab", { name: "Script import" });
+    scriptTab.focus();
+    await user.keyboard("{ArrowRight}");
+    const bibleTab = screen.getByRole("tab", { name: /^Story Bible/ });
+    expect(bibleTab).toHaveAttribute("aria-selected", "true");
+    expect(bibleTab).toHaveFocus();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", bibleTab.id);
+  });
+
+  it("lists characters missing a reference with their blocked shots, and opens the editor", async () => {
+    const user = userEvent.setup();
+    stubApi(({ pathname }) =>
+      pathname === "/api/v1/projects/project-1/story-bible"
+        ? { status: 200, body: bibleEntries }
+        : pathname === "/api/v1/projects/project-1/shots"
+          ? { status: 200, body: [blockedShot] }
+          : undefined,
+    );
+    mount();
+
+    const attention = await screen.findByTestId("story-bible-attention");
+    expect(within(attention).getByRole("heading")).toHaveTextContent("Needs a reference image (1)");
+    expect(attention).toHaveTextContent("Inspector Minh");
+    expect(attention).toHaveTextContent("Blocks 1 shot");
+    expect(attention).not.toHaveTextContent("Detective Linh");
+    expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveTextContent("1 to fix");
+
+    await user.click(
+      within(attention).getByRole("button", { name: "Add a reference image for Inspector Minh" }),
+    );
+    expect(await screen.findByTestId("story-bible-editor-char_minh")).toBeVisible();
+
+    const next = screen.getByTestId("script-studio-next-step");
+    expect(next).toHaveTextContent(
+      "1 blocked shot needs the reference images above; it may have other blockers too.",
+    );
+    expect(within(next).getByRole("link", { name: /Go to Shot Board/ })).toHaveAttribute(
+      "href",
+      "/projects/project-1/shot-board",
+    );
+  });
+
+  it("offers the Story Bible as the next step after an applied import", async () => {
+    const user = userEvent.setup();
+    stubApi(({ method, pathname }) => {
+      if (method === "POST" && pathname === "/api/v1/projects/project-1/scripts/import") {
+        return {
+          status: 201,
+          body: {
+            script_revision_id: "scr_rev01",
+            version_number: 1,
+            raw_content_preserved: true,
+            diff_summary: "Parsed 1 scene and 2 shots.",
+            detected_characters: 1,
+            detected_locations: 1,
+            detected_scenes: 1,
+            generated_shots: 2,
+            warnings: [],
+          },
+        };
+      }
+      return { status: 200, body: [] };
+    });
+    mount();
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(
+      within(importPanel).getByRole("checkbox", {
+        name: /Apply changes directly to Story Bible & shots/,
+      }),
+    );
+    await user.click(within(importPanel).getByRole("button", { name: "Import & apply script" }));
+    const result = await screen.findByTestId("script-import-result");
+    await user.click(within(result).getByRole("button", { name: "Review Story Bible" }));
+
+    expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("keeps the derived view after an import adds Story Bible entries, so the result stays", async () => {
+    const user = userEvent.setup();
+    let imported = false;
+    stubApi(({ method, pathname }) => {
+      if (method === "POST" && pathname === "/api/v1/projects/project-1/scripts/import") {
+        imported = true;
+        return {
+          status: 201,
+          body: {
+            script_revision_id: "scr_rev01",
+            version_number: 1,
+            raw_content_preserved: true,
+            diff_summary: "Parsed 1 scene and 2 shots.",
+            detected_characters: 2,
+            detected_locations: 0,
+            detected_scenes: 1,
+            generated_shots: 2,
+            warnings: [],
+          },
+        };
+      }
+      if (pathname === "/api/v1/projects/project-1/story-bible") {
+        return { status: 200, body: imported ? bibleEntries : [] };
+      }
+      return { status: 200, body: [] };
+    });
+    mount();
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(
+      within(importPanel).getByRole("checkbox", {
+        name: /Apply changes directly to Story Bible & shots/,
+      }),
+    );
+    await user.click(within(importPanel).getByRole("button", { name: "Import & apply script" }));
+    await screen.findByTestId("script-import-result");
+    // The refetched Story Bible now has entries; the view must not switch on its own.
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveTextContent("3 entries"),
+    );
+    expect(screen.getByRole("tab", { name: "Script import" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("script-import-result")).toBeVisible();
+  });
+
+  it("keeps a typed script and an unsaved Story Bible edit when switching views", async () => {
+    const user = userEvent.setup();
+    stubApi(({ pathname }) =>
+      pathname === "/api/v1/projects/project-1/story-bible"
+        ? { status: 200, body: bibleEntries }
+        : undefined,
+    );
+    mount("script");
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    const textarea = within(importPanel).getByRole("textbox", { name: /script/i });
+    await user.type(textarea, "SCENE 1: Dock at night");
+
+    await user.click(screen.getByRole("tab", { name: /^Story Bible/ }));
+    await user.click(
+      await screen.findByRole("button", { name: "Edit Detective Linh (char_linh)" }),
+    );
+    const editor = await screen.findByTestId("story-bible-editor-char_linh");
+    const traits = within(editor).getByLabelText("Immutable traits");
+    await user.clear(traits);
+    await user.type(traits, "unsaved trait edit");
+
+    await user.click(screen.getByRole("tab", { name: "Script import" }));
+    expect(within(importPanel).getByRole("textbox", { name: /script/i })).toHaveValue(
+      "SCENE 1: Dock at night",
+    );
+    await user.click(screen.getByRole("tab", { name: /^Story Bible/ }));
+    expect(
+      within(screen.getByTestId("story-bible-editor-char_linh")).getByLabelText("Immutable traits"),
+    ).toHaveValue("unsaved trait edit");
+  });
+
+  it("says blocked shots are explained on the Shot Board when no Story Bible fix applies", async () => {
+    stubApi(({ pathname }) =>
+      pathname === "/api/v1/projects/project-1/story-bible"
+        ? { status: 200, body: [bibleEntries[0]] }
+        : pathname === "/api/v1/projects/project-1/shots"
+          ? {
+              status: 200,
+              body: [
+                {
+                  id: "shot-1",
+                  generation_state: "blocked_reference",
+                  subject_codes: ["char_linh"],
+                  lint_report: [
+                    {
+                      code: "CAMERA_MOTION_CONFLICT",
+                      severity: "blocker",
+                      message: "Conflicting camera motion.",
+                      field: "camera_motion",
+                    },
+                  ],
+                },
+              ],
+            }
+          : undefined,
+    );
+    mount();
+
+    const next = await screen.findByTestId("script-studio-next-step");
+    expect(next).toHaveTextContent("1 shot is blocked; the Shot Board shows why.");
+    expect(screen.queryByTestId("story-bible-attention")).toBeNull();
   });
 });

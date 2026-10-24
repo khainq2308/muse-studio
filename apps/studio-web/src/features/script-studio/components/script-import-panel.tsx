@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import {
   AlignLeft,
   BookOpen,
+  BookOpenText,
   CheckCircle2,
   Clapperboard,
   FileUp,
@@ -195,6 +196,8 @@ interface ScriptImportPanelProps {
   result: ScriptImportResult | null;
   onImport: (request: ScriptImportRequest) => void;
   onDismissResult: () => void;
+  /** Switches to the Story Bible view, the next step after an applied import. */
+  onReviewStoryBible?: () => void;
 }
 
 export function ScriptImportPanel({
@@ -210,6 +213,7 @@ export function ScriptImportPanel({
   result,
   onImport,
   onDismissResult,
+  onReviewStoryBible,
 }: ScriptImportPanelProps) {
   const headingId = useId();
   const outlineHeadingId = useId();
@@ -432,6 +436,12 @@ export function ScriptImportPanel({
             )}
 
             <div className="flex flex-wrap items-center gap-3">
+              {onReviewStoryBible && (
+                <Button type="button" size="sm" onClick={onReviewStoryBible}>
+                  <BookOpenText className="size-3.5" aria-hidden="true" />
+                  Review Story Bible
+                </Button>
+              )}
               <Link
                 to="/projects/$projectId/$module"
                 params={{ projectId, module: "shot-board" }}

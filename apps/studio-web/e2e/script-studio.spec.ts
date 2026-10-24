@@ -172,6 +172,14 @@ test("imports a script with replace_existing confirmation and edits a Story Bibl
     "page",
   );
 
+  // A project with a Story Bible opens on it; re-importing starts from the Script import view.
+  await expect(page.getByRole("tab", { name: /^Story Bible/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.getByRole("tab", { name: "Script import" }).click();
+  await expect(page).toHaveURL("/projects/test-project/script-studio?view=script");
+
   const importPanel = page.getByTestId("script-import-panel");
   await importPanel.getByRole("button", { name: "Insert sample script" }).click();
   await importPanel
@@ -192,6 +200,12 @@ test("imports a script with replace_existing confirmation and edits a Story Bibl
   await expect(page.getByTestId("script-import-result")).toContainText(
     "Imported script revision v2 (scr_e2e01)",
   );
+
+  await page
+    .getByTestId("script-import-result")
+    .getByRole("button", { name: "Review Story Bible" })
+    .click();
+  await expect(page).toHaveURL("/projects/test-project/script-studio?view=bible");
 
   await page.getByRole("button", { name: "Edit 2D Anime Noir (style_noir)" }).click();
   const editor = page.getByTestId("story-bible-editor-style_noir");
