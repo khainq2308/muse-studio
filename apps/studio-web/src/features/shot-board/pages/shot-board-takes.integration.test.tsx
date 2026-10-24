@@ -14,7 +14,10 @@ import {
   makeSelection,
   makeShot,
   makeTake,
+  makeTaskPage,
 } from "@/features/shot-board/test-fixtures";
+import { useGenerationSettingsStore } from "@/features/shot-board/generation-settings-store";
+import { chooseConnection } from "@/features/shot-board/test-actions";
 import { ShotBoardHarness } from "@/features/shot-board/test-harness";
 import { useSessionStore } from "@/lib/stores/session-store";
 
@@ -61,7 +64,15 @@ function stubApi(handler: Handler) {
         body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
       };
       requests.push(request);
-      const response = handler(request);
+      const handled = handler(request);
+      // The board polls the project's recent tasks; default to an empty page (the real shape)
+      // unless the test answers that request itself.
+      const response =
+        request.method === "GET" &&
+        request.pathname === "/api/v1/queue/tasks" &&
+        (!handled || (!(handled instanceof Response) && Array.isArray(handled.body)))
+          ? { status: 200, body: makeTaskPage() }
+          : handled;
       if (!response) return json(404, { detail: "Not mocked", category: "not_found" });
       if (response instanceof Response) return response;
       return json(response.status, response.body);
@@ -147,6 +158,7 @@ function mount() {
 }
 
 beforeEach(() => {
+  useGenerationSettingsStore.setState({ byProject: {} });
   useSessionStore.getState().setAdminToken("test-token");
 });
 
@@ -331,7 +343,7 @@ describe("Shot Board take review", () => {
     mount();
 
     const user = userEvent.setup();
-    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await chooseConnection(user, "conn-mock");
     await openReview("Shot 1 · Hero enters");
     const panel = await screen.findByTestId("shot-take-review-shot-1");
     await within(panel).findAllByRole("listitem");
@@ -399,7 +411,20 @@ describe("Shot Board take review", () => {
                 status: 200,
                 body: [{ ...takeOne, model_id: "studio-custom-video-v3" }, takeTwo],
               }
-            : undefined,
+            : pathname === "/api/v1/connections"
+              ? // Two connections, so nothing is chosen until the user picks one.
+                {
+                  status: 200,
+                  body: [
+                    makeConnection(),
+                    makeConnection({
+                      id: "conn-live",
+                      name: "Live gateway",
+                      provider_type: "muse2api",
+                    }),
+                  ],
+                }
+              : undefined,
       ),
     );
     mount();
@@ -410,7 +435,7 @@ describe("Shot Board take review", () => {
     await user.click(within(panel).getByRole("button", { name: "Flag continuity on Take 1" }));
     const form = within(panel).getByTestId("continuity-flag-form-take-1");
     expect(within(form).getByRole("checkbox", { name: "Regenerate this shot now" })).toBeDisabled();
-    expect(form).toHaveTextContent("Select a connection in Generation settings first.");
+    expect(form).toHaveTextContent("Choose a provider connection to generate.");
 
     await user.type(within(form).getByLabelText("Director notes"), "Wrong prop.");
     await user.click(within(form).getByRole("button", { name: "Flag continuity" }));
@@ -525,7 +550,7 @@ describe("Take review: uncertain outcomes, focus and sessions", () => {
     mount();
 
     const user = userEvent.setup();
-    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await chooseConnection(user, "conn-mock");
     await openReview("Shot 1 · Hero enters");
     const panel = await screen.findByTestId("shot-take-review-shot-1");
     await within(panel).findAllByRole("listitem");
@@ -564,7 +589,7 @@ describe("Take review: uncertain outcomes, focus and sessions", () => {
     mount();
 
     const user = userEvent.setup();
-    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await chooseConnection(user, "conn-mock");
     await openReview("Shot 1 · Hero enters");
     const panel = await screen.findByTestId("shot-take-review-shot-1");
     await within(panel).findAllByRole("listitem");
@@ -631,7 +656,7 @@ describe("Take review: uncertain outcomes, focus and sessions", () => {
     mount();
 
     const user = userEvent.setup();
-    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await chooseConnection(user, "conn-mock");
     await openReview("Shot 1 · Hero enters");
     const panel = await screen.findByTestId("shot-take-review-shot-1");
     await within(panel).findAllByRole("listitem");

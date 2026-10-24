@@ -13,6 +13,8 @@ import type {
   TakeComparison,
 } from "@/features/shot-board/takes";
 
+import type { QueueTask, QueueTaskPage } from "@/entities/task/state";
+
 /** Test-only builders typed from the generated OpenAPI schema. */
 export function makeShot(overrides: Partial<ProjectShot> = {}): ProjectShot {
   return {
@@ -194,5 +196,36 @@ export function makeFlagResult(
     director_notes: "Hair changes side.",
     regenerated_task_id: null,
     ...overrides,
+  };
+}
+
+export function makeQueueTask(overrides: Partial<QueueTask> = {}): QueueTask {
+  // A listed task is an enqueued task without the enqueue-only `created_new` flag.
+  const task: Partial<EnqueuedTask> = makeEnqueuedTask();
+  delete task.created_new;
+  return { ...(task as Omit<EnqueuedTask, "created_new">), pending_input: null, ...overrides };
+}
+
+/** `GET /api/v1/queue/tasks` page; the summary defaults to counts derived from `items`. */
+export function makeTaskPage(
+  items: QueueTask[] = [],
+  summary: Partial<QueueTaskPage["summary"]> = {},
+): QueueTaskPage {
+  const active = items.filter((task) =>
+    ["queued", "running", "awaiting_input"].includes(task.state),
+  ).length;
+  return {
+    items,
+    total: items.length,
+    limit: 100,
+    offset: 0,
+    has_more: false,
+    summary: {
+      total_tasks: items.length,
+      active_tasks: active,
+      failed_tasks: items.filter((task) => task.state === "failed").length,
+      awaiting_input_tasks: items.filter((task) => task.state === "awaiting_input").length,
+      ...summary,
+    },
   };
 }

@@ -325,8 +325,9 @@ test("flags continuity with regenerate after confirmation and links to the Gener
   const requests = await mockApi(page);
   await page.goto("/projects/test-project/shot-board");
 
-  await page.getByLabel("Connection").selectOption("conn-mock");
-  await expect(page.getByLabel("Model")).toHaveValue("muse-video-mock-v1");
+  await expect(page.getByTestId("generation-setup-summary")).toContainText(
+    "Generating with Mock studio (mock, no provider cost) · muse-video-mock-v1",
+  );
 
   await openTakes(page, "Shot 1 · Hero enters");
   const panel = page.getByTestId("shot-take-review-shot-1");

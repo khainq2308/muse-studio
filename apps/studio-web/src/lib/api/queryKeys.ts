@@ -15,6 +15,9 @@ export const queryKeys = {
     ["queue-tasks", sessionVersion, projectId] as const,
   queueTasks: (sessionVersion: number, projectId: string, stateFilter: string, offset: number) =>
     ["queue-tasks", sessionVersion, projectId, stateFilter, offset] as const,
+  /** Newest tasks of a project for per-shot status; under the queue-tasks prefix. */
+  recentProjectTasks: (sessionVersion: number, projectId: string) =>
+    ["queue-tasks", sessionVersion, projectId, "recent"] as const,
   /** Mutation key for pause/resume/cancel actions, used to track every in-flight action. */
   queueTaskActions: (sessionVersion: number, projectId: string) =>
     ["queue-task-actions", sessionVersion, projectId] as const,
