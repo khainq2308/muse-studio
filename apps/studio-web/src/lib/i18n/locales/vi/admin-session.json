@@ -1,0 +1,8 @@
+{
+  "ariaLabel": "Token quản trị Studio",
+  "placeholderEmpty": "Token quản trị Studio",
+  "placeholderActive": "Phiên hoạt động · cập nhật token",
+  "connect": "Kết nối",
+  "updateToken": "Cập nhật token",
+  "disconnect": "Ngắt kết nối"
+}

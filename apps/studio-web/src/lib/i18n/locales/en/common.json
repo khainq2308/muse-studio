@@ -1,0 +1,99 @@
+{
+  "nav": {
+    "workspace": "Workspace",
+    "projectModules": "Project modules",
+    "overview": "Overview",
+    "projects": "Projects",
+    "connections": "Connections",
+    "system": "System",
+    "modules": {
+      "scriptStudio": "Script & Story Bible",
+      "shotBoard": "Shot Board",
+      "queueMonitor": "Generation Queue",
+      "timelineEditor": "Timeline & Export",
+      "workflowCanvas": "Workflow Automation",
+      "settings": "Project Settings"
+    },
+    "steps": {
+      "production": "Production steps",
+      "moreTools": "More project tools",
+      "advanced": "Advanced"
+    },
+    "breadcrumb": {
+      "projects": "Projects"
+    }
+  },
+  "actions": {
+    "save": "Save",
+    "saved": "Saved",
+    "saving": "Saving...",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "deleting": "Deleting...",
+    "edit": "Edit",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "retry": "Retry",
+    "close": "Close",
+    "dismiss": "Dismiss",
+    "confirm": "Confirm",
+    "search": "Search",
+    "clear": "Clear",
+    "create": "Create",
+    "duplicate": "Duplicate",
+    "export": "Export",
+    "import": "Import",
+    "apply": "Apply",
+    "load": "Load",
+    "select": "Select",
+    "selected": "Selected",
+    "preview": "Preview",
+    "next": "Next",
+    "back": "Back",
+    "copy": "Copy",
+    "download": "Download",
+    "upload": "Upload"
+  },
+  "queryState": {
+    "refreshFailedWithData": "Refresh failed; showing the last loaded results. ",
+    "retry": "Retry",
+    "loading": "Loading data..."
+  },
+  "dialogs": {
+    "confirmTitle": "Confirm action",
+    "confirmDescription": "Are you sure you want to proceed?"
+  },
+  "language": {
+    "label": "Language",
+    "vi": "Tiếng Việt",
+    "en": "English",
+    "current": "Current language: {{lang}}"
+  },
+  "errors": {
+    "authRequired": "Admin token required to read {{resource}}.",
+    "tokenRejected": "The configured admin token was rejected while reading {{resource}}. Update the token and reconnect.",
+    "permissionDenied": "The current session does not have permission to read {{resource}}. Connect with an admin token that has the required permission.",
+    "timeout": "Loading {{resource}} timed out. Check the Orchestrator and retry.",
+    "loadFailed": "Could not load {{resource}}. Check the Orchestrator and retry.",
+    "actionAuthRequired": "Admin token required to {{action}}.",
+    "actionTokenRejected": "The configured admin token was rejected while trying to {{action}}. Update the token and reconnect.",
+    "actionPermissionDenied": "The current session does not have permission to {{action}}.",
+    "actionTimeout": "Could not confirm whether the request to {{action}} finished (timed out). Refresh before retrying.",
+    "actionFailed": "Could not {{action}}: {{message}}"
+  },
+  "units": {
+    "shot_one": "{{count}} shot",
+    "shot_other": "{{count}} shots",
+    "take_one": "{{count}} take",
+    "take_other": "{{count}} takes",
+    "scene_one": "{{count}} scene",
+    "scene_other": "{{count}} scenes",
+    "entry_one": "{{count}} entry",
+    "entry_other": "{{count}} entries"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "The requested page does not exist or has been moved.",
+    "returnHome": "Back to Overview"
+  }
+}

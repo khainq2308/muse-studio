@@ -1,0 +1,68 @@
+{
+  "title": "Projects",
+  "description": "Each project holds one film: its script, Story Bible, shots, takes and timeline.",
+  "newProject": "New project",
+  "closeForm": "Close form",
+  "createdNotice": "Created project {{name}} ({{projectId}}).",
+  "startWithScript": "Start with the script →",
+  "form": {
+    "title": "New project",
+    "endpoint": "POST /api/v1/projects",
+    "name": "Project name",
+    "namePlaceholder": "e.g. Episode 02 — Glass Citadel",
+    "stylePreset": "Style preset",
+    "description": "Description",
+    "descriptionPlaceholder": "Production notes or target audience",
+    "aspectRatio": "Aspect ratio",
+    "frameRate": "Frame rate",
+    "fpsUnit": "{{value}} fps",
+    "language": "Language",
+    "outputProfile": "Output profile",
+    "outputProfileHint": "Baseline preview configuration (H.264 / AAC in MP4 container, 1080p, stereo)",
+    "cancel": "Cancel",
+    "submit": "Create project",
+    "submitting": "Creating..."
+  },
+  "allProjects": {
+    "title": "All projects ({{count}})",
+    "loading": "Loading projects...",
+    "emptyTitle": "No projects yet",
+    "emptyDescription": "Create a project to import a script and start breaking it into shots.",
+    "updated": "Updated {{time}}",
+    "open": "Open",
+    "openAria": "Open {{name}}",
+    "settings": "Settings"
+  },
+  "settings": {
+    "title": "Project settings",
+    "description": "The project profile and its revision history. Duplicating copies these settings into a new, empty project.",
+    "duplicate": "Duplicate settings",
+    "duplicating": "Duplicating...",
+    "duplicatedNotice": "Duplicated project settings as {{name}} ({{projectId}}). {{scopeNote}}",
+    "scopeNote": "Only project settings were copied; shots, takes and assets were not.",
+    "openCopyInScript": "Open the copy in Script & Story Bible →",
+    "profile": {
+      "ariaLabel": "Active project profile",
+      "nameAndId": "Project Name & ID",
+      "formatAndFps": "Format & Frame Rate",
+      "langInfo": "lang: {{language}}",
+      "stylePreset": "Style Preset",
+      "noDescription": "No custom logline configured",
+      "stateAndAssets": "State & Assets",
+      "revisionNum": "Revision #{{number}}",
+      "assetCount_one": "{{count}} registered media asset",
+      "assetCount_other": "{{count}} registered media assets"
+    },
+    "revisions": {
+      "ariaLabel": "Revision history",
+      "title": "Project Revision History ({{count}})",
+      "endpoint": "GET /api/v1/projects/{{projectId}}/revisions",
+      "loading": "Loading project revisions...",
+      "emptyTitle": "No revisions committed yet",
+      "emptyDescription": "Project revisions are recorded when a project is created or duplicated.",
+      "itemsCount_one": "{{count}} item",
+      "itemsCount_other": "{{count}} items",
+      "objectLabel": "object"
+    }
+  }
+}

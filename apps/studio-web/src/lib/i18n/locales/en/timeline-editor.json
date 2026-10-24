@@ -1,0 +1,44 @@
+{
+  "title": "Timeline & Export",
+  "description": "Assemble selected takes into a cohesive sequence, preview cuts, and export the final MP4.",
+  "assemble": "Assemble timeline",
+  "assembling": "Assembling...",
+  "export": "Export MP4",
+  "exporting": "Exporting...",
+  "refresh": "Refresh",
+  "loading": "Loading timeline...",
+  "track": {
+    "title_one": "Video Track ({{count}} clip)",
+    "title_other": "Video Track ({{count}} clips)",
+    "emptyTitle": "No clips on timeline",
+    "emptyDescription": "Select takes on the Shot Board, then click Assemble timeline above.",
+    "clipLabel": "Clip {{index}}: Shot {{shot}}",
+    "duration": "{{seconds}}s",
+    "dragHint": "Drag to reorder clips"
+  },
+  "inspector": {
+    "title": "Clip Inspector — Shot {{shot}}",
+    "inPoint": "In point",
+    "outPoint": "Out point",
+    "duration": "Duration",
+    "speed": "Playback speed",
+    "transition": "Transition into next clip",
+    "transitionNone": "Cut (none)",
+    "transitionCrossfade": "Crossfade",
+    "transitionDipToBlack": "Dip to black",
+    "subtitleWarning": "Custom subtitle text might not match the take duration."
+  },
+  "exportModal": {
+    "title": "Export MP4 Video",
+    "renderedNotice": "Exporting will stitch rendered takes using FFmpeg directly on the server.",
+    "unrenderedWarning": "Some shots have no rendered takes; placeholders will be used.",
+    "progress": "Exporting video: {{percent}}%",
+    "download": "Download MP4",
+    "failed": "Export failed: {{error}}"
+  },
+  "errors": {
+    "loadFailed": "Could not load timeline: {{message}}",
+    "assembleFailed": "Could not assemble timeline: {{message}}",
+    "exportFailed": "Could not export video: {{message}}"
+  }
+}

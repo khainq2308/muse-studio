@@ -1,0 +1,67 @@
+{
+  "title": "Tổng quan",
+  "description": "Các dự án cập nhật gần đây cùng bước tiếp theo cần thực hiện.",
+  "allProjectsAndNew": "Tất cả dự án & tạo mới",
+  "recentlyUpdated": "Cập nhật gần đây",
+  "viewAllCount": "Xem tất cả {{count}} dự án",
+  "loadingProjects": "Đang tải danh sách dự án...",
+  "noProjectsTitle": "Chưa có dự án nào",
+  "noProjectsDescription": "Tạo dự án mới trong trang Dự án, sau đó nhập kịch bản để bắt đầu.",
+  "updatedAt": "Cập nhật {{time}}",
+  "shotsProgress": "{{withTake}}/{{total}} shot đã chọn take",
+  "stats": {
+    "approved": "{{count}} đã duyệt",
+    "blocked": "{{count}} bị chặn",
+    "failed": "{{count}} thất bại",
+    "inFlight": "{{count}} đang xử lý",
+    "labels": {
+      "blocked": "Bị chặn",
+      "failed": "Thất bại",
+      "generating": "Đang sinh",
+      "approved": "Đã duyệt"
+    }
+  },
+  "openProject": "Mở dự án",
+  "nextSteps": {
+    "importScript": {
+      "title": "Nhập kịch bản",
+      "detail": "Dự án này chưa có shot nào. Nhập kịch bản để phân tách thành các scene và shot.",
+      "action": "Mở Kịch bản & Story Bible"
+    },
+    "resolveBlocked": {
+      "title": "Xử lý {{count}} shot bị chặn",
+      "detail": "Thiếu asset tham chiếu, thiếu frame trước hoặc có lỗi lint chặn quá trình sinh media. Mở shot bị chặn đầu tiên để xem chi tiết.",
+      "action": "Mở shot bị chặn đầu tiên"
+    },
+    "checkFailed": {
+      "title": "Kiểm tra {{count}} shot thất bại",
+      "detail": "Lượt sinh media gần nhất của các shot này đã thất bại. Hàng đợi hiển thị chi tiết lỗi của từng tác vụ.",
+      "action": "Mở Hàng đợi sinh media"
+    },
+    "pickTakes": {
+      "title": "{{count}} shot cần chọn take",
+      "detail": "Chưa có take nào được chọn và không có tác vụ nào đang sinh media. Hãy sinh take mới hoặc duyệt các take hiện có để chọn vào timeline.",
+      "action": "Mở Shot Board"
+    },
+    "waitGeneration": {
+      "title": "{{count}} shot đang sinh media",
+      "detail": "Các tác vụ đang trong hàng đợi hoặc đang chạy. Theo dõi tiến trình trong hàng đợi.",
+      "action": "Mở Hàng đợi sinh media"
+    },
+    "assemble": {
+      "title": "Dựng và xuất video",
+      "detail": "Mọi shot đều đã chọn take. Dựng timeline và xuất file video MP4.",
+      "action": "Mở Timeline & Xuất video"
+    }
+  },
+  "connectionHealth": {
+    "title": "Trạng thái kết nối",
+    "description": "Nhà cung cấp AI và tài khoản sẵn sàng sinh media.",
+    "loading": "Đang kiểm tra kết nối...",
+    "noConnections": "Chưa cấu hình kết nối nào.",
+    "manage": "Quản lý kết nối",
+    "allHealthy": "Tất cả kết nối hoạt động bình thường",
+    "hasIssues": "Có kết nối cần kiểm tra",
+    "accountCount": "{{count}} tài khoản"
+  }
+}

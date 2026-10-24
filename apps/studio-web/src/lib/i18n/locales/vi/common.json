@@ -1,0 +1,95 @@
+{
+  "nav": {
+    "workspace": "Không gian làm việc",
+    "projectModules": "Module dự án",
+    "overview": "Tổng quan",
+    "projects": "Dự án",
+    "connections": "Kết nối",
+    "system": "Hệ thống",
+    "modules": {
+      "scriptStudio": "Kịch bản & Story Bible",
+      "shotBoard": "Shot Board",
+      "queueMonitor": "Hàng đợi sinh media",
+      "timelineEditor": "Timeline & Xuất video",
+      "workflowCanvas": "Tự động hóa workflow",
+      "settings": "Cài đặt dự án"
+    },
+    "steps": {
+      "production": "Các bước sản xuất",
+      "moreTools": "Công cụ dự án khác",
+      "advanced": "Nâng cao"
+    },
+    "breadcrumb": {
+      "projects": "Dự án"
+    }
+  },
+  "actions": {
+    "save": "Lưu",
+    "saved": "Đã lưu",
+    "saving": "Đang lưu...",
+    "cancel": "Hủy",
+    "delete": "Xóa",
+    "deleting": "Đang xóa...",
+    "edit": "Chỉnh sửa",
+    "refresh": "Làm mới",
+    "refreshing": "Đang làm mới...",
+    "retry": "Thử lại",
+    "close": "Đóng",
+    "dismiss": "Bỏ qua",
+    "confirm": "Xác nhận",
+    "search": "Tìm kiếm",
+    "clear": "Xóa",
+    "create": "Tạo mới",
+    "duplicate": "Nhân bản",
+    "export": "Xuất",
+    "import": "Nhập",
+    "apply": "Áp dụng",
+    "load": "Nạp",
+    "select": "Chọn",
+    "selected": "Đã chọn",
+    "preview": "Xem trước",
+    "next": "Tiếp theo",
+    "back": "Quay lại",
+    "copy": "Sao chép",
+    "download": "Tải về",
+    "upload": "Tải lên"
+  },
+  "queryState": {
+    "refreshFailedWithData": "Làm mới thất bại; đang hiển thị kết quả tải trước đó. ",
+    "retry": "Thử lại",
+    "loading": "Đang tải dữ liệu..."
+  },
+  "dialogs": {
+    "confirmTitle": "Xác nhận hành động",
+    "confirmDescription": "Bạn có chắc chắn muốn tiếp tục?"
+  },
+  "language": {
+    "label": "Ngôn ngữ",
+    "vi": "Tiếng Việt",
+    "en": "English",
+    "current": "Ngôn ngữ hiện tại: {{lang}}"
+  },
+  "errors": {
+    "authRequired": "Cần có token quản trị để đọc {{resource}}.",
+    "tokenRejected": "Token quản trị cấu hình bị từ chối khi đọc {{resource}}. Hãy cập nhật token và kết nối lại.",
+    "permissionDenied": "Phiên làm việc hiện tại không có quyền đọc {{resource}}. Kết nối bằng token quản trị có đủ quyền.",
+    "timeout": "Đã hết thời gian tải {{resource}}. Kiểm tra Orchestrator và thử lại.",
+    "loadFailed": "Không thể tải {{resource}}. Kiểm tra Orchestrator và thử lại.",
+    "actionAuthRequired": "Cần có token quản trị để {{action}}.",
+    "actionTokenRejected": "Token quản trị cấu hình bị từ chối khi thử {{action}}. Hãy cập nhật token và kết nối lại.",
+    "actionPermissionDenied": "Phiên làm việc hiện tại không có quyền {{action}}.",
+    "actionTimeout": "Không thể xác nhận yêu cầu {{action}} đã hoàn tất (quá thời gian). Hãy làm mới trước khi thử lại.",
+    "actionFailed": "Không thể {{action}}: {{message}}"
+  },
+  "units": {
+    "shot": "{{count}} shot",
+    "take": "{{count}} take",
+    "scene": "{{count}} scene",
+    "entry": "{{count}} mục"
+  },
+  "notFound": {
+    "title": "Không tìm thấy trang",
+    "description": "Trang bạn yêu cầu không tồn tại hoặc đã được di chuyển.",
+    "returnHome": "Về trang Tổng quan"
+  }
+}

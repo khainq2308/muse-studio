@@ -1,0 +1,49 @@
+{
+  "title": "Hệ thống",
+  "description": "Dung lượng lưu trữ, sao lưu, bảo trì, dọn dẹp asset mồ côi và sức khỏe hệ thống.",
+  "refresh": "Làm mới",
+  "tabs": {
+    "maintenance": "Bảo trì",
+    "backups": "Bản sao lưu",
+    "projectData": "Dữ liệu dự án"
+  },
+  "maintenance": {
+    "title": "Dọn dẹp file mồ côi",
+    "description": "Quét ổ đĩa tìm các file media không còn được tham chiếu bởi bất kỳ take hoặc Story Bible nào.",
+    "dryRun": "Quét thử (Dry run)",
+    "dryRunning": "Đang quét...",
+    "execute": "Xóa vĩnh viễn file mồ côi",
+    "executing": "Đang dọn dẹp...",
+    "scanResult": "Tìm thấy {{count}} file mồ côi ({{size}}).",
+    "cleanupResult": "Đã dọn dẹp {{count}} file. Thu hồi {{size}} dung lượng."
+  },
+  "backups": {
+    "title": "Sao lưu hệ thống",
+    "create": "Tạo bản sao lưu mới",
+    "creating": "Đang tạo sao lưu...",
+    "restore": "Phục hồi",
+    "restoring": "Đang phục hồi...",
+    "empty": "Chưa có bản sao lưu nào.",
+    "meta": "Tạo lúc {{time}} ({{size}})"
+  },
+  "projectData": {
+    "title": "Quản lý dữ liệu & Asset",
+    "deleteAsset": {
+      "title": "Xóa asset theo ID",
+      "idLabel": "ID của asset",
+      "idPlaceholder": "Nhập UUID của asset...",
+      "submit": "Xóa vĩnh viễn asset",
+      "submitting": "Đang xóa asset...",
+      "confirmTitle": "Xác nhận xóa vĩnh viễn asset {{id}}?",
+      "confirmDesc": "Hành động này sẽ xóa file vật lý trên đĩa và bản ghi trong cơ sở dữ liệu."
+    }
+  },
+  "errors": {
+    "loadFailed": "Không thể nạp dữ liệu hệ thống: {{message}}",
+    "scanFailed": "Quét file mồ côi thất bại: {{message}}",
+    "cleanupFailed": "Dọn dẹp file thất bại: {{message}}",
+    "backupFailed": "Tạo bản sao lưu thất bại: {{message}}",
+    "restoreFailed": "Phục hồi dữ liệu thất bại: {{message}}",
+    "deleteAssetFailed": "Xóa asset thất bại: {{message}}"
+  }
+}

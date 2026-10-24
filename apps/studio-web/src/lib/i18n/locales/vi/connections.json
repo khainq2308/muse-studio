@@ -1,0 +1,69 @@
+{
+  "title": "Kết nối",
+  "description": "Cổng kết nối nhà cung cấp mà mọi dự án sinh media qua: kiểm tra sức khỏe, năng lực và nhóm tài khoản luân chuyển.",
+  "newConnection": "Kết nối mới",
+  "closeForm": "Đóng biểu mẫu",
+  "form": {
+    "ariaLabel": "Tạo kết nối nhà cung cấp",
+    "name": "Tên kết nối",
+    "namePlaceholder": "Ví dụ: Cụm muse2api Studio",
+    "providerType": "Loại nhà cung cấp",
+    "baseUrl": "Base URL",
+    "baseUrlPlaceholder": "https://api.muse2api.example.com",
+    "apiKey": "API key mặc định (tùy chọn)",
+    "apiKeyPlaceholder": "Được che và mã hóa khi lưu trữ",
+    "maxConcurrency": "Số tác vụ đồng thời tối đa",
+    "timeoutSeconds": "Thời gian chờ (giây)",
+    "cancel": "Hủy",
+    "submit": "Tạo kết nối",
+    "submitting": "Đang tạo..."
+  },
+  "list": {
+    "loading": "Đang tải danh sách kết nối...",
+    "emptyTitle": "Chưa cấu hình kết nối nào",
+    "emptyDescription": "Tạo kết nối muse2api hoặc mock ở trên để bắt đầu đưa các lượt sinh shot vào hàng đợi.",
+    "selectAria": "Chọn kết nối {{name}}",
+    "specs": "tối đa {{max}} đồng thời · timeout {{timeout}}s · key {{key}}",
+    "checked": "Đã kiểm tra {{time}}",
+    "neverProbed": "Chưa kiểm tra",
+    "testAndProbe": "Kiểm tra kết nối"
+  },
+  "pool": {
+    "title": "{{name}} — Nhóm tài khoản",
+    "description": "Nhóm tài khoản luân chuyển với trọng số ưu tiên, proxy riêng tùy chọn và kiểm tra năng lực trực tiếp. Thông tin bí mật được mã hóa khi lưu và che trong kết quả.",
+    "addAccount": "Thêm tài khoản vào nhóm",
+    "close": "Đóng",
+    "capabilitySnapshot": "Kết quả kiểm tra năng lực thực tế",
+    "configured": "đã cấu hình",
+    "itemsCount": "{{count}} mục",
+    "form": {
+      "ariaLabel": "Thêm tài khoản vào nhóm",
+      "label": "Nhãn tài khoản",
+      "labelPlaceholder": "Ví dụ: Tài khoản #01 (Chính)",
+      "priority": "Mức ưu tiên (số nhỏ = ưu tiên hơn)",
+      "apiKey": "API key của tài khoản",
+      "apiKeyPlaceholder": "Bearer key hoặc token của nhà cung cấp",
+      "proxyUrl": "URL Proxy (tùy chọn, thông tin xác thực được ẩn trên giao diện)",
+      "proxyUrlPlaceholder": "http://proxy.example.internal:8080",
+      "cancel": "Hủy",
+      "submit": "Lưu tài khoản",
+      "submitting": "Đang lưu..."
+    },
+    "accounts": {
+      "loading": "Đang tải danh sách tài khoản...",
+      "emptyTitle": "Chưa có tài khoản nào trong nhóm",
+      "emptyDescription": "Thêm một hoặc nhiều tài khoản nhà cung cấp để kích hoạt chuyển đổi dự phòng theo ưu tiên và cách ly giới hạn tốc độ theo tài khoản.",
+      "priority": "ưu tiên {{priority}}",
+      "meta": "key: {{key}} · độ trễ: {{latency}}",
+      "proxyPart": " · proxy: {{host}}",
+      "enable": "Kích hoạt",
+      "disable": "Vô hiệu hóa",
+      "test": "Kiểm tra",
+      "remove": "Xóa",
+      "removeConfirmTitle": "Xóa tài khoản \"{{label}}\" khỏi nhóm?",
+      "removeConfirmDesc": "API key đã lưu cho tài khoản này sẽ bị xóa vĩnh viễn. Để dùng lại, bạn phải thêm lại và nhập lại API key.",
+      "removing": "Đang xóa...",
+      "removeConfirmAction": "Xóa tài khoản"
+    }
+  }
+}

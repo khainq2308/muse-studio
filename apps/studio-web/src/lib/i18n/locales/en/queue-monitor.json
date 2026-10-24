@@ -1,0 +1,49 @@
+{
+  "title": "Generation Queue",
+  "description": "Inspect queued, running, succeeded and failed generation tasks.",
+  "refresh": "Refresh",
+  "loading": "Loading generation queue...",
+  "summary": {
+    "inFlight": "In flight",
+    "waitingInput": "Waiting for operator",
+    "failed": "Failed",
+    "completed": "Completed"
+  },
+  "tabs": {
+    "all_one": "All tasks ({{count}})",
+    "all_other": "All tasks ({{count}})",
+    "inFlight_one": "In flight ({{count}})",
+    "inFlight_other": "In flight ({{count}})",
+    "awaitingInput_one": "Needs reply ({{count}})",
+    "awaitingInput_other": "Needs reply ({{count}})",
+    "failed_one": "Failed ({{count}})",
+    "failed_other": "Failed ({{count}})"
+  },
+  "list": {
+    "emptyTitle": "No tasks in queue",
+    "emptyDescription": "Launch a generation on the Shot Board to see tasks here.",
+    "taskHeading": "Task #{{id}} · {{type}}",
+    "status": "Status: {{status}}",
+    "retries": "Retry {{count}}/{{max}}",
+    "providerMeta": "Provider: {{provider}} · Model: {{model}}",
+    "cancel": "Cancel task",
+    "canceling": "Canceling...",
+    "pause": "Pause queue",
+    "resume": "Resume queue"
+  },
+  "question": {
+    "title": "Operator input required for Task #{{id}}",
+    "prompt": "Question from provider:",
+    "choices": "Select an option:",
+    "textResponse": "Or provide response:",
+    "submit": "Send reply",
+    "submitting": "Sending reply..."
+  },
+  "errors": {
+    "questionExpired": "This question is no longer waiting for an answer. The queue was refreshed to show the task's current state.",
+    "taskNotFound": "This task no longer exists. The queue was refreshed.",
+    "answerRejected": "The answer was rejected: {{message}}",
+    "replyAuthRequired": "The admin token was rejected while sending the answer. Update the token and try again.",
+    "replyFailed": "Could not send the answer: {{message}}"
+  }
+}

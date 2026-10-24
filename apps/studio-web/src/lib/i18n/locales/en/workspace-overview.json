@@ -1,0 +1,72 @@
+{
+  "title": "Overview",
+  "description": "Recently updated projects, each with the next step its shots call for.",
+  "allProjectsAndNew": "All projects & new project",
+  "recentlyUpdated": "Recently updated",
+  "viewAllCount": "View all {{count}} projects",
+  "loadingProjects": "Loading projects...",
+  "noProjectsTitle": "No projects yet",
+  "noProjectsDescription": "Create a project on the Projects page, then import a script to start.",
+  "updatedAt": "Updated {{time}}",
+  "shotsProgress": "{{withTake}}/{{total}} shots with take",
+  "stats": {
+    "approved": "{{count}} approved",
+    "blocked": "{{count}} blocked",
+    "failed": "{{count}} failed",
+    "inFlight": "{{count}} in flight",
+    "labels": {
+      "blocked": "Blocked",
+      "failed": "Failed",
+      "generating": "Generating",
+      "approved": "Approved"
+    }
+  },
+  "openProject": "Open project",
+  "nextSteps": {
+    "importScript": {
+      "title": "Import a script",
+      "detail": "This project has no shots yet. Import a script to break it into scenes and shots.",
+      "action": "Open Script & Story Bible"
+    },
+    "resolveBlocked": {
+      "title_one": "Resolve {{count}} blocked shot",
+      "title_other": "Resolve {{count}} blocked shots",
+      "detail": "A missing reference, a missing upstream frame or a lint blocker stops generation. Open the first blocked shot to see why.",
+      "action": "Open first blocked shot"
+    },
+    "checkFailed": {
+      "title_one": "Check {{count}} failed shot",
+      "title_other": "Check {{count}} failed shots",
+      "detail": "The last generation of these shots failed. The queue shows each task's error.",
+      "action": "Open Generation Queue"
+    },
+    "pickTakes": {
+      "title_one": "{{count}} shot needs a take",
+      "title_other": "{{count}} shots need a take",
+      "detail": "No take is selected and nothing is generating. Generate a take, or review existing takes and select one for the timeline.",
+      "action": "Open Shot Board"
+    },
+    "waitGeneration": {
+      "title_one": "{{count}} shot generating",
+      "title_other": "{{count}} shots generating",
+      "detail": "Tasks are queued or running. Follow them in the queue.",
+      "action": "Open Generation Queue"
+    },
+    "assemble": {
+      "title": "Assemble and export",
+      "detail": "Every shot has a selected take. Assemble the timeline and export an MP4.",
+      "action": "Open Timeline & Export"
+    }
+  },
+  "connectionHealth": {
+    "title": "Connection Health",
+    "description": "AI providers and account pools ready for generation.",
+    "loading": "Checking connections...",
+    "noConnections": "No connections configured yet.",
+    "manage": "Manage connections",
+    "allHealthy": "All connections healthy",
+    "hasIssues": "Connections need attention",
+    "accountCount_one": "{{count}} account",
+    "accountCount_other": "{{count}} accounts"
+  }
+}

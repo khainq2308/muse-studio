@@ -1,7 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { RouterProvider } from "@tanstack/react-router";
+import "@/lib/i18n";
 import { router } from "@/app/router";
 import { apiRetryDelay, shouldRetryApiRequest } from "@/lib/api/errors";
 import { registerSessionCacheReset } from "@/lib/api/session-cache";

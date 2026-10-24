@@ -1,0 +1,9 @@
+{
+  "badgeLabel": "API",
+  "states": {
+    "checking": "Checking...",
+    "online": "Online",
+    "offline": "Offline (start Orchestrator)",
+    "unknown": "Unknown"
+  }
+}
