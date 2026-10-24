@@ -13,9 +13,11 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import {
+  useApplyScriptRevision,
   useExportProjectShots,
   useImportScript,
   useProjectShots,
+  useScriptRevisions,
   useStoryBible,
   useUploadReferenceAsset,
   useUpsertStoryBibleEntry,
@@ -71,8 +73,10 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
 
   const bibleQuery = useStoryBible(projectId);
   const shotsQuery = useProjectShots(projectId);
+  const revisionsQuery = useScriptRevisions(projectId);
   const upsertMutation = useUpsertStoryBibleEntry(projectId);
   const importMutation = useImportScript(projectId);
+  const applyRevisionMutation = useApplyScriptRevision(projectId);
   const uploadMutation = useUploadReferenceAsset(projectId);
   const exportMutation = useExportProjectShots(projectId);
 
@@ -81,6 +85,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
   const [newEntryNonce, setNewEntryNonce] = useState(0);
 
   const entries = useMemo(() => bibleQuery.data ?? [], [bibleQuery.data]);
+  const revisions = useMemo(() => revisionsQuery.data ?? [], [revisionsQuery.data]);
   // Without loaded data the entry count is unknown; never present it as a real "0".
   const entryCountKnown = bibleQuery.data !== undefined && !bibleQuery.isError;
   const shots = useMemo(() => shotsQuery.data ?? [], [shotsQuery.data]);
@@ -146,6 +151,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
 
   const { reset: resetUpsert } = upsertMutation;
   const { reset: resetImport } = importMutation;
+  const { reset: resetApplyRevision } = applyRevisionMutation;
   const { reset: resetUpload } = uploadMutation;
   const { reset: resetExport } = exportMutation;
 
@@ -156,14 +162,16 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
     startedSession.current = sessionVersion;
     resetUpsert();
     resetImport();
+    resetApplyRevision();
     resetUpload();
     resetExport();
     setCreatingNewEntry(false);
     setEditingCodeName(null);
-  }, [resetExport, resetImport, resetUpload, resetUpsert, sessionVersion]);
+  }, [resetApplyRevision, resetExport, resetImport, resetUpload, resetUpsert, sessionVersion]);
 
   const upsertInCurrentSession = upsertMutation.variables?.sessionVersion === sessionVersion;
   const importInCurrentSession = importMutation.variables?.sessionVersion === sessionVersion;
+  const applyInCurrentSession = applyRevisionMutation.variables?.sessionVersion === sessionVersion;
   const uploadInCurrentSession = uploadMutation.variables?.sessionVersion === sessionVersion;
   const exportInCurrentSession = exportMutation.variables?.sessionVersion === sessionVersion;
 
@@ -178,13 +186,18 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
         : null,
     [upsertInCurrentSession, upsertMutation.error],
   );
+  const activeScriptError =
+    (applyInCurrentSession && applyRevisionMutation.error) ||
+    (importInCurrentSession && importMutation.error) ||
+    null;
   const importErrors = useMemo(
-    () =>
-      importInCurrentSession && importMutation.error
-        ? mapScriptImportError(importMutation.error)
-        : null,
-    [importInCurrentSession, importMutation.error],
+    () => (activeScriptError ? mapScriptImportError(activeScriptError) : null),
+    [activeScriptError],
   );
+  const activeScriptResult =
+    (applyInCurrentSession ? applyRevisionMutation.data : undefined) ??
+    (importInCurrentSession ? importMutation.data : undefined) ??
+    null;
   const uploadError = useMemo(
     () =>
       uploadInCurrentSession && uploadMutation.error
@@ -276,6 +289,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
   const refresh = () => {
     void bibleQuery.refetch({ cancelRefetch: true });
     void shotsQuery.refetch({ cancelRefetch: true });
+    void revisionsQuery.refetch({ cancelRefetch: true });
   };
 
   const renderEntryEditor = (entry: StoryBibleEntry) => {
@@ -432,16 +446,32 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
               existingShotsCount={shots.length}
               isCheckingPipeline={bibleQuery.isPending || shotsQuery.isPending}
               pipelineCheckError={Boolean(bibleQuery.isError || shotsQuery.isError)}
+              revisions={revisions}
               isImporting={importInCurrentSession && importMutation.isPending}
+              isApplyingRevision={applyInCurrentSession && applyRevisionMutation.isPending}
+              applyingRevisionId={
+                applyInCurrentSession ? (applyRevisionMutation.variables?.revisionId ?? null) : null
+              }
               fieldErrors={importErrors ? importErrors.fieldErrors : NO_IMPORT_FIELD_ERRORS}
               formError={importErrors?.formError ?? null}
               requiresReplaceConfirmation={Boolean(importErrors?.requiresReplaceConfirmation)}
-              result={importInCurrentSession ? (importMutation.data ?? null) : null}
+              result={activeScriptResult}
               onImport={(request) => {
                 resetImport();
+                resetApplyRevision();
                 importMutation.mutate(request);
               }}
-              onDismissResult={resetImport}
+              onApplyRevision={(revisionId, replaceExisting) => {
+                resetApplyRevision();
+                applyRevisionMutation.mutate({
+                  revisionId,
+                  request: { replace_existing: replaceExisting },
+                });
+              }}
+              onDismissResult={() => {
+                resetImport();
+                resetApplyRevision();
+              }}
               onReviewStoryBible={() => onViewChange("bible")}
             />
           </div>

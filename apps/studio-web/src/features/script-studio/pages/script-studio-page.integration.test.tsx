@@ -73,7 +73,10 @@ function stubApi(handler: Handler) {
       requests.push(request);
       const response = handler(request);
       if (!response) {
-        if (request.method === "GET" && request.pathname.endsWith("/shots")) {
+        if (
+          request.method === "GET" &&
+          (request.pathname.endsWith("/shots") || request.pathname.endsWith("/script-revisions"))
+        ) {
           return buildResponse(200, []);
         }
         return buildResponse(404, { detail: "Not mocked", category: "not_found" });
@@ -394,6 +397,119 @@ describe("ScriptStudioPage", () => {
         name: /Confirm replacing existing shots and generated takes/,
       }),
     ).not.toBeChecked();
+  });
+
+  it("saves a draft script revision, lists saved revisions, and applies the draft revision to Story Bible & shots", async () => {
+    const user = userEvent.setup();
+    let draftSaved = false;
+    let draftApplied = false;
+    const requests = stubApi(({ method, pathname }) => {
+      if (pathname === "/api/v1/projects/project-1/story-bible") {
+        return { status: 200, body: draftApplied ? bibleEntries : [] };
+      }
+      if (method === "GET" && pathname === "/api/v1/projects/project-1/script-revisions") {
+        if (!draftSaved) return { status: 200, body: [] };
+        return {
+          status: 200,
+          body: [
+            {
+              id: "scr_draft01",
+              project_id: "project-1",
+              version_number: 1,
+              source_format: "museflow",
+              raw_content: "SCENE 1: Neon Alley\nSHOT 1: Detective Linh arrives",
+              diff_summary: draftApplied
+                ? "Applied revision v1: 1 scene and 2 shots."
+                : "Saved draft revision v1: 1 scene and 2 shots ready for review.",
+              is_approved: draftApplied,
+              detected_characters: 1,
+              detected_locations: 1,
+              detected_scenes: 1,
+              detected_shots: 2,
+              warnings: [],
+              created_at: "2026-03-01T10:00:00Z",
+            },
+          ],
+        };
+      }
+      if (method === "POST" && pathname === "/api/v1/projects/project-1/scripts/import") {
+        draftSaved = true;
+        return {
+          status: 201,
+          body: {
+            script_revision_id: "scr_draft01",
+            version_number: 1,
+            raw_content_preserved: true,
+            diff_summary: "Saved draft revision v1: 1 scene and 2 shots ready for review.",
+            detected_characters: 1,
+            detected_locations: 1,
+            detected_scenes: 1,
+            generated_shots: 0,
+            warnings: [],
+          },
+        };
+      }
+      if (
+        method === "POST" &&
+        pathname === "/api/v1/projects/project-1/script-revisions/scr_draft01/apply"
+      ) {
+        draftApplied = true;
+        return {
+          status: 200,
+          body: {
+            script_revision_id: "scr_draft01",
+            version_number: 1,
+            raw_content_preserved: true,
+            diff_summary: "Applied revision v1: 1 scene and 2 shots.",
+            detected_characters: 1,
+            detected_locations: 1,
+            detected_scenes: 1,
+            generated_shots: 2,
+            warnings: [],
+          },
+        };
+      }
+      return undefined;
+    });
+    mount("script");
+
+    const importPanel = await screen.findByTestId("script-import-panel");
+    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(
+      within(importPanel).getByRole("button", { name: "Save draft revision & analyze" }),
+    );
+
+    const resultBanner = await within(importPanel).findByTestId("script-import-result");
+    expect(resultBanner).toHaveTextContent(
+      "Saved draft revision v1: 1 scene and 2 shots ready for review.",
+    );
+    const applyDraftBtn = within(resultBanner).getByTestId("apply-draft-revision-button");
+    expect(applyDraftBtn).toBeInTheDocument();
+
+    const revisionsList = await within(importPanel).findByTestId("script-revisions-list");
+    expect(revisionsList).toHaveTextContent("Saved Script Revisions (1)");
+    expect(within(revisionsList).getByTestId("script-revision-scr_draft01")).toHaveTextContent(
+      "Draft",
+    );
+
+    await user.click(applyDraftBtn);
+
+    await waitFor(() => {
+      expect(within(importPanel).getByTestId("script-import-result")).toHaveTextContent(
+        "Applied revision v1: 1 scene and 2 shots.",
+      );
+    });
+    expect(
+      within(importPanel).queryByTestId("apply-draft-revision-button"),
+    ).not.toBeInTheDocument();
+
+    const applyCalls = requests.filter(
+      (req) =>
+        req.method === "POST" &&
+        req.pathname === "/api/v1/projects/project-1/script-revisions/scr_draft01/apply",
+    );
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0]?.body).toEqual({ replace_existing: false });
   });
 
   it("exports the shot list as JSON and surfaces export failures", async () => {

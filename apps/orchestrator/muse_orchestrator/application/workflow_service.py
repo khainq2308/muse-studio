@@ -1,4 +1,5 @@
 """M3 workflow canvas use cases: graph versions, (simulated) runs and approval gates."""
+
 from __future__ import annotations
 
 import hashlib
@@ -21,7 +22,10 @@ from muse_orchestrator.models.domain import (
     WorkflowRun,
     WorkflowVersion,
 )
-from muse_orchestrator.services.workflow_engine import WorkflowEngine, WorkflowValidationError
+from muse_orchestrator.services.workflow_engine import (
+    WorkflowEngine,
+    WorkflowValidationError,
+)
 
 _TRUSTED_CACHE_KINDS = {"simulation", "approval", "deterministic", "provider_artifact"}
 _CACHE_LABELS = {
@@ -35,7 +39,9 @@ _SIMULATION_REASON = "No production node executor is registered for this node ty
 
 def _sha256_json(value: Any) -> str:
     return hashlib.sha256(
-        json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+        json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
 
@@ -43,18 +49,55 @@ class WorkflowService:
     def __init__(self, repository: StudioRepository) -> None:
         self.repository = repository
 
-    async def _require_workflow(self, project_id: str, workflow_id: str) -> WorkflowDefinition:
+    async def _require_workflow(
+        self, project_id: str, workflow_id: str
+    ) -> WorkflowDefinition:
         wf = await self.repository.get_workflow_definition(workflow_id)
         if not wf or wf.project_id != project_id:
             raise ApplicationError(404, "Workflow không tồn tại.")
         return wf
+
+    async def _serialize_workflow(
+        self, project_id: str, wf: WorkflowDefinition
+    ) -> dict[str, Any]:
+        ver = await self.repository.get_workflow_version(wf.id, wf.current_version)
+        if ver is None:
+            raise ApplicationError(404, "Workflow version không tồn tại.")
+        _, _, order, cache_keys = await self._plan(
+            project_id, ver.nodes_json, ver.edges_json
+        )
+        return {
+            "id": wf.id,
+            "project_id": wf.project_id,
+            "name": wf.name,
+            "current_version": ver.version_number,
+            "execution_order": order,
+            "cache_keys": cache_keys,
+            "nodes": ver.nodes_json,
+            "edges": ver.edges_json,
+            "ui_layout": ver.ui_layout_json,
+        }
+
+    async def get_latest_workflow(self, project_id: str) -> dict[str, Any]:
+        if await self.repository.get_project(project_id) is None:
+            raise ApplicationError(404, "Project không tồn tại.")
+        wf = await self.repository.get_latest_project_workflow(project_id)
+        if wf is None:
+            raise ApplicationError(404, "Project chưa có Workflow nào.")
+        return await self._serialize_workflow(project_id, wf)
+
+    async def get_workflow(self, project_id: str, workflow_id: str) -> dict[str, Any]:
+        wf = await self._require_workflow(project_id, workflow_id)
+        return await self._serialize_workflow(project_id, wf)
 
     async def external_input_hashes(self, project_id: str) -> dict[str, str]:
         """Content hashes of project data read by ScriptInput / StoryBibleBuild nodes."""
         revisions = await self.repository.list_script_revisions(project_id)
         latest = max(revisions, key=lambda rev: rev.version_number, default=None)
         script_hash = (
-            hashlib.sha256(latest.raw_content.encode("utf-8")).hexdigest() if latest else ""
+            hashlib.sha256(latest.raw_content.encode("utf-8")).hexdigest()
+            if latest
+            else ""
         )
         bible = sorted(
             (
@@ -77,10 +120,15 @@ class WorkflowService:
         }
 
     async def _plan(
-        self, project_id: str, nodes_json: list[dict[str, Any]], edges_json: list[dict[str, Any]]
+        self,
+        project_id: str,
+        nodes_json: list[dict[str, Any]],
+        edges_json: list[dict[str, Any]],
     ) -> tuple[list[Any], list[Any], list[str], dict[str, str]]:
         try:
-            nodes_def, edges_def = WorkflowEngine.parse_graph_json(nodes_json, edges_json)
+            nodes_def, edges_def = WorkflowEngine.parse_graph_json(
+                nodes_json, edges_json
+            )
             order, cache_keys = WorkflowEngine.validate_and_plan(
                 nodes_def,
                 edges_def,
@@ -91,13 +139,21 @@ class WorkflowService:
             raise ApplicationError(422, str(exc), category="validation") from exc
         return nodes_def, edges_def, order, cache_keys
 
-    async def create_workflow(self, project_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    async def create_workflow(
+        self, project_id: str, values: dict[str, Any]
+    ) -> dict[str, Any]:
         if await self.repository.get_project(project_id) is None:
             raise ApplicationError(404, "Project không tồn tại.")
         if values["use_default_m3_template"] and not values["nodes"]:
-            nodes_json, edges_json, ui_layout = WorkflowEngine.build_m3_default_template()
+            nodes_json, edges_json, ui_layout = (
+                WorkflowEngine.build_m3_default_template()
+            )
         else:
-            nodes_json, edges_json, ui_layout = values["nodes"], values["edges"], values["ui_layout"]
+            nodes_json, edges_json, ui_layout = (
+                values["nodes"],
+                values["edges"],
+                values["ui_layout"],
+            )
         _, _, order, cache_keys = await self._plan(project_id, nodes_json, edges_json)
 
         wf = WorkflowDefinition(
@@ -137,7 +193,9 @@ class WorkflowService:
         self, project_id: str, workflow_id: str, values: dict[str, Any]
     ) -> dict[str, Any]:
         wf = await self._require_workflow(project_id, workflow_id)
-        _, _, order, cache_keys = await self._plan(project_id, values["nodes"], values["edges"])
+        _, _, order, cache_keys = await self._plan(
+            project_id, values["nodes"], values["edges"]
+        )
         session = self.repository.session
         try:
             # Atomic allocation: concurrent saves serialise on the row update and each
@@ -146,7 +204,10 @@ class WorkflowService:
                 await session.execute(
                     update(WorkflowDefinition)
                     .where(WorkflowDefinition.id == workflow_id)
-                    .values(current_version=WorkflowDefinition.current_version + 1)
+                    .values(
+                        current_version=WorkflowDefinition.current_version + 1,
+                        updated_at=datetime.now(timezone.utc),
+                    )
                     .returning(WorkflowDefinition.current_version)
                     .execution_options(synchronize_session=False)
                 )
@@ -183,14 +244,23 @@ class WorkflowService:
         self, project_id: str, workflow_id: str, ui_layout: dict[str, Any]
     ) -> dict[str, Any]:
         wf = await self._require_workflow(project_id, workflow_id)
-        ver = await self.repository.get_workflow_version(workflow_id, wf.current_version)
+        ver = await self.repository.get_workflow_version(
+            workflow_id, wf.current_version
+        )
         if ver is None:
             raise ApplicationError(404, "Workflow version không tồn tại.")
         ver.ui_layout_json = ui_layout
+        wf.updated_at = datetime.now(timezone.utc)
         await self.repository.commit_workflow_changes()
-        return {"workflow_id": workflow_id, "version_number": ver.version_number, "ui_layout_saved": True}
+        return {
+            "workflow_id": workflow_id,
+            "version_number": ver.version_number,
+            "ui_layout_saved": True,
+        }
 
-    async def _gate_was_approved(self, workflow_id: str, version_number: int, node_id: str) -> bool:
+    async def _gate_was_approved(
+        self, workflow_id: str, version_number: int, node_id: str
+    ) -> bool:
         result = await self.repository.session.execute(
             select(NodeExecution.id)
             .join(WorkflowRun, NodeExecution.run_id == WorkflowRun.id)
@@ -205,9 +275,13 @@ class WorkflowService:
         )
         return result.first() is not None
 
-    async def execute(self, project_id: str, workflow_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    async def execute(
+        self, project_id: str, workflow_id: str, values: dict[str, Any]
+    ) -> dict[str, Any]:
         wf = await self._require_workflow(project_id, workflow_id)
-        ver = await self.repository.get_workflow_version(workflow_id, wf.current_version)
+        ver = await self.repository.get_workflow_version(
+            workflow_id, wf.current_version
+        )
         if ver is None:
             raise ApplicationError(404, "Workflow version không tồn tại.")
 
@@ -220,14 +294,20 @@ class WorkflowService:
 
         if run_mode in ("from_here", "downstream") and start_node_id:
             if start_node_id not in node_map:
-                raise ApplicationError(400, f"start_node_id '{start_node_id}' không tồn tại.")
+                raise ApplicationError(
+                    400, f"start_node_id '{start_node_id}' không tồn tại."
+                )
             # A partial run skips upstream nodes, so it must not bypass their approval
             # gates: each upstream ManualApproval needs a prior approval on this version.
             missing = [
                 nid
-                for nid in sorted(WorkflowEngine.get_ancestors(start_node_id, edges_def))
+                for nid in sorted(
+                    WorkflowEngine.get_ancestors(start_node_id, edges_def)
+                )
                 if node_map[nid].node_type == "ManualApproval"
-                and not await self._gate_was_approved(workflow_id, ver.version_number, nid)
+                and not await self._gate_was_approved(
+                    workflow_id, ver.version_number, nid
+                )
             ]
             if missing:
                 raise ApplicationError(
@@ -236,7 +316,9 @@ class WorkflowService:
                     f"version {ver.version_number}: {', '.join(missing)}. Run the workflow "
                     "and approve them first.",
                 )
-            plan_order = WorkflowEngine.get_downstream_subplan(start_node_id, full_order, edges_def)
+            plan_order = WorkflowEngine.get_downstream_subplan(
+                start_node_id, full_order, edges_def
+            )
         else:
             plan_order = full_order
 
@@ -315,7 +397,9 @@ class WorkflowService:
             ):
                 cached = None
             if cached is not None:
-                label = _CACHE_LABELS.get(cached.output_refs.get("execution_kind"), "cached")
+                label = _CACHE_LABELS.get(
+                    cached.output_refs.get("execution_kind"), "cached"
+                )
                 record(
                     nid,
                     state=NodeExecutionState.SKIPPED,
@@ -335,7 +419,9 @@ class WorkflowService:
                     state=NodeExecutionState.WAITING_APPROVAL,
                     cache_hit=False,
                     output_refs={},
-                    logs=["Paused at ManualApproval gate. Waiting for operator approval."],
+                    logs=[
+                        "Paused at ManualApproval gate. Waiting for operator approval."
+                    ],
                     started_at=now,
                 )
                 continue
@@ -356,11 +442,15 @@ class WorkflowService:
                 state=NodeExecutionState.SUCCEEDED,
                 cache_hit=False,
                 output_refs=out_ref,
-                logs=[f"Simulated {nd.node_type}; no production executor or media artifact was created."],
+                logs=[
+                    f"Simulated {nd.node_type}; no production executor or media artifact was created."
+                ],
                 started_at=now,
                 ended_at=now,
             )
-            await self._stage_cache_entry(project_id, ckey, nd.node_type, out_ref, staged_cache_keys)
+            await self._stage_cache_entry(
+                project_id, ckey, nd.node_type, out_ref, staged_cache_keys
+            )
 
         if not paused_at_approval:
             wf_run.status = "succeeded"
@@ -415,10 +505,17 @@ class WorkflowService:
         """Approve a ManualApproval gate and resume until the next gate (if any)."""
         await self._require_workflow(project_id, workflow_id)
         wf_run = await self.repository.get_workflow_run(run_id)
-        if not wf_run or wf_run.workflow_id != workflow_id or wf_run.project_id != project_id:
+        if (
+            not wf_run
+            or wf_run.workflow_id != workflow_id
+            or wf_run.project_id != project_id
+        ):
             raise ApplicationError(404, "Workflow run không tồn tại.")
 
-        exec_by_nid = {ne.node_id: ne for ne in await self.repository.list_node_executions_for_run(run_id)}
+        exec_by_nid = {
+            ne.node_id: ne
+            for ne in await self.repository.list_node_executions_for_run(run_id)
+        }
         target = exec_by_nid.get(node_id)
         if not target:
             raise ApplicationError(404, "Node không tồn tại trong workflow run này.")
@@ -442,13 +539,19 @@ class WorkflowService:
         paused_at_next_gate = False
         for nid in wf_run.execution_plan_order:
             ne = exec_by_nid.get(nid)
-            if ne is None or ne.state != NodeExecutionState.BLOCKED or paused_at_next_gate:
+            if (
+                ne is None
+                or ne.state != NodeExecutionState.BLOCKED
+                or paused_at_next_gate
+            ):
                 continue
             if ne.node_type == "ManualApproval":
                 paused_at_next_gate = True
                 ne.state = NodeExecutionState.WAITING_APPROVAL
                 ne.started_at = now
-                ne.logs = list(ne.logs or []) + ["Paused at ManualApproval gate. Waiting for operator approval."]
+                ne.logs = list(ne.logs or []) + [
+                    "Paused at ManualApproval gate. Waiting for operator approval."
+                ]
                 continue
             ne.state = NodeExecutionState.SUCCEEDED
             ne.started_at = now
@@ -463,7 +566,13 @@ class WorkflowService:
             ne.logs = list(ne.logs or []) + [
                 "Resumed state-machine simulation after ManualApproval; no media was generated."
             ]
-            await self._stage_cache_entry(project_id, ne.cache_key, ne.node_type, ne.output_refs, staged_cache_keys)
+            await self._stage_cache_entry(
+                project_id,
+                ne.cache_key,
+                ne.node_type,
+                ne.output_refs,
+                staged_cache_keys,
+            )
 
         if paused_at_next_gate:
             wf_run.status = "waiting_approval"

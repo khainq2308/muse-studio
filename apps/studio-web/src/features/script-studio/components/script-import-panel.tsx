@@ -30,6 +30,7 @@ import {
   type ScriptImportFormValues,
   type ScriptImportRequest,
   type ScriptImportResult,
+  type ScriptRevision,
 } from "@/features/script-studio/state";
 import { cn } from "@/lib/utils";
 
@@ -189,12 +190,16 @@ interface ScriptImportPanelProps {
   existingShotsCount?: number;
   isCheckingPipeline?: boolean;
   pipelineCheckError?: boolean;
+  revisions?: readonly ScriptRevision[];
   isImporting: boolean;
+  isApplyingRevision?: boolean;
+  applyingRevisionId?: string | null;
   fieldErrors: Partial<Record<ScriptImportField, string>>;
   formError: string | null;
   requiresReplaceConfirmation: boolean;
   result: ScriptImportResult | null;
   onImport: (request: ScriptImportRequest) => void;
+  onApplyRevision?: (revisionId: string, replaceExisting: boolean) => void;
   onDismissResult: () => void;
   /** Switches to the Story Bible view, the next step after an applied import. */
   onReviewStoryBible?: () => void;
@@ -206,12 +211,16 @@ export function ScriptImportPanel({
   existingShotsCount = 0,
   isCheckingPipeline = false,
   pipelineCheckError = false,
+  revisions = [],
   isImporting,
+  isApplyingRevision = false,
+  applyingRevisionId = null,
   fieldErrors,
   formError,
   requiresReplaceConfirmation,
   result,
   onImport,
+  onApplyRevision,
   onDismissResult,
   onReviewStoryBible,
 }: ScriptImportPanelProps) {
@@ -257,6 +266,9 @@ export function ScriptImportPanel({
 
   const rawContent = watch("raw_content");
   const autoApply = watch("auto_apply_proposal");
+  const replaceExisting = watch("replace_existing");
+  const hasPendingDraft =
+    Boolean(result && result.generated_shots === 0) || revisions.some((rev) => !rev.is_approved);
 
   const outlineGroups = useMemo(() => extractLocalSceneOutline(rawContent), [rawContent]);
   const localSceneCount = outlineGroups.filter((group) => group.sceneNumber !== null).length;
@@ -436,8 +448,31 @@ export function ScriptImportPanel({
             )}
 
             <div className="flex flex-wrap items-center gap-3">
+              {result.generated_shots === 0 && onApplyRevision && (
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="apply-draft-revision-button"
+                  disabled={isImporting || isApplyingRevision || isCheckingPipeline}
+                  onClick={() =>
+                    onApplyRevision(result.script_revision_id, Boolean(replaceExisting))
+                  }
+                >
+                  {isApplyingRevision && applyingRevisionId === result.script_revision_id ? (
+                    <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Wand2 className="size-3.5" aria-hidden="true" />
+                  )}
+                  Apply revision to Story Bible &amp; shots
+                </Button>
+              )}
               {onReviewStoryBible && (
-                <Button type="button" size="sm" onClick={onReviewStoryBible}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={result.generated_shots === 0 && onApplyRevision ? "outline" : "default"}
+                  onClick={onReviewStoryBible}
+                >
                   <BookOpenText className="size-3.5" aria-hidden="true" />
                   Review Story Bible
                 </Button>
@@ -660,7 +695,7 @@ export function ScriptImportPanel({
               </label>
 
               {(() => {
-                if (!autoApply) return null;
+                if (!autoApply && !requiresReplaceConfirmation) return null;
                 if (isCheckingPipeline) {
                   return (
                     <div
@@ -733,7 +768,11 @@ export function ScriptImportPanel({
                     type="checkbox"
                     className="mt-0.5 size-4 rounded border-input"
                     {...fieldProps("replace_existing")}
-                    disabled={isImporting || !autoApply}
+                    disabled={
+                      isImporting ||
+                      isApplyingRevision ||
+                      (!autoApply && !hasPendingDraft && !requiresReplaceConfirmation)
+                    }
                     {...register("replace_existing")}
                   />
                   <span>
@@ -749,11 +788,11 @@ export function ScriptImportPanel({
             </div>
           </div>
 
-          <div className="pt-2">
+          <div className="space-y-3 pt-2">
             <Button
               type="submit"
               className="w-full"
-              disabled={isImporting || (autoApply && isCheckingPipeline)}
+              disabled={isImporting || isApplyingRevision || (autoApply && isCheckingPipeline)}
             >
               {isImporting ? (
                 <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
@@ -768,6 +807,84 @@ export function ScriptImportPanel({
                   ? "Import & apply script"
                   : "Save draft revision & analyze"}
             </Button>
+
+            {revisions.length > 0 && (
+              <div
+                data-testid="script-revisions-list"
+                className="space-y-2 rounded-xl border border-border bg-secondary/20 p-3 text-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-foreground">
+                    Saved Script Revisions ({revisions.length})
+                  </span>
+                </div>
+                <ul className="max-h-48 space-y-2 overflow-y-auto">
+                  {revisions.map((rev) => (
+                    <li
+                      key={rev.id}
+                      data-testid={`script-revision-${rev.id}`}
+                      className="space-y-1.5 rounded-lg border border-border bg-background p-2.5"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-semibold text-foreground">
+                            v{rev.version_number}
+                          </span>
+                          <span
+                            className={cn(
+                              "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                              rev.is_approved
+                                ? "bg-success/15 text-success"
+                                : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+                            )}
+                          >
+                            {rev.is_approved ? "Applied" : "Draft"}
+                          </span>
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            {rev.source_format}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[11px]"
+                            disabled={isImporting || isApplyingRevision}
+                            aria-label={`Load revision v${rev.version_number} into editor`}
+                            onClick={() => {
+                              setValue("raw_content", rev.raw_content, { shouldDirty: true });
+                              setValue("source_format", rev.source_format, { shouldDirty: true });
+                              clearErrors("raw_content");
+                            }}
+                          >
+                            Load v{rev.version_number}
+                          </Button>
+                          {!rev.is_approved && onApplyRevision && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-6 px-2 text-[11px]"
+                              data-testid={`apply-revision-${rev.id}`}
+                              disabled={isImporting || isApplyingRevision || isCheckingPipeline}
+                              onClick={() => onApplyRevision(rev.id, Boolean(replaceExisting))}
+                            >
+                              {isApplyingRevision && applyingRevisionId === rev.id ? (
+                                <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />
+                              ) : null}
+                              Apply v{rev.version_number}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      {rev.diff_summary && (
+                        <p className="text-[11px] text-muted-foreground">{rev.diff_summary}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       </form>

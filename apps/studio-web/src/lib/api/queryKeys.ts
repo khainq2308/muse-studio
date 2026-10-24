@@ -54,6 +54,9 @@ export const queryKeys = {
   /** Story Bible entries of a project (`GET /api/v1/projects/{project_id}/story-bible`). */
   storyBible: (sessionVersion: number, projectId: string) =>
     ["story-bible", sessionVersion, projectId] as const,
+  /** Saved script revisions of a project (`GET /api/v1/projects/{project_id}/script-revisions`). */
+  scriptRevisions: (sessionVersion: number, projectId: string) =>
+    ["script-revisions", sessionVersion, projectId] as const,
   /** Mutation key for Script Studio actions (Story Bible upsert, script import, reference upload). */
   scriptStudioActions: (sessionVersion: number, projectId: string) =>
     ["script-studio-actions", sessionVersion, projectId] as const,
@@ -66,6 +69,9 @@ export const queryKeys = {
   /** Mutation key for timeline assemble and export launch. */
   timelineActions: (sessionVersion: number, projectId: string) =>
     ["timeline-actions", sessionVersion, projectId] as const,
+  /** Latest workflow of a project (`GET /api/v1/projects/{project_id}/workflows`). */
+  projectWorkflow: (sessionVersion: number, projectId: string) =>
+    ["project-workflow", sessionVersion, projectId] as const,
   /** Mutation key for workflow creation, graph update, layout save, run, and gate approval. */
   workflowActions: (sessionVersion: number, projectId: string) =>
     ["workflow-actions", sessionVersion, projectId] as const,

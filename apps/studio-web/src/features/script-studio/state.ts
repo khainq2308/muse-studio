@@ -7,6 +7,8 @@ export type BibleEntryCreateRequest = components["schemas"]["BibleEntryCreateIn"
 export type StoryBibleUpsertResult = components["schemas"]["StoryBibleUpsertOut"];
 export type ScriptImportRequest = components["schemas"]["ScriptImportIn"];
 export type ScriptImportResult = components["schemas"]["ScriptImportOut"];
+export type ScriptRevision = components["schemas"]["ScriptRevisionOut"];
+export type ScriptRevisionApplyRequest = components["schemas"]["ScriptRevisionApplyIn"];
 export type UploadedAsset = components["schemas"]["AssetOut"];
 export type ShotExportFormat = "json" | "csv";
 

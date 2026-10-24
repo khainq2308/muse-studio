@@ -19,22 +19,30 @@ async def client():
     test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    TestSessionLocal = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+    TestSessionLocal = async_sessionmaker(
+        bind=test_engine, class_=AsyncSession, expire_on_commit=False
+    )
 
     async def override_get_db():
         async with TestSessionLocal() as session:
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as ac:
         yield ac
     app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
-async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation(client: AsyncClient):
+async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation(
+    client: AsyncClient,
+):
     # 1. Tạo Project & Khởi tạo Workflow mẫu 7 bước của M3
-    p_res = await client.post("/api/v1/projects", json={"name": "M3 Workflow Film Project"})
+    p_res = await client.post(
+        "/api/v1/projects", json={"name": "M3 Workflow Film Project"}
+    )
     proj_id = p_res.json()["id"]
 
     wf_res = await client.post(
@@ -72,7 +80,9 @@ async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation
     assert states_by_id["n_prompt"] == "succeeded"
     assert states_by_id["n_approval"] == "waiting_approval"
     assert run1["execution_mode"] == "simulation"
-    prompt_execution = next(n for n in run1["node_executions"] if n["node_id"] == "n_prompt")
+    prompt_execution = next(
+        n for n in run1["node_executions"] if n["node_id"] == "n_prompt"
+    )
     assert prompt_execution["output_refs"]["status"] == "simulated"
     assert prompt_execution["output_refs"]["placeholder"] is True
 
@@ -145,3 +155,67 @@ async def test_m3_workflow_canvas_approval_gate_and_selective_cache_invalidation
     assert exec_map["n_prompt"]["state"] == "succeeded"
     assert exec_map["n_approval"]["cache_hit"] is False
     assert exec_map["n_approval"]["state"] == "waiting_approval"
+
+
+@pytest.mark.asyncio
+async def test_m3_workflow_get_persistence_and_project_scoping(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from muse_orchestrator.core.config import settings
+
+    p1 = (await client.post("/api/v1/projects", json={"name": "Project 1"})).json()[
+        "id"
+    ]
+    p2 = (await client.post("/api/v1/projects", json={"name": "Project 2"})).json()[
+        "id"
+    ]
+
+    # Chưa có workflow -> 404; project không tồn tại -> 404
+    assert (await client.get(f"/api/v1/projects/{p1}/workflows")).status_code == 404
+    assert (
+        await client.get("/api/v1/projects/proj_missing/workflows")
+    ).status_code == 404
+
+    # Tạo workflow v1 và lưu layout tuỳ chỉnh
+    created_res = await client.post(
+        f"/api/v1/projects/{p1}/workflows",
+        json={"name": "Persisted Pipeline", "use_default_m3_template": True},
+    )
+    assert created_res.status_code == 201
+    wf_id = created_res.json()["id"]
+
+    await client.patch(
+        f"/api/v1/projects/{p1}/workflows/{wf_id}/layout",
+        json={"ui_layout": {"n_script_in": {"x": 320, "y": 480}}},
+    )
+
+    # Đọc lại theo project (latest) và theo workflow_id
+    latest_res = await client.get(f"/api/v1/projects/{p1}/workflows")
+    assert latest_res.status_code == 200
+    latest = latest_res.json()
+    assert latest["id"] == wf_id
+    assert latest["name"] == "Persisted Pipeline"
+    assert latest["current_version"] == 1
+    assert latest["ui_layout"] == {"n_script_in": {"x": 320, "y": 480}}
+    assert len(latest["nodes"]) == 7
+
+    by_id_res = await client.get(f"/api/v1/projects/{p1}/workflows/{wf_id}")
+    assert by_id_res.status_code == 200
+    assert by_id_res.json() == latest
+
+    # Không đọc được workflow của project khác
+    assert (
+        await client.get(f"/api/v1/projects/{p2}/workflows/{wf_id}")
+    ).status_code == 404
+
+    # Bật studio_admin_token -> 401 khi thiếu header
+    monkeypatch.setattr(settings, "studio_admin_token", "secret-admin-token")
+    assert (await client.get(f"/api/v1/projects/{p1}/workflows")).status_code == 401
+    assert (
+        await client.get(f"/api/v1/projects/{p1}/workflows/{wf_id}")
+    ).status_code == 401
+    authed = await client.get(
+        f"/api/v1/projects/{p1}/workflows",
+        headers={"X-Studio-Admin-Token": "secret-admin-token"},
+    )
+    assert authed.status_code == 200

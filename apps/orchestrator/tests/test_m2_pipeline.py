@@ -19,14 +19,18 @@ async def client():
     test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    TestSessionLocal = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+    TestSessionLocal = async_sessionmaker(
+        bind=test_engine, class_=AsyncSession, expire_on_commit=False
+    )
 
     async def override_get_db():
         async with TestSessionLocal() as session:
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as ac:
         yield ac
     app.dependency_overrides.clear()
 
@@ -53,14 +57,20 @@ SHOT 2: Ran nhìn ra cửa sổ
 @pytest.mark.asyncio
 async def test_m2_script_import_bible_extraction_and_continuity(client: AsyncClient):
     # 1. Tạo Project
-    p_res = await client.post("/api/v1/projects", json={"name": "Conan Detective Case 02"})
+    p_res = await client.post(
+        "/api/v1/projects", json={"name": "Conan Detective Case 02"}
+    )
     assert p_res.status_code == 201
     proj_id = p_res.json()["id"]
 
     # 2. Import kịch bản MuseFlow
     imp_res = await client.post(
         f"/api/v1/projects/{proj_id}/scripts/import",
-        json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "source_format": "museflow", "auto_apply_proposal": True},
+        json={
+            "raw_content": SAMPLE_MUSEFLOW_SCRIPT,
+            "source_format": "museflow",
+            "auto_apply_proposal": True,
+        },
     )
     assert imp_res.status_code == 201
     summary = imp_res.json()
@@ -102,7 +112,11 @@ async def test_m2_script_import_bible_extraction_and_continuity(client: AsyncCli
     png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
     ast_res = await client.post(
         "/api/v1/assets/upload",
-        data={"project_id": proj_id, "asset_type": "reference", "is_locked_reference": "true"},
+        data={
+            "project_id": proj_id,
+            "asset_type": "reference",
+            "is_locked_reference": "true",
+        },
         files={"file": ("conan_ref.png", png_bytes, "image/png")},
     )
     asset_id = ast_res.json()["id"]
@@ -125,17 +139,25 @@ async def test_m2_script_import_bible_extraction_and_continuity(client: AsyncCli
     assert "sequence_index,shot_id,title" in csv_res.text
     assert "Conan Edogawa" in csv_res.text
 
+
 def test_script_import_proposal_requires_explicit_opt_in():
     from muse_orchestrator.api.pipeline import ScriptImportIn
 
-    assert ScriptImportIn(raw_content=SAMPLE_MUSEFLOW_SCRIPT).auto_apply_proposal is False
-    assert ScriptImportIn(
-        raw_content=SAMPLE_MUSEFLOW_SCRIPT, auto_apply_proposal=True
-    ).auto_apply_proposal is True
+    assert (
+        ScriptImportIn(raw_content=SAMPLE_MUSEFLOW_SCRIPT).auto_apply_proposal is False
+    )
+    assert (
+        ScriptImportIn(
+            raw_content=SAMPLE_MUSEFLOW_SCRIPT, auto_apply_proposal=True
+        ).auto_apply_proposal
+        is True
+    )
 
 
 @pytest.mark.asyncio
-async def test_script_import_without_opt_in_preserves_existing_shots_and_story_bible(client: AsyncClient):
+async def test_script_import_without_opt_in_preserves_existing_shots_and_story_bible(
+    client: AsyncClient,
+):
     project_response = await client.post(
         "/api/v1/projects", json={"name": "Import preserves existing project data"}
     )
@@ -154,7 +176,9 @@ async def test_script_import_without_opt_in_preserves_existing_shots_and_story_b
     }
     original_bible_codes = {
         entry["code_name"]
-        for entry in (await client.get(f"/api/v1/projects/{project_id}/story-bible")).json()
+        for entry in (
+            await client.get(f"/api/v1/projects/{project_id}/story-bible")
+        ).json()
     }
     assert len(original_shot_ids) == 2
     assert original_bible_codes
@@ -171,28 +195,43 @@ async def test_script_import_without_opt_in_preserves_existing_shots_and_story_b
     assert response["generated_shots"] == 0
 
     shots_after = (await client.get(f"/api/v1/projects/{project_id}/shots")).json()
-    bible_after = (await client.get(f"/api/v1/projects/{project_id}/story-bible")).json()
+    bible_after = (
+        await client.get(f"/api/v1/projects/{project_id}/story-bible")
+    ).json()
     assert {shot["id"] for shot in shots_after} == original_shot_ids
     assert {entry["code_name"] for entry in bible_after} == original_bible_codes
 
+
 @pytest.mark.asyncio
-async def test_shot_reads_and_exports_do_not_recompile_or_write(client: AsyncClient, monkeypatch):
-    project_response = await client.post("/api/v1/projects", json={"name": "Read-only shot list"})
+async def test_shot_reads_and_exports_do_not_recompile_or_write(
+    client: AsyncClient, monkeypatch
+):
+    project_response = await client.post(
+        "/api/v1/projects", json={"name": "Read-only shot list"}
+    )
     assert project_response.status_code == 201
     project_id = project_response.json()["id"]
 
     import_response = await client.post(
         f"/api/v1/projects/{project_id}/scripts/import",
-        json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "source_format": "museflow", "auto_apply_proposal": True},
+        json={
+            "raw_content": SAMPLE_MUSEFLOW_SCRIPT,
+            "source_format": "museflow",
+            "auto_apply_proposal": True,
+        },
     )
     assert import_response.status_code == 201
 
     import muse_orchestrator.api.pipeline as pipeline_module
 
     async def unexpected_recompile(*_args, **_kwargs):
-        raise AssertionError("GET shot routes must not recompile prompts or commit writes")
+        raise AssertionError(
+            "GET shot routes must not recompile prompts or commit writes"
+        )
 
-    monkeypatch.setattr(pipeline_module, "_recompile_project_shots", unexpected_recompile)
+    monkeypatch.setattr(
+        pipeline_module, "_recompile_project_shots", unexpected_recompile
+    )
 
     shots_response = await client.get(f"/api/v1/projects/{project_id}/shots")
     assert shots_response.status_code == 200
@@ -200,11 +239,15 @@ async def test_shot_reads_and_exports_do_not_recompile_or_write(client: AsyncCli
     assert len(shots) == 2
     assert shots[0]["prompt_hash"]
 
-    csv_response = await client.get(f"/api/v1/projects/{project_id}/shots/export?format=csv")
+    csv_response = await client.get(
+        f"/api/v1/projects/{project_id}/shots/export?format=csv"
+    )
     assert csv_response.status_code == 200
     assert "shot_id,title" in csv_response.text
 
-    json_response = await client.get(f"/api/v1/projects/{project_id}/shots/export?format=json")
+    json_response = await client.get(
+        f"/api/v1/projects/{project_id}/shots/export?format=json"
+    )
     assert json_response.status_code == 200
     assert json_response.json()["shots"][0]["prompt_hash"] == shots[0]["prompt_hash"]
 
@@ -222,9 +265,15 @@ async def test_request_validation_does_not_echo_raw_secret_input(client: AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_story_bible_and_shot_references_must_belong_to_the_project(client: AsyncClient):
-    project_a = (await client.post("/api/v1/projects", json={"name": "Reference owner"})).json()["id"]
-    project_b = (await client.post("/api/v1/projects", json={"name": "Foreign reference"})).json()["id"]
+async def test_story_bible_and_shot_references_must_belong_to_the_project(
+    client: AsyncClient,
+):
+    project_a = (
+        await client.post("/api/v1/projects", json={"name": "Reference owner"})
+    ).json()["id"]
+    project_b = (
+        await client.post("/api/v1/projects", json={"name": "Foreign reference"})
+    ).json()["id"]
 
     png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
     upload = await client.post(
@@ -262,8 +311,11 @@ async def test_story_bible_and_shot_references_must_belong_to_the_project(client
     assert shot_response.status_code == 422
     assert "reference_asset_ids" in shot_response.json()["detail"]
 
+
 @pytest.mark.asyncio
-async def test_patch_shot_rejects_null_for_non_nullable_fields_without_mutating(client: AsyncClient):
+async def test_patch_shot_rejects_null_for_non_nullable_fields_without_mutating(
+    client: AsyncClient,
+):
     project_id = (
         await client.post("/api/v1/projects", json={"name": "Reject null shot patch"})
     ).json()["id"]
@@ -292,3 +344,92 @@ async def test_patch_shot_rejects_null_for_non_nullable_fields_without_mutating(
 
     after = (await client.get(f"/api/v1/projects/{project_id}/shots")).json()[0]
     assert {key: after[key] for key in before} == before
+
+
+@pytest.mark.asyncio
+async def test_script_revisions_list_and_apply_saved_draft(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from muse_orchestrator.core.config import settings
+
+    p1 = (
+        await client.post("/api/v1/projects", json={"name": "Draft Apply Project"})
+    ).json()["id"]
+    p2 = (await client.post("/api/v1/projects", json={"name": "Other Project"})).json()[
+        "id"
+    ]
+
+    assert (await client.get(f"/api/v1/projects/{p1}/script-revisions")).json() == []
+    assert (
+        await client.get("/api/v1/projects/proj_missing/script-revisions")
+    ).status_code == 404
+
+    # 1. Lưu bản nháp v1 (auto_apply_proposal=False)
+    draft1 = (
+        await client.post(
+            f"/api/v1/projects/{p1}/scripts/import",
+            json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "auto_apply_proposal": False},
+        )
+    ).json()
+    rev1_id = draft1["script_revision_id"]
+    assert draft1["generated_shots"] == 0
+
+    revs = (await client.get(f"/api/v1/projects/{p1}/script-revisions")).json()
+    assert len(revs) == 1
+    assert revs[0]["id"] == rev1_id
+    assert revs[0]["version_number"] == 1
+    assert revs[0]["is_approved"] is False
+    assert revs[0]["detected_shots"] == 2
+
+    # 2. Apply bản nháp v1 vào project chưa có dữ liệu pipeline -> thành công
+    applied1 = await client.post(
+        f"/api/v1/projects/{p1}/script-revisions/{rev1_id}/apply",
+        json={"replace_existing": False},
+    )
+    assert applied1.status_code == 200
+    assert applied1.json()["generated_shots"] == 2
+    assert len((await client.get(f"/api/v1/projects/{p1}/shots")).json()) == 2
+    assert (await client.get(f"/api/v1/projects/{p1}/script-revisions")).json()[0][
+        "is_approved"
+    ] is True
+
+    # 3. Lưu bản nháp v2 rồi apply đè mà chưa bật replace_existing -> 409 Conflict
+    draft2 = (
+        await client.post(
+            f"/api/v1/projects/{p1}/scripts/import",
+            json={"raw_content": SAMPLE_MUSEFLOW_SCRIPT, "auto_apply_proposal": False},
+        )
+    ).json()
+    rev2_id = draft2["script_revision_id"]
+    conflict = await client.post(
+        f"/api/v1/projects/{p1}/script-revisions/{rev2_id}/apply",
+        json={"replace_existing": False},
+    )
+    assert conflict.status_code == 409
+
+    # Khi xác nhận replace_existing=True -> 200 OK
+    applied2 = await client.post(
+        f"/api/v1/projects/{p1}/script-revisions/{rev2_id}/apply",
+        json={"replace_existing": True},
+    )
+    assert applied2.status_code == 200
+    assert applied2.json()["version_number"] == 2
+    assert applied2.json()["generated_shots"] == 2
+
+    # 4. Không apply được revision của project khác hoặc revision không tồn tại
+    assert (
+        await client.post(
+            f"/api/v1/projects/{p2}/script-revisions/{rev2_id}/apply", json={}
+        )
+    ).status_code == 404
+
+    # 5. Xác thực admin token
+    monkeypatch.setattr(settings, "studio_admin_token", "secret-admin-token")
+    assert (
+        await client.get(f"/api/v1/projects/{p1}/script-revisions")
+    ).status_code == 401
+    assert (
+        await client.post(
+            f"/api/v1/projects/{p1}/script-revisions/{rev2_id}/apply", json={}
+        )
+    ).status_code == 401

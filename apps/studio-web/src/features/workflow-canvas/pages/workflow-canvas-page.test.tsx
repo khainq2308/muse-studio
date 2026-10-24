@@ -113,13 +113,18 @@ function jsonResponse(status: number, body: unknown) {
   });
 }
 
-/** Routes fetch calls by method + path; unmatched calls fail loudly. */
+/** Routes fetch calls by method + path; unmatched calls fail loudly (GET /workflows defaults to 404). */
 function mockApi(routes: MockRoute[]) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://localhost");
     const method = (init?.method ?? "GET").toUpperCase();
     const route = routes.find((item) => item.method === method && item.path === url.pathname);
-    if (!route) return jsonResponse(500, { detail: `Unmocked ${method} ${url.pathname}` });
+    if (!route) {
+      if (method === "GET" && url.pathname === BASE) {
+        return jsonResponse(404, { detail: "Project chưa có Workflow nào." });
+      }
+      return jsonResponse(500, { detail: `Unmocked ${method} ${url.pathname}` });
+    }
     return jsonResponse(route.status, route.body);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -153,11 +158,35 @@ function nodeList() {
 }
 
 describe("WorkflowCanvasPage", () => {
+  it("loads an existing project workflow via GET and renders its saved nodes and layout", async () => {
+    const fetchMock = mockApi([{ method: "GET", path: BASE, status: 200, body: createdWorkflow }]);
+    renderPage();
+
+    await screen.findByRole("region", { name: "Workflow DAG canvas" });
+    expect(requestsTo(fetchMock, "GET", BASE)).toEqual([undefined]);
+    expect(screen.getByText("Script to Batch Film Pipeline")).toBeInTheDocument();
+    expect(screen.getByText("v1")).toBeInTheDocument();
+    expect(document.querySelectorAll(".react-flow__node")).toHaveLength(3);
+  });
+
+  it("renders a retryable alert when loading the project workflow fails with a server error", async () => {
+    mockApi([{ method: "GET", path: BASE, status: 503, body: { detail: "Database busy." } }]);
+    renderPage();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Could not load the project workflow. Check the Orchestrator and retry.",
+    );
+    expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
   it("creates the workflow with a typed POST and renders it on the React Flow canvas", async () => {
     const fetchMock = mockApi([{ method: "POST", path: BASE, status: 201, body: createdWorkflow }]);
     renderPage();
 
-    expect(screen.getByRole("note")).toHaveTextContent(/does not yet expose an endpoint/i);
+    expect(screen.getByRole("note")).toHaveTextContent(
+      /persist on the server and reload automatically/i,
+    );
     await createWorkflow();
 
     expect(requestsTo(fetchMock, "POST", BASE)).toEqual([

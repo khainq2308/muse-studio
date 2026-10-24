@@ -76,6 +76,7 @@ function makeTake(overrides: Record<string, unknown>) {
     continuity_flagged: false,
     director_notes: "",
     is_selected: true,
+    created_at: "2026-10-23T10:15:30Z",
     ...overrides,
   };
 }
@@ -263,6 +264,10 @@ test("selects a take from the A/B compare and reports re-pointed downstream shot
   await openTakes(page, "Shot 1 · Hero enters");
   const panel = page.getByTestId("shot-take-review-shot-1");
   await expect(panel.getByRole("listitem")).toHaveCount(2);
+  await expect(panel.getByTestId("take-take-1").getByTestId("take-created-at")).toHaveAttribute(
+    "datetime",
+    "2026-10-23T10:15:30.000Z",
+  );
 
   // Frame thumbnails are fetched with the admin header path and rendered from blob: URLs.
   const firstFrame = panel.getByTestId("take-take-1").getByRole("img", {

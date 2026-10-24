@@ -10,9 +10,14 @@ from muse_orchestrator.api.dependencies import get_studio_repository
 from muse_orchestrator.application.workflow_service import WorkflowService
 from muse_orchestrator.infrastructure.repositories import StudioRepository
 from muse_orchestrator.models.domain import NodeExecutionState
-from muse_orchestrator.services.workflow_engine import MAX_WORKFLOW_EDGES, MAX_WORKFLOW_NODES
+from muse_orchestrator.services.workflow_engine import (
+    MAX_WORKFLOW_EDGES,
+    MAX_WORKFLOW_NODES,
+)
 
-router = APIRouter(prefix="/api/v1/projects/{project_id}/workflows", tags=["M3 Workflow Canvas"])
+router = APIRouter(
+    prefix="/api/v1/projects/{project_id}/workflows", tags=["M3 Workflow Canvas"]
+)
 
 MAX_GRAPH_JSON_CHARS = 1_000_000
 MAX_UI_LAYOUT_JSON_CHARS = 256_000
@@ -30,17 +35,27 @@ def _json_size(value: Any) -> int:
 
 def _check_graph_size(nodes: Any, edges: Any, ui_layout: Any) -> None:
     if _json_size(nodes) + _json_size(edges) > MAX_GRAPH_JSON_CHARS:
-        raise ValueError(f"nodes/edges exceed {MAX_GRAPH_JSON_CHARS} characters of JSON")
+        raise ValueError(
+            f"nodes/edges exceed {MAX_GRAPH_JSON_CHARS} characters of JSON"
+        )
     if _json_size(ui_layout) > MAX_UI_LAYOUT_JSON_CHARS:
-        raise ValueError(f"ui_layout exceeds {MAX_UI_LAYOUT_JSON_CHARS} characters of JSON")
+        raise ValueError(
+            f"ui_layout exceeds {MAX_UI_LAYOUT_JSON_CHARS} characters of JSON"
+        )
 
 
 class WorkflowCreateIn(BaseModel):
-    name: str = Field(default="Script to Batch Film Pipeline", min_length=1, max_length=255)
+    name: str = Field(
+        default="Script to Batch Film Pipeline", min_length=1, max_length=255
+    )
     description: str = Field(default="M3 Default Typed DAG Workflow", max_length=4000)
     use_default_m3_template: bool = Field(default=True)
-    nodes: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_WORKFLOW_NODES)
-    edges: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_WORKFLOW_EDGES)
+    nodes: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=MAX_WORKFLOW_NODES
+    )
+    edges: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=MAX_WORKFLOW_EDGES
+    )
     ui_layout: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -62,13 +77,13 @@ class WorkflowGraphUpdateIn(BaseModel):
 
 class WorkflowLayoutOnlyIn(BaseModel):
     """Chỉ lưu vị trí kéo thả node trên Canvas, không tạo version logic mới và không xoá cache."""
+
     ui_layout: dict[str, Any]
 
     @model_validator(mode="after")
     def _bound_size(self) -> "WorkflowLayoutOnlyIn":
         _check_graph_size([], [], self.ui_layout)
         return self
-
 
 
 JsonValue = TypeAliasType(
@@ -174,8 +189,29 @@ class WorkflowRunRequestIn(BaseModel):
     @model_validator(mode="after")
     def require_start_node_for_partial_runs(self) -> "WorkflowRunRequestIn":
         if self.run_mode in ("from_here", "downstream") and not self.start_node_id:
-            raise ValueError("start_node_id is required for from_here and downstream run modes.")
+            raise ValueError(
+                "start_node_id is required for from_here and downstream run modes."
+            )
         return self
+
+
+@router.get("", response_model=WorkflowCreateOut)
+async def get_latest_project_workflow(
+    project_id: str,
+    service: WorkflowService = Depends(get_workflow_service),
+    actor: str = Depends(verify_single_admin),
+) -> WorkflowCreateOut:
+    return await service.get_latest_workflow(project_id)
+
+
+@router.get("/{workflow_id}", response_model=WorkflowCreateOut)
+async def get_project_workflow(
+    project_id: str,
+    workflow_id: str,
+    service: WorkflowService = Depends(get_workflow_service),
+    actor: str = Depends(verify_single_admin),
+) -> WorkflowCreateOut:
+    return await service.get_workflow(project_id, workflow_id)
 
 
 @router.post("", response_model=WorkflowCreateOut, status_code=status.HTTP_201_CREATED)
@@ -211,7 +247,11 @@ async def autosave_canvas_layout(
     return await service.save_layout(project_id, workflow_id, payload.ui_layout)
 
 
-@router.post("/{workflow_id}/runs", response_model=WorkflowRunOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{workflow_id}/runs",
+    response_model=WorkflowRunOut,
+    status_code=status.HTTP_201_CREATED,
+)
 async def execute_workflow(
     project_id: str,
     workflow_id: str,
@@ -222,7 +262,10 @@ async def execute_workflow(
     return await service.execute(project_id, workflow_id, payload.model_dump())
 
 
-@router.post("/{workflow_id}/runs/{run_id}/nodes/{node_id}/approve", response_model=WorkflowApprovalOut)
+@router.post(
+    "/{workflow_id}/runs/{run_id}/nodes/{node_id}/approve",
+    response_model=WorkflowApprovalOut,
+)
 async def approve_manual_gate_and_resume(
     project_id: str,
     workflow_id: str,

@@ -91,7 +91,8 @@ async function mockApi(
         ? [testProject]
         : recorded.pathname === "/api/v1/projects/test-project/story-bible"
           ? initialBible
-          : recorded.pathname === "/api/v1/projects/test-project/shots"
+          : recorded.pathname === "/api/v1/projects/test-project/shots" ||
+              recorded.pathname === "/api/v1/projects/test-project/script-revisions"
             ? []
             : recorded.pathname === "/api/v1/queue/tasks"
               ? {
