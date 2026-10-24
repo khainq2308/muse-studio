@@ -22,6 +22,9 @@ export type StructuredLogItem = components["schemas"]["StructuredLogOut"];
 export type SystemDiagnostics = components["schemas"]["SystemDiagnosticsOut"];
 export type UploadedAssetItem = components["schemas"]["AssetOut"];
 
+/** Mutation scope of workspace-wide actions (restore, orphan scan/cleanup); not a project ID. */
+const WORKSPACE_SCOPE = "workspace";
+
 export function useProjectBackups(projectId: string) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   return useQuery({
@@ -139,11 +142,11 @@ export function useDeleteBackup(projectId: string) {
   return { ...mutation, mutate };
 }
 
-export function useRestoreBackupZip(projectId: string) {
+export function useRestoreBackupZip() {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const queryClient = useQueryClient();
   return useMutation({
-    mutationKey: queryKeys.systemOpsActions(sessionVersion, projectId),
+    mutationKey: queryKeys.systemOpsActions(sessionVersion, WORKSPACE_SCOPE),
     mutationFn: ({ file }: { file: File }) => {
       const formData = new FormData();
       formData.append("file", file);
@@ -164,10 +167,10 @@ export function useRestoreBackupZip(projectId: string) {
   });
 }
 
-export function useScanOrphans(projectId: string) {
+export function useScanOrphans() {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   return useMutation({
-    mutationKey: queryKeys.systemOpsActions(sessionVersion, projectId),
+    mutationKey: queryKeys.systemOpsActions(sessionVersion, WORKSPACE_SCOPE),
     mutationFn: ({ retentionHours }: { retentionHours: number }) =>
       apiPost(
         "/api/v1/maintenance/orphans/scan",
@@ -177,11 +180,11 @@ export function useScanOrphans(projectId: string) {
   });
 }
 
-export function useCleanupOrphans(projectId: string) {
+export function useCleanupOrphans() {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const queryClient = useQueryClient();
   return useMutation({
-    mutationKey: queryKeys.systemOpsActions(sessionVersion, projectId),
+    mutationKey: queryKeys.systemOpsActions(sessionVersion, WORKSPACE_SCOPE),
     mutationFn: ({ dryRun, retentionHours }: { dryRun: boolean; retentionHours: number }) =>
       apiPost(
         "/api/v1/maintenance/orphans/cleanup",
@@ -231,41 +234,40 @@ export function useUploadProjectAsset(projectId: string) {
   });
 }
 
-export function useDeleteProjectAsset(projectId: string) {
+/** Query families that may hold a reference to an asset, in any project. */
+const ASSET_REFERENCING_QUERIES = new Set([
+  "project-shots",
+  "shot-takes",
+  "shot-take-compare",
+  "story-bible",
+  "project-timeline",
+  "asset-media",
+]);
+
+/**
+ * Delete an asset by ID (`DELETE /api/v1/assets/{asset_id}`). Asset IDs are global, so this is a
+ * workspace action: the asset may belong to any project.
+ */
+export function useDeleteAsset() {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const queryClient = useQueryClient();
   return useMutation({
-    mutationKey: queryKeys.systemOpsActions(sessionVersion, projectId),
+    mutationKey: queryKeys.systemOpsActions(sessionVersion, WORKSPACE_SCOPE),
     mutationFn: ({ assetId, force }: { assetId: string; force: boolean }) =>
       apiDelete<null>("/api/v1/assets/{asset_id}", {
         pathParams: { asset_id: assetId },
         query: { force },
       }),
     // A (forced) delete can detach the asset from shots, takes, Story Bible entries and timeline
-    // clips; refresh every project view that may still reference it.
+    // clips of whichever project owns it; refresh those views in every project.
     onSettled: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.projects(sessionVersion) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.metricsSummary(sessionVersion) }),
         queryClient.invalidateQueries({
-          queryKey: queryKeys.projectShots(sessionVersion, projectId),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.shotTakesPrefix(sessionVersion, projectId),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.shotTakeComparePrefix(sessionVersion, projectId),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.storyBible(sessionVersion, projectId),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.projectTimeline(sessionVersion, projectId),
-        }),
-        // queryKeys has no asset-media prefix helper; match its ["asset-media", sessionVersion] head.
-        queryClient.invalidateQueries({
           predicate: (query) =>
-            query.queryKey[0] === "asset-media" && query.queryKey[1] === sessionVersion,
+            ASSET_REFERENCING_QUERIES.has(String(query.queryKey[0])) &&
+            query.queryKey[1] === sessionVersion,
         }),
       ]),
   });

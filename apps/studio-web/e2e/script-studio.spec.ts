@@ -165,9 +165,9 @@ test("imports a script with replace_existing confirmation and edits a Story Bibl
 
   await page.goto("/projects/test-project/script-studio");
 
-  await expect(page.getByRole("heading", { name: "Script Studio" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Script & Story Bible" })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Project modules" });
-  await expect(nav.getByRole("link", { name: "Script Studio" })).toHaveAttribute(
+  await expect(nav.getByRole("link", { name: "Script & Story Bible" })).toHaveAttribute(
     "aria-current",
     "page",
   );

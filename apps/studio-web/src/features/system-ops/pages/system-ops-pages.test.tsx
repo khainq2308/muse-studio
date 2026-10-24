@@ -3,7 +3,8 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SystemOpsPage } from "@/features/system-ops/pages/system-ops-page";
+import { ProjectDataPage } from "@/features/system-ops/pages/project-data-page";
+import { SystemPage } from "@/features/system-ops/pages/system-page";
 
 afterEach(() => {
   cleanup();
@@ -87,16 +88,36 @@ function cleanupBody(dryRun: boolean, retentionHours: number, errors: string[] =
   };
 }
 
-describe("SystemOpsPage", () => {
-  it("renders backups, asset manager, and requires confirmation before orphan deletion", async () => {
-    stubFetch();
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+describe("System and project data pages", () => {
+  it("keeps workspace maintenance on the System page and states its workspace scope", async () => {
+    const fetchMock = stubFetch();
+    renderWithQueryClient(<SystemPage />);
 
-    expect(
-      screen.getByRole("heading", { name: /System Operations, Backups & Asset Maintenance/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "System & maintenance" })).toBeInTheDocument();
+    expect(screen.getByText(/Workspace-wide tools/)).toBeVisible();
     expect(screen.getByRole("button", { name: /Delete Orphan Files/i })).toBeDisabled();
+    expect(screen.getByRole("form", { name: "Restore project from backup ZIP" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Project backups" })).toBeNull();
     expect(await screen.findByText(/v0.7.0/i)).toBeInTheDocument();
+    // Logs are not filtered to one project on the workspace page.
+    const logCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/system/logs"));
+    expect(String(logCall?.[0])).not.toContain("project_id");
+  });
+
+  it("keeps project backups and assets on the project page, without workspace tools", async () => {
+    const fetchMock = stubFetch();
+    renderWithQueryClient(<ProjectDataPage projectId="proj-1" />);
+
+    expect(screen.getByRole("heading", { name: "Backups & assets" })).toBeInTheDocument();
+    expect(await screen.findByText("proj-1-20261024.zip")).toBeVisible();
+    expect(screen.getByRole("form", { name: "Upload project asset" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Delete Orphan Files/i })).toBeNull();
+    // Deleting by global asset ID is a workspace action, not a project one.
+    expect(screen.queryByRole("form", { name: "Delete asset by ID" })).toBeNull();
+    // This page shows the project's own logs.
+    const logCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/system/logs"));
+    expect(String(logCall?.[0])).toContain("project_id=proj-1");
+    expect(screen.queryByRole("form", { name: "Restore project from backup ZIP" })).toBeNull();
   });
 
   it("requires confirming a backup delete and sends nothing on cancel", async () => {
@@ -106,7 +127,7 @@ describe("SystemOpsPage", () => {
         ? json({ detail: "Backup locked" }, 409)
         : undefined,
     );
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+    renderWithQueryClient(<ProjectDataPage projectId="proj-1" />);
 
     await user.click(
       await screen.findByRole("button", { name: "Delete backup proj-1-20261024.zip" }),
@@ -128,7 +149,7 @@ describe("SystemOpsPage", () => {
   it("rejects an out-of-range retention window", async () => {
     const user = userEvent.setup();
     stubFetch();
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+    renderWithQueryClient(<SystemPage />);
 
     const retention = screen.getByRole("spinbutton", { name: /Retention window/i });
     await user.clear(retention);
@@ -158,7 +179,7 @@ describe("SystemOpsPage", () => {
         ),
       );
     });
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+    renderWithQueryClient(<SystemPage />);
 
     const deleteButton = screen.getByRole("button", { name: /Delete Orphan Files/i });
     expect(deleteButton).toBeDisabled();
@@ -203,7 +224,7 @@ describe("SystemOpsPage", () => {
     const fetchMock = stubFetch((url) =>
       url.includes("/backups/restore") ? json({ detail: "Archive is corrupt" }, 422) : undefined,
     );
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+    renderWithQueryClient(<SystemPage />);
 
     const file = new File(["zip"], "backup.zip", { type: "application/zip" });
     await user.upload(screen.getByLabelText("Backup ZIP file"), file);
@@ -239,7 +260,7 @@ describe("SystemOpsPage", () => {
           })
         : undefined,
     );
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+    renderWithQueryClient(<SystemPage />);
 
     await user.upload(
       screen.getByLabelText("Backup ZIP file"),
@@ -262,21 +283,21 @@ describe("SystemOpsPage", () => {
     );
   });
 
-  it("requires confirming an asset delete with forced wording", async () => {
+  it("deletes assets from the System page, stating that asset IDs are global", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch((url, init) =>
       init?.method === "DELETE" && url.includes("/assets/asset-7")
         ? new Response(null, { status: 204 })
         : undefined,
     );
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+    renderWithQueryClient(<SystemPage />);
 
     await user.type(screen.getByLabelText("Asset ID to delete"), "asset-7");
     await user.click(screen.getByRole("checkbox", { name: "Force" }));
     await user.click(screen.getByRole("button", { name: /^Delete asset$/ }));
     const dialog = screen.getByRole("alertdialog");
     expect(dialog).toHaveTextContent(/force deletes even if referenced by takes\/shots/i);
-    expect(dialog).toHaveTextContent(/not scoped to the current project/i);
+    expect(dialog).toHaveTextContent(/whichever project owns it/i);
     expect(requestsTo(fetchMock, "/assets/asset-7", "DELETE")).toHaveLength(0);
 
     await user.click(within(dialog).getByRole("button", { name: "Force delete asset" }));
@@ -290,7 +311,7 @@ describe("SystemOpsPage", () => {
     stubFetch((url) =>
       url.includes("/metrics/summary") ? json({ detail: "boom" }, 500) : undefined,
     );
-    renderWithQueryClient(<SystemOpsPage projectId="proj-1" />);
+    renderWithQueryClient(<SystemPage />);
 
     expect(await screen.findByText(/Could not load metrics summary/)).toBeVisible();
   });

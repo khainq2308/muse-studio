@@ -17,17 +17,7 @@ import { useSessionStore } from "@/lib/stores/session-store";
 export const SHOT_PATCH_PATH = "/api/v1/projects/{project_id}/shots/{shot_id}";
 type ShotPatchResponse = ApiJsonResponse<typeof SHOT_PATCH_PATH, "patch">;
 
-export function useProjectShots(projectId: string) {
-  const sessionVersion = useSessionStore((state) => state.sessionVersion);
-  return useQuery({
-    queryKey: queryKeys.projectShots(sessionVersion, projectId),
-    queryFn: ({ signal }) =>
-      apiGet("/api/v1/projects/{project_id}/shots", {
-        signal,
-        pathParams: { project_id: projectId },
-      }),
-  });
-}
+export { useProjectShots } from "@/entities/shot/api";
 
 /** Project and admin session captured when a mutation starts, so settling refreshes them. */
 interface MutationScope {

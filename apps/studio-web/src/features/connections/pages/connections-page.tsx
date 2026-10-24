@@ -29,10 +29,6 @@ import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
 
-interface ConnectionsPageProps {
-  projectId: string;
-}
-
 /** Limits mirrored from the OpenAPI ConnectionCreateIn / AccountCreateIn schemas. */
 const MAX_CONCURRENCY_LIMITS = { min: 1, max: 20 } as const;
 const TIMEOUT_SECONDS_LIMITS = { min: 5, max: 120 } as const;
@@ -413,7 +409,8 @@ function AccountPoolPanel({ connection }: { connection: Connection }) {
   );
 }
 
-export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
+/** Workspace-level provider connections; every project generates through these. */
+export function ConnectionsPage() {
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const connectionsQuery = useConnections();
   const createConnection = useCreateConnection();
@@ -441,7 +438,7 @@ export function ConnectionsPage({ projectId }: ConnectionsPageProps) {
     connections.find((item) => item.id === selectedConnectionId) ?? connections[0] ?? null;
 
   return (
-    <div data-testid="connections-page" data-project-id={projectId} className="space-y-6">
+    <div data-testid="connections-page" className="space-y-6">
       <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">

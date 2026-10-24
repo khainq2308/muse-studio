@@ -15,7 +15,7 @@ const testProject = {
   style_preset: "default",
 };
 
-test("production build deep link renders the Queue Monitor and uses the same-origin queue API", async ({
+test("production build deep link renders the Generation Queue and uses the same-origin queue API", async ({
   page,
 }) => {
   const requestedFetchUrls: Array<{ origin: string; pathname: string }> = [];
@@ -62,7 +62,7 @@ test("production build deep link renders the Queue Monitor and uses the same-ori
   await expect(route).toHaveAttribute("data-project-id", "test-project");
   await expect(route).toHaveAttribute("data-module", "queue-monitor");
   await expect(page.getByRole("heading", { name: "MuseStudio" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Queue Monitor" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Generation Queue" })).toBeVisible();
   await expect(page.getByTestId("queue-monitor-page")).toBeVisible();
   await expect(page.getByText("No queue tasks yet", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toHaveCount(0);

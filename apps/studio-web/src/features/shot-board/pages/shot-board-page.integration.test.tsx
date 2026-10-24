@@ -158,7 +158,8 @@ describe("ShotBoardPage", () => {
     // No dead Storyboard/Shot Editor toggle, and no implied soundtrack.
     expect(screen.queryByRole("button", { name: "Storyboard" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Shot Editor" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Timeline" })).toBeInTheDocument();
+    // Module links live in the project navigation, not repeated inside the page.
+    expect(screen.queryByRole("navigation", { name: "Related modules" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Soundtrack/)).not.toBeInTheDocument();
   });
 

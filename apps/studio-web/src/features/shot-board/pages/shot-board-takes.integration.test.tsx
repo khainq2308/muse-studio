@@ -366,7 +366,7 @@ describe("Shot Board take review", () => {
     const result = await within(panel).findByTestId("take-flag-result");
     expect(result).toHaveTextContent("Continuity flag saved on Take 1.");
     expect(within(result).getByTestId("regenerated-task-id")).toHaveTextContent("task-regen-1");
-    expect(within(result).getByText("Follow regeneration in Queue Monitor")).toBeInTheDocument();
+    expect(within(result).getByText("Follow regeneration in Generation Queue")).toBeInTheDocument();
     expect(within(panel).queryByTestId("continuity-flag-form-take-1")).not.toBeInTheDocument();
 
     const flags = requests.filter((request) => request.pathname.endsWith("/flag-continuity"));
@@ -542,7 +542,7 @@ describe("Take review: uncertain outcomes, focus and sessions", () => {
       "The outcome is unknown: the continuity flag and a regeneration task may already exist.",
     );
     expect(alert).not.toHaveTextContent(/not saved|Try again/);
-    expect(within(alert).getByText("Check the Queue Monitor")).toBeInTheDocument();
+    expect(within(alert).getByText("Check the Generation Queue")).toBeInTheDocument();
 
     const takeLoads = () =>
       requests.filter((request) => request.pathname === "/api/v1/queue/shots/shot-1/takes").length;

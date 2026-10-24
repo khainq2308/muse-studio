@@ -128,6 +128,6 @@ describe("BatchLaunchPanel", () => {
     expect(result).toHaveTextContent(
       "Skipped (unchanged or an existing task already covers them): Shot 3 · Rooftop",
     );
-    expect(within(result).getByText("Follow progress in Queue Monitor")).toBeInTheDocument();
+    expect(within(result).getByText("Follow progress in Generation Queue")).toBeInTheDocument();
   });
 });

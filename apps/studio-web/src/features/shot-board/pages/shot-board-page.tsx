@@ -1,13 +1,4 @@
-import { Link } from "@tanstack/react-router";
-import {
-  BookOpenText,
-  ChevronDown,
-  Clapperboard,
-  FolderCog,
-  LayoutGrid,
-  RefreshCw,
-  Rocket,
-} from "lucide-react";
+import { ChevronDown, LayoutGrid, RefreshCw, Rocket } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
@@ -258,9 +249,6 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
               <h2 id="shot-board-heading" className="text-xl font-bold tracking-tight">
                 Shot Board
               </h2>
-              <span className="break-all rounded-full bg-secondary px-2.5 py-0.5 font-mono text-xs text-muted-foreground">
-                {projectId}
-              </span>
               {shotsQuery.data && (
                 <span className="font-mono text-xs text-muted-foreground">
                   {sceneIds.length} {sceneIds.length === 1 ? "scene" : "scenes"} · {shots.length}{" "}
@@ -268,35 +256,6 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
                 </span>
               )}
             </div>
-            <nav
-              aria-label="Related modules"
-              className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"
-            >
-              <Link
-                to="/projects/$projectId/$module"
-                params={{ projectId, module: "projects" }}
-                className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <FolderCog className="size-3.5 text-primary" aria-hidden="true" />
-                Project settings
-              </Link>
-              <Link
-                to="/projects/$projectId/$module"
-                params={{ projectId, module: "timeline-editor" }}
-                className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <Clapperboard className="size-3.5 text-primary" aria-hidden="true" />
-                Timeline
-              </Link>
-              <Link
-                to="/projects/$projectId/$module"
-                params={{ projectId, module: "script-studio" }}
-                className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <BookOpenText className="size-3.5 text-primary" aria-hidden="true" />
-                Characters &amp; Story Bible
-              </Link>
-            </nav>
           </div>
         </div>
 

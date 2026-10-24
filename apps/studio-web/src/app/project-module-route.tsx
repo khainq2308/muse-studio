@@ -1,18 +1,18 @@
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Film, LoaderCircle } from "lucide-react";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { ChevronRight, LoaderCircle } from "lucide-react";
 import { useCallback } from "react";
 import NotFoundPage from "@/app/not-found-page";
 import { ProjectModuleNav } from "@/app/project-module-nav";
+import { isProjectModule } from "@/app/project-modules";
 import { useProjects } from "@/entities/project/api";
-import ConnectionsPage from "@/features/connections";
-import ProjectsPage from "@/features/projects";
+import { ProjectSettingsPage } from "@/features/projects";
 import QueueMonitorPage from "@/features/queue-monitor";
 import ScriptStudioPage from "@/features/script-studio";
 import ShotBoardPage, {
   type ShotBoardNavigateOptions,
   type ShotBoardSearch,
 } from "@/features/shot-board";
-import SystemOpsPage from "@/features/system-ops";
+import { ProjectDataPage } from "@/features/system-ops";
 import TimelineEditorPage from "@/features/timeline-editor";
 import WorkflowCanvasPage from "@/features/workflow-canvas";
 
@@ -21,9 +21,6 @@ export default function ProjectModuleRoute() {
   // The API has no GET /api/v1/projects/{project_id}; the unpaginated project list is the
   // contract for checking that a deep-linked project exists.
   const projectsQuery = useProjects();
-  const moduleTitle = module.split("-").filter(Boolean).join(" ");
-  const heading = moduleTitle.charAt(0).toUpperCase() + moduleTitle.slice(1);
-
   if (projectsQuery.isPending) {
     return (
       <p role="status" className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
@@ -53,6 +50,9 @@ export default function ProjectModuleRoute() {
     );
   }
 
+  // The router rejects unknown modules before rendering; this narrows the type.
+  if (!isProjectModule(module)) return <NotFoundPage headingLevel={2} />;
+
   // Remount per project so no local UI state (filters, open editors) leaks across projects.
   const content =
     module === "script-studio" ? (
@@ -65,46 +65,54 @@ export default function ProjectModuleRoute() {
       <WorkflowCanvasPage key={projectId} projectId={projectId} />
     ) : module === "timeline-editor" ? (
       <TimelineEditorPage key={projectId} projectId={projectId} />
-    ) : module === "connections" ? (
-      <ConnectionsPage key={projectId} projectId={projectId} />
-    ) : module === "projects" ? (
-      <ProjectsPage key={projectId} projectId={projectId} />
-    ) : module === "system-ops" ? (
-      <SystemOpsPage key={projectId} projectId={projectId} />
     ) : (
-      <div data-testid="project-module-placeholder" className="space-y-2">
-        <h2 className="text-xl font-semibold">{heading}</h2>
-        <p className="text-sm text-muted-foreground">This module is a placeholder in Phase 0a.</p>
-        <p className="text-xs text-muted-foreground">Project: {projectId}</p>
+      <div key={projectId} className="space-y-8">
+        <ProjectSettingsPage projectId={projectId} />
+        <div className="border-t border-border pt-6">
+          <ProjectDataPage projectId={projectId} />
+        </div>
       </div>
     );
 
   return (
     <>
-      {activeProject && activeProject.name && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-secondary/45 px-4 py-2.5 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <Film className="size-3.5 text-primary" aria-hidden="true" />
-            <span className="font-semibold text-foreground">{activeProject.name}</span>
-            <span className="font-mono text-muted-foreground">({activeProject.id})</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-            {activeProject.aspect_ratio && (
-              <span className="rounded bg-card px-2 py-0.5 font-mono">
-                {activeProject.aspect_ratio} · {activeProject.fps} fps
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <nav aria-label="Breadcrumb" className="min-w-0">
+          <ol className="flex min-w-0 items-center gap-1.5 text-sm">
+            <li>
+              <Link
+                to="/projects"
+                activeOptions={{ exact: true }}
+                className="text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Projects
+              </Link>
+            </li>
+            <li className="flex min-w-0 items-center gap-1.5">
+              <ChevronRight
+                className="size-3.5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <span
+                aria-current="page"
+                className="block truncate text-base font-semibold text-foreground"
+              >
+                {activeProject?.name || projectId}
               </span>
-            )}
-            {activeProject.style_preset && (
-              <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-primary">
-                {activeProject.style_preset}
-              </span>
-            )}
-            {typeof activeProject.current_revision_num === "number" && (
-              <span className="font-mono">r{activeProject.current_revision_num}</span>
-            )}
-          </div>
-        </div>
-      )}
+            </li>
+          </ol>
+        </nav>
+        {activeProject && (
+          <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="rounded bg-secondary px-2 py-0.5 font-mono">
+              {activeProject.aspect_ratio} · {activeProject.fps} fps
+            </span>
+            <span className="rounded bg-secondary px-2 py-0.5 font-mono">
+              {activeProject.style_preset}
+            </span>
+          </p>
+        )}
+      </div>
       <ProjectModuleNav projectId={projectId} activeModule={module} />
       <section
         data-testid="project-module-route"

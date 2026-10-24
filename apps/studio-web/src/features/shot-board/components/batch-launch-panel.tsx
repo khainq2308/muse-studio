@@ -111,7 +111,7 @@ export function BatchLaunchPanel({
             selected take are skipped unless you choose to run all.
           </p>
         </div>
-        <QueueMonitorLink projectId={projectId} label="Track progress in Queue Monitor" />
+        <QueueMonitorLink projectId={projectId} label="Track progress in Generation Queue" />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -353,7 +353,7 @@ export function BatchLaunchResultView({ result, shots, projectId }: BatchLaunchR
         </p>
       )}
 
-      <QueueMonitorLink projectId={projectId} label="Follow progress in Queue Monitor" />
+      <QueueMonitorLink projectId={projectId} label="Follow progress in Generation Queue" />
     </section>
   );
 }

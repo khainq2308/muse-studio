@@ -319,7 +319,7 @@ test("selects a take from the A/B compare and reports re-pointed downstream shot
   for (const request of requests) expect(request.pathname.startsWith("/api/")).toBe(true);
 });
 
-test("flags continuity with regenerate after confirmation and links to the Queue Monitor", async ({
+test("flags continuity with regenerate after confirmation and links to the Generation Queue", async ({
   page,
 }) => {
   const requests = await mockApi(page);
@@ -363,7 +363,7 @@ test("flags continuity with regenerate after confirmation and links to the Queue
 
   await page.screenshot({ path: "test-results/shot-board-flag-continuity.png", fullPage: true });
 
-  await result.getByRole("link", { name: "Follow regeneration in Queue Monitor" }).click();
+  await result.getByRole("link", { name: "Follow regeneration in Generation Queue" }).click();
   await expect(page).toHaveURL(/\/projects\/test-project\/queue-monitor$/);
-  await expect(page.getByRole("heading", { name: "Queue Monitor" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Generation Queue" })).toBeVisible();
 });
