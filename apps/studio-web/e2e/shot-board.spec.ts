@@ -278,16 +278,18 @@ test("launches a batch after confirmation and lists frame-chain warnings and blo
   await page.goto("/projects/test-project/shot-board");
   await expect(page.getByTestId("shot-card-shot-1")).toBeVisible();
 
-  // Batch launch lives behind a toolbar toggle next to Generation settings.
+  // The only enabled connection is chosen and summarized in one line, cost included.
+  await expect(page.getByTestId("generation-setup-summary")).toContainText(
+    "Generating with Live gateway (live, may use quota) · muse-video-v1 · Video",
+  );
+
+  // Batch launch lives behind a toolbar toggle.
   const batchToggle = page.getByRole("button", { name: "Batch launch", exact: true });
   await expect(batchToggle).toHaveAttribute("aria-expanded", "false");
   await batchToggle.click();
   await expect(batchToggle).toHaveAttribute("aria-expanded", "true");
 
   const launch = page.getByRole("button", { name: "Launch batch" });
-  await expect(launch).toBeDisabled();
-  await page.getByLabel("Connection").selectOption("conn-live");
-  await expect(page.getByLabel("Model")).toHaveValue("muse-video-v1");
   await launch.click();
 
   const dialog = page.getByRole("alertdialog");

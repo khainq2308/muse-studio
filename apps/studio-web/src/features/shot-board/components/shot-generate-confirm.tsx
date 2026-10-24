@@ -16,6 +16,8 @@ interface ShotGenerateConfirmProps {
   modelId: string;
   taskType: GenerationTaskType;
   isSubmitting: boolean;
+  /** A new task after an ended one: sends `force_retry`, so it is never deduplicated. */
+  forceRetry?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -27,6 +29,7 @@ export function ShotGenerateConfirm({
   modelId,
   taskType,
   isSubmitting,
+  forceRetry = false,
   onConfirm,
   onCancel,
 }: ShotGenerateConfirmProps) {
@@ -47,7 +50,9 @@ export function ShotGenerateConfirm({
       className="mt-4 space-y-3 rounded-lg border border-warning/40 bg-warning/5 p-4"
     >
       <p id={`${idPrefix}-title`} className="font-semibold">
-        Queue {taskType} generation for {shotLabel(shot)}?
+        {forceRetry
+          ? `Start a new ${taskType} generation task for ${shotLabel(shot)}?`
+          : `Queue ${taskType} generation for ${shotLabel(shot)}?`}
       </p>
       <div id={`${idPrefix}-body`} className="space-y-1 text-sm">
         <p>
@@ -59,14 +64,21 @@ export function ShotGenerateConfirm({
         <p>
           Model: <span className="break-all font-medium">{modelId.trim()}</span> · 1 shot
         </p>
-        <p className="text-xs text-muted-foreground">
-          If an identical request already exists, the server returns that task instead of starting a
-          new generation.
-        </p>
+        {forceRetry ? (
+          <p className="text-xs font-medium text-warning">
+            This always creates a new task, even if an identical request already ran, and may
+            consume provider quota again.
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            If an identical request already exists, the server returns that task instead of starting
+            a new generation.
+          </p>
+        )}
       </div>
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" onClick={onConfirm} disabled={isSubmitting}>
-          Confirm and queue
+          {forceRetry ? "Confirm new task" : "Confirm and queue"}
         </Button>
         <Button type="button" size="sm" variant="outline" ref={keepButton} onClick={onCancel}>
           Cancel
@@ -80,10 +92,15 @@ interface ShotEnqueueResultProps {
   projectId: string;
   task: EnqueuedTask;
   onDismiss: () => void;
+  /** Offered when the request matched a task that already ended. */
+  onRetry?: () => void;
 }
 
 /** Result of `POST /api/v1/queue/tasks`, reporting deduplicated requests honestly. */
-export function ShotEnqueueResult({ projectId, task, onDismiss }: ShotEnqueueResultProps) {
+export function ShotEnqueueResult({ projectId, task, onDismiss, onRetry }: ShotEnqueueResultProps) {
+  const matchedEndedTask =
+    !task.created_new &&
+    (task.state === "failed" || task.state === "poll_timeout" || task.state === "canceled");
   return (
     <div
       role="status"
@@ -103,6 +120,11 @@ export function ShotEnqueueResult({ projectId, task, onDismiss }: ShotEnqueueRes
         </p>
       )}
       <div className="flex flex-wrap items-center gap-3">
+        {matchedEndedTask && onRetry && (
+          <Button type="button" size="sm" variant="outline" onClick={onRetry}>
+            Start a new task
+          </Button>
+        )}
         <QueueMonitorLink projectId={projectId} />
         <Button type="button" size="sm" variant="ghost" onClick={onDismiss}>
           Dismiss

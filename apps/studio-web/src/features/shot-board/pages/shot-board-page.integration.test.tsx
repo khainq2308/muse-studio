@@ -14,7 +14,11 @@ import {
   makeReview,
   makeShot,
   makeTake,
+  makeTaskPage,
+  makeQueueTask,
 } from "@/features/shot-board/test-fixtures";
+import { useGenerationSettingsStore } from "@/features/shot-board/generation-settings-store";
+import { chooseConnection } from "@/features/shot-board/test-actions";
 import { ShotBoardHarness } from "@/features/shot-board/test-harness";
 import { useSessionStore } from "@/lib/stores/session-store";
 
@@ -47,7 +51,15 @@ function stubApi(handler: Handler) {
         body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
       };
       requests.push(request);
-      const response = handler(request);
+      const handled = handler(request);
+      // The board polls the project's recent tasks; default to an empty page (the real shape)
+      // unless the test answers that request itself.
+      const response =
+        request.method === "GET" &&
+        request.pathname === "/api/v1/queue/tasks" &&
+        (!handled || (!(handled instanceof Response) && Array.isArray(handled.body)))
+          ? { status: 200, body: makeTaskPage() }
+          : handled;
       if (!response) return json(404, { detail: "Not mocked", category: "not_found" });
       return json(response.status, response.body);
     }),
@@ -99,6 +111,7 @@ function boardHandler(takes: Record<string, unknown[]> = {}): Handler {
 }
 
 beforeEach(() => {
+  useGenerationSettingsStore.setState({ byProject: {} });
   useSessionStore.getState().setAdminToken("test-token");
 });
 
@@ -246,13 +259,23 @@ describe("ShotBoardPage", () => {
           body: makeEnqueuedTask({ id: "task-old", state: "failed", created_new: false }),
         };
       }
+      // Two connections, so nothing is chosen until the user picks one.
+      if (request.pathname === "/api/v1/connections") {
+        return {
+          status: 200,
+          body: [
+            makeConnection(),
+            makeConnection({ id: "conn-live", name: "Live gateway", provider_type: "muse2api" }),
+          ],
+        };
+      }
       return base(request);
     });
     mount();
 
     const generate = await screen.findByRole("button", { name: "Generate Shot 1 · Hero enters" });
     expect(generate).toBeDisabled();
-    await user.selectOptions(await screen.findByLabelText("Connection"), "conn-mock");
+    await chooseConnection(user, "conn-mock");
     expect(screen.getByLabelText("Model")).toHaveValue("muse-video-mock-v1");
     expect(screen.getByTestId("connection-cost-label")).toHaveTextContent(
       "Mock provider: no provider cost.",
@@ -424,7 +447,18 @@ describe("ShotBoardPage workspace navigation", () => {
 
   it("keeps batch launch behind a toggle in the toolbar", async () => {
     const user = userEvent.setup();
-    stubApi(boardHandler());
+    const base = boardHandler();
+    stubApi((request) =>
+      request.pathname === "/api/v1/connections"
+        ? {
+            status: 200,
+            body: [
+              makeConnection(),
+              makeConnection({ id: "conn-live", name: "Live gateway", provider_type: "muse2api" }),
+            ],
+          }
+        : base(request),
+    );
     mount();
 
     const toggle = await screen.findByRole("button", { name: "Batch launch" });
@@ -465,5 +499,251 @@ describe("ShotBoardPage workspace navigation", () => {
     );
     expect(within(review).getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(takeLoads()).toBe(2);
+  });
+});
+
+describe("ShotBoardPage generation setup and queue status", () => {
+  it("uses the only enabled connection, summarized in one line, and keeps it across remounts", async () => {
+    stubApi(boardHandler());
+    mount();
+
+    const summary = await screen.findByTestId("generation-setup-summary");
+    await waitFor(() => expect(summary).toHaveTextContent("Generating with Mock studio"));
+    expect(summary).toHaveTextContent("mock, no provider cost");
+    expect(summary).toHaveTextContent("muse-video-mock-v1");
+    expect(screen.queryByLabelText("Connection")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Generate Shot 1 · Hero enters" }),
+    ).toBeEnabled();
+
+    // A choice made by the user survives leaving and re-entering the module.
+    const user = userEvent.setup();
+    await user.click(
+      within(screen.getByTestId("generation-setup")).getByRole("button", { name: "Change" }),
+    );
+    await user.selectOptions(screen.getByLabelText("Single-shot output"), "image");
+    cleanup();
+    stubApi(boardHandler());
+    mount();
+    const remounted = await screen.findByTestId("generation-setup-summary");
+    await waitFor(() => expect(remounted).toHaveTextContent("Image"));
+  });
+
+  it("shows live generation activity with a link to the queue", async () => {
+    const base = boardHandler();
+    stubApi((request) =>
+      request.method === "GET" && request.pathname === "/api/v1/queue/tasks"
+        ? {
+            status: 200,
+            body: makeTaskPage(
+              [
+                makeQueueTask({ id: "t-run", shot_id: "shot-1", state: "running" }),
+                makeQueueTask({ id: "t-ask", shot_id: "shot-2", state: "awaiting_input" }),
+                makeQueueTask({ id: "t-bad", shot_id: "shot-3", state: "failed" }),
+              ],
+              // All-time failures are not what the bar reports.
+              { failed_tasks: 9 },
+            ),
+          }
+        : base(request),
+    );
+    mount();
+
+    const bar = await screen.findByTestId("generation-activity");
+    expect(bar).toHaveTextContent("1 task queued or running");
+    expect(bar).toHaveTextContent("1 task waiting for your answer");
+    expect(bar).toHaveTextContent("1 shot's latest generation failed");
+    // The router Link is mocked in this file; the real href is covered by the route tests.
+    expect(within(bar).getByRole("link", { name: /Open Generation Queue/ })).toBeInTheDocument();
+  });
+
+  it("explains the selected shot's failed task and starts a new task only after confirmation", async () => {
+    const user = userEvent.setup();
+    const base = boardHandler();
+    const requests = stubApi((request) => {
+      if (request.method === "GET" && request.pathname === "/api/v1/queue/tasks") {
+        return {
+          status: 200,
+          body: makeTaskPage([
+            makeQueueTask({
+              id: "t-bad",
+              shot_id: "shot-1",
+              state: "failed",
+              error_message_redacted: "Provider rejected the prompt.",
+              error_category: "provider_rejected",
+              retryable: false,
+              attempt_count: 3,
+            }),
+          ]),
+        };
+      }
+      if (request.method === "POST" && request.pathname === "/api/v1/queue/tasks") {
+        return { status: 201, body: makeEnqueuedTask({ id: "t-new", created_new: true }) };
+      }
+      return base(request);
+    });
+    mount();
+
+    const latest = await screen.findByTestId("shot-latest-task");
+    expect(latest).toHaveTextContent("Failed");
+    expect(latest).toHaveTextContent("automatic tries 3 of 3");
+    expect(within(latest).getByTestId("shot-latest-task-error")).toHaveTextContent(
+      "Provider rejected the prompt. (provider_rejected)",
+    );
+    expect(latest).toHaveTextContent(/marked this error as permanent/);
+
+    await user.click(within(latest).getByRole("button", { name: "Start a new task" }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm).toHaveTextContent("Start a new video generation task for Shot 1");
+    expect(confirm).toHaveTextContent(/always creates a new task/);
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
+
+    await user.click(within(confirm).getByRole("button", { name: "Confirm new task" }));
+    await waitFor(() =>
+      expect(requests.filter((r) => r.method === "POST").map((r) => r.body)).toEqual([
+        expect.objectContaining({ shot_id: "shot-1", force_retry: true }),
+      ]),
+    );
+  });
+
+  it("offers a new task when Generate matched a task that already failed", async () => {
+    const user = userEvent.setup();
+    const base = boardHandler();
+    const requests = stubApi((request) =>
+      request.method === "POST" && request.pathname === "/api/v1/queue/tasks"
+        ? {
+            status: 201,
+            body: makeEnqueuedTask({
+              id: "task-old",
+              state: "failed",
+              created_new: (request.body as { force_retry: boolean }).force_retry,
+            }),
+          }
+        : base(request),
+    );
+    mount();
+
+    await user.click(await screen.findByRole("button", { name: "Generate Shot 1 · Hero enters" }));
+    await user.click(screen.getByRole("button", { name: "Confirm and queue" }));
+    const result = await screen.findByTestId("shot-enqueue-result");
+    expect(result).toHaveTextContent("No new generation was started.");
+
+    await user.click(within(result).getByRole("button", { name: "Start a new task" }));
+    await user.click(screen.getByRole("button", { name: "Confirm new task" }));
+    await waitFor(() =>
+      expect(
+        requests
+          .filter((r) => r.method === "POST")
+          .map((r) => (r.body as { force_retry: boolean }).force_retry),
+      ).toEqual([false, true]),
+    );
+  });
+
+  it("reloads shots as soon as a running task finishes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const base = boardHandler();
+      let taskPolls = 0;
+      const requests = stubApi((request) => {
+        if (request.method === "GET" && request.pathname === "/api/v1/queue/tasks") {
+          taskPolls += 1;
+          const state = taskPolls === 1 ? "running" : "succeeded";
+          return {
+            status: 200,
+            body: makeTaskPage([makeQueueTask({ id: "t-1", shot_id: "shot-1", state })]),
+          };
+        }
+        return base(request);
+      });
+      mount();
+
+      const shotLoads = () =>
+        requests.filter((r) => r.pathname === "/api/v1/projects/project-1/shots").length;
+      expect(await screen.findByTestId("generation-activity")).toHaveTextContent(
+        "1 task queued or running",
+      );
+      expect(shotLoads()).toBe(1);
+      // The task poll (2 s while active) sees it finish; shots reload before their own 5 s poll.
+      await vi.advanceTimersByTimeAsync(2_500);
+      await waitFor(() => expect(shotLoads()).toBe(2));
+      await waitFor(() => expect(screen.queryByTestId("generation-activity")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling shots with the task query's 30-minute window and says so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const base = boardHandler();
+      const requests = stubApi((request) =>
+        request.method === "GET" && request.pathname === "/api/v1/queue/tasks"
+          ? {
+              status: 200,
+              // Waiting on an operator answer for hours keeps the task active.
+              body: makeTaskPage([
+                makeQueueTask({ id: "t-1", shot_id: "shot-1", state: "awaiting_input" }),
+              ]),
+            }
+          : base(request),
+      );
+      mount();
+      await screen.findByTestId("generation-activity");
+
+      const loads = (path: string) => requests.filter((r) => r.pathname === path).length;
+      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      const shotsAtExpiry = loads("/api/v1/projects/project-1/shots");
+      const tasksAtExpiry = loads("/api/v1/queue/tasks");
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(loads("/api/v1/projects/project-1/shots")).toBe(shotsAtExpiry);
+      expect(loads("/api/v1/queue/tasks")).toBe(tasksAtExpiry);
+      expect(screen.getByTestId("auto-refresh-stopped")).toHaveTextContent("Auto-refresh stopped");
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 30_000); // Simulates ~40 minutes of polling.
+
+  it("does not poll shots on a failed status query and reports the failure", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const base = boardHandler();
+      const requests = stubApi((request) =>
+        request.method === "GET" && request.pathname === "/api/v1/queue/tasks"
+          ? { status: 403, body: { detail: "Forbidden", category: "auth", retryable: false } }
+          : base(request),
+      );
+      mount();
+
+      const bar = await screen.findByTestId("generation-activity");
+      expect(bar).toHaveTextContent("Could not load generation status.");
+      expect(within(bar).getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+      const shotLoads = () =>
+        requests.filter((r) => r.pathname === "/api/v1/projects/project-1/shots").length;
+      const before = shotLoads();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(shotLoads()).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("moves focus to the generation setup from the shortcut next to Generate", async () => {
+    const user = userEvent.setup();
+    const base = boardHandler();
+    stubApi((request) =>
+      request.pathname === "/api/v1/connections"
+        ? {
+            status: 200,
+            body: [makeConnection(), makeConnection({ id: "conn-live", name: "Live gateway" })],
+          }
+        : base(request),
+    );
+    mount();
+
+    await screen.findByText("Choose a provider connection to generate.");
+    const shortcuts = screen.getAllByRole("button", { name: "Set up generation" });
+    // The last one sits next to the disabled Generate button.
+    await user.click(shortcuts[shortcuts.length - 1]!);
+    await waitFor(() => expect(screen.getByLabelText("Connection")).toHaveFocus());
   });
 });

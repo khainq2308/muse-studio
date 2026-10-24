@@ -6,13 +6,10 @@ import {
   type Connection,
   type GenerationTaskType,
 } from "@/features/shot-board/state";
+import type { GenerationSettingsValue } from "@/features/shot-board/generation-settings-store";
 import { cn } from "@/lib/utils";
 
-export interface GenerationSettingsValue {
-  connectionId: string;
-  modelId: string;
-  taskType: GenerationTaskType;
-}
+export type { GenerationSettingsValue };
 
 interface GenerationSettingsProps {
   connections: readonly Connection[];

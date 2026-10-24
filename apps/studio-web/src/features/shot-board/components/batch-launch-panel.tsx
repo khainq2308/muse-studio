@@ -62,11 +62,11 @@ export function BatchLaunchPanel({
   const targetCount = batchTargetShots(shots, scope).length;
   const trimmedModel = modelId.trim();
   const blockedReason = !connection
-    ? "Select a connection in Generation settings to launch a batch."
+    ? "Choose a provider connection in the generation setup to launch a batch."
     : taskType !== "video"
       ? "Batch launch renders video. Switch the output to Video and choose a video model."
       : !trimmedModel
-        ? "Enter a model ID in Generation settings."
+        ? "Enter a model ID in the generation setup."
         : targetCount === 0
           ? "There are no shots in this scope."
           : null;

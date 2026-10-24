@@ -21,7 +21,14 @@ export function projectShotsQueryOptions(sessionVersion: number, projectId: stri
   });
 }
 
-export function useProjectShots(projectId: string) {
+export function useProjectShots(
+  projectId: string,
+  options: { refetchInterval?: number | false } = {},
+) {
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
-  return useQuery(projectShotsQueryOptions(sessionVersion, projectId));
+  return useQuery({
+    ...projectShotsQueryOptions(sessionVersion, projectId),
+    refetchInterval: options.refetchInterval ?? false,
+    refetchIntervalInBackground: false,
+  });
 }

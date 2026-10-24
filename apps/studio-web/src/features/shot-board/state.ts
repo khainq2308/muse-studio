@@ -353,7 +353,8 @@ export function isMockConnection(connection: Pick<Connection, "provider_type">):
 /**
  * Backend defaults for `EnqueueTaskIn` (generated types mark defaulted fields required).
  * `idempotency_key` is deliberately omitted so the backend deduplicates by content, and
- * `force_retry` stays false: a forced new take needs its own confirmation flow.
+ * `force_retry` defaults to false: only the "Start a new task" confirmation sets it
+ * (`buildEnqueueRequest({ forceRetry: true })`).
  */
 export const ENQUEUE_DEFAULTS = { priority: 10, max_polls: 60, force_retry: false } as const;
 
@@ -362,6 +363,8 @@ export function buildEnqueueRequest(input: {
   connectionId: string;
   modelId: string;
   taskType: GenerationTaskType;
+  /** Start a new task even when an identical request already ran; needs explicit consent. */
+  forceRetry?: boolean;
 }): EnqueueTaskRequest {
   return {
     shot_id: input.shotId,
@@ -369,6 +372,7 @@ export function buildEnqueueRequest(input: {
     model_id: input.modelId.trim(),
     task_type: input.taskType,
     ...ENQUEUE_DEFAULTS,
+    force_retry: input.forceRetry ?? false,
   };
 }
 

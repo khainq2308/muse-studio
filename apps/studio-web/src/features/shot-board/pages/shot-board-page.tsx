@@ -1,8 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, LayoutGrid, RefreshCw, Rocket } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import { useConnections } from "@/entities/connection/api";
+import { useRecentProjectTasks } from "@/entities/task/api";
+import { isQueueTaskActive } from "@/entities/task/state";
 import {
   useEnqueueShotTask,
   useLaunchBatch,
@@ -11,10 +14,16 @@ import {
   useUpdateShot,
 } from "@/features/shot-board/api";
 import { BatchLaunchPanel } from "@/features/shot-board/components/batch-launch-panel";
+import { GenerationActivityBar } from "@/features/shot-board/components/generation-activity";
+import type { GenerationSettingsValue } from "@/features/shot-board/components/generation-settings";
+import { GenerationSetup } from "@/features/shot-board/components/generation-setup";
+import { ShotLatestTask } from "@/features/shot-board/components/shot-latest-task";
 import {
-  GenerationSettings,
-  type GenerationSettingsValue,
-} from "@/features/shot-board/components/generation-settings";
+  EMPTY_GENERATION_SETTINGS,
+  useGenerationSettingsStore,
+  withDefaultConnection,
+} from "@/features/shot-board/generation-settings-store";
+import { latestTaskByShot, summarizeGenerationActivity } from "@/features/shot-board/queue-status";
 import { QueueMonitorLink } from "@/features/shot-board/components/queue-monitor-link";
 import { ShotEditPanel } from "@/features/shot-board/components/shot-edit-panel";
 import {
@@ -45,6 +54,7 @@ import {
   type ShotFilter,
 } from "@/features/shot-board/workspace";
 import { authErrorMessage } from "@/lib/api/errors";
+import { queryKeys } from "@/lib/api/queryKeys";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
 
@@ -63,23 +73,49 @@ interface ShotBoardPageProps {
 
 const NO_FIELD_ERRORS: Partial<Record<ShotEditField, string>> = {};
 
+/** Shot list refresh while tasks run; task progress itself polls with the queue's backoff. */
+const ACTIVE_SHOTS_POLL_MS = 5_000;
+
 export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPageProps) {
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
-  const shotsQuery = useProjectShots(projectId);
+  const queryClient = useQueryClient();
+  const tasksQuery = useRecentProjectTasks(projectId);
+  const latestTasks = useMemo(
+    () => latestTaskByShot(tasksQuery.data?.items ?? []),
+    [tasksQuery.data],
+  );
+  const activity = tasksQuery.data
+    ? summarizeGenerationActivity(tasksQuery.data, latestTasks)
+    : null;
+  // Shot states (queued → running → succeeded/failed) change while tasks are active. Shots only
+  // poll while the task query itself polls, so they stop with its bounded window or its errors.
+  const shotsQuery = useProjectShots(projectId, {
+    refetchInterval:
+      tasksQuery.isPolling && activity && activity.active > 0 ? ACTIVE_SHOTS_POLL_MS : false,
+  });
   const connectionsQuery = useConnections();
   const updateMutation = useUpdateShot(projectId);
   const enqueueMutation = useEnqueueShotTask(projectId);
   const batchMutation = useLaunchBatch(projectId);
   const batchPanelId = useId();
 
-  const [settings, setSettings] = useState<GenerationSettingsValue>({
-    connectionId: "",
-    modelId: "",
-    taskType: "video",
-  });
+  const storedSettings = useGenerationSettingsStore(
+    (state) => state.byProject[projectId] ?? EMPTY_GENERATION_SETTINGS,
+  );
+  const setStoredSettings = useGenerationSettingsStore((state) => state.setForProject);
+  const settings = withDefaultConnection(storedSettings, connectionsQuery.data);
+  const setSettings = (value: GenerationSettingsValue) => setStoredSettings(projectId, value);
+  const [setupOpen, setSetupOpen] = useState(false);
+  /** Bumped to move focus to the generation setup (from the shortcut next to Generate). */
+  const [setupFocusRequest, setSetupFocusRequest] = useState(0);
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
-  const [generateShotId, setGenerateShotId] = useState<string | null>(null);
+  /** The shot whose generate confirmation is open; `forceRetry` for a new attempt. */
+  const [generateRequest, setGenerateRequest] = useState<{
+    shotId: string;
+    forceRetry: boolean;
+  } | null>(null);
+  const generateShotId = generateRequest?.shotId ?? null;
   const [filter, setFilter] = useState<ShotFilter>("all");
   const [batchOpen, setBatchOpen] = useState(false);
 
@@ -109,6 +145,36 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
     (item) => item.enabled && item.id === settings.connectionId,
   );
 
+  // When a task that was active is no longer active, it ended: refresh shots and takes once so
+  // new states and takes appear without waiting for the next poll. Compared by task ID, so a task
+  // finishing while another starts is still noticed; reset per project and session.
+  const activeTaskIds = useMemo(
+    () =>
+      tasksQuery.data
+        ? new Set(
+            tasksQuery.data.items
+              .filter((task) => isQueueTaskActive(task.state))
+              .map((task) => task.id),
+          )
+        : null,
+    [tasksQuery.data],
+  );
+  const previousActiveIds = useRef<{ scope: string; ids: Set<string> } | null>(null);
+  useEffect(() => {
+    const scope = `${sessionVersion}:${projectId}`;
+    const before = previousActiveIds.current;
+    if (!activeTaskIds) return;
+    previousActiveIds.current = { scope, ids: activeTaskIds };
+    if (!before || before.scope !== scope) return;
+    if (![...before.ids].some((id) => !activeTaskIds.has(id))) return;
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.projectShots(sessionVersion, projectId),
+    });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.shotTakesPrefix(sessionVersion, projectId),
+    });
+  }, [activeTaskIds, projectId, queryClient, sessionVersion]);
+
   const { reset: resetUpdate } = updateMutation;
   const { reset: resetEnqueue } = enqueueMutation;
   const { reset: resetBatch } = batchMutation;
@@ -120,13 +186,13 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
     resetUpdate();
     resetEnqueue();
     resetBatch();
-    setGenerateShotId(null);
+    setGenerateRequest(null);
   }, [resetBatch, resetEnqueue, resetUpdate, sessionVersion]);
 
   const generateDisabledReason = !connection
-    ? "Select a connection in Generation settings first."
+    ? "Choose a provider connection to generate."
     : !settings.modelId.trim()
-      ? "Enter a model ID in Generation settings first."
+      ? "Enter a model ID to generate."
       : null;
 
   const updateShotId = updateMutation.variables?.shotId ?? null;
@@ -136,7 +202,7 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
   );
 
   const selectShot = (shotId: string) => {
-    if (shotId !== selectedShot?.id) setGenerateShotId(null);
+    if (shotId !== selectedShot?.id) setGenerateRequest(null);
     // A new shot opens on its default tab.
     onSearchChange({ shot: shotId });
   };
@@ -147,7 +213,7 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
 
   const openEditor = (shotId: string) => {
     resetUpdate();
-    setGenerateShotId(null);
+    setGenerateRequest(null);
     setEditingShotId(shotId);
   };
   const closeEditor = () => {
@@ -158,31 +224,51 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
     updateMutation.mutate({ shotId, update });
   };
 
-  const openGenerate = (shotId: string) => {
+  const openGenerate = (shotId: string, forceRetry = false) => {
     resetEnqueue();
     setEditingShotId((current) => (current === shotId ? null : current));
-    setGenerateShotId(shotId);
+    setGenerateRequest({ shotId, forceRetry });
   };
-  const confirmGenerate = (shot: ProjectShot) => {
-    if (!connection || generateDisabledReason) return;
-    enqueueMutation.mutate(
-      buildEnqueueRequest({
-        shotId: shot.id,
-        connectionId: connection.id,
-        modelId: settings.modelId,
-        taskType: settings.taskType,
-      }),
-    );
-    setGenerateShotId(null);
-  };
+  const { resetPollingWindow } = tasksQuery;
+  const confirmGenerate = useCallback(
+    (shot: ProjectShot, forceRetry: boolean) => {
+      if (!connection || generateDisabledReason) return;
+      // New work restarts the bounded polling window.
+      resetPollingWindow();
+      enqueueMutation.mutate(
+        buildEnqueueRequest({
+          shotId: shot.id,
+          connectionId: connection.id,
+          modelId: settings.modelId,
+          taskType: settings.taskType,
+          forceRetry,
+        }),
+      );
+      setGenerateRequest(null);
+    },
+    [connection, enqueueMutation, generateDisabledReason, resetPollingWindow, settings],
+  );
   const enqueueShotId = enqueueMutation.variables?.request.shot_id ?? null;
 
   const refresh = () => {
     void shotsQuery.refetch({ cancelRefetch: true });
+    void tasksQuery.refetch({ cancelRefetch: true });
+    resetPollingWindow();
   };
 
   const renderShotActions = (shot: ProjectShot) => (
     <>
+      {latestTasks.get(shot.id) && (
+        <ShotLatestTask
+          projectId={projectId}
+          task={latestTasks.get(shot.id)!}
+          retryDisabledReason={
+            generateDisabledReason ??
+            (enqueueMutation.isPending ? "A request is in progress." : null)
+          }
+          onRetry={() => openGenerate(shot.id, true)}
+        />
+      )}
       {editingShotId === shot.id && (
         <ShotEditPanel
           key={shot.id}
@@ -205,8 +291,9 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
           modelId={settings.modelId}
           taskType={settings.taskType}
           isSubmitting={enqueueMutation.isPending}
-          onConfirm={() => confirmGenerate(shot)}
-          onCancel={() => setGenerateShotId(null)}
+          forceRetry={generateRequest?.forceRetry ?? false}
+          onConfirm={() => confirmGenerate(shot, generateRequest?.forceRetry ?? false)}
+          onCancel={() => setGenerateRequest(null)}
         />
       )}
       {enqueueShotId === shot.id && enqueueMutation.isPending && (
@@ -219,6 +306,7 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
           projectId={projectId}
           task={enqueueMutation.data}
           onDismiss={resetEnqueue}
+          onRetry={generateDisabledReason ? undefined : () => openGenerate(shot.id, true)}
         />
       )}
       {enqueueShotId === shot.id && enqueueMutation.error && (
@@ -292,7 +380,7 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
         </div>
       </header>
 
-      <GenerationSettings
+      <GenerationSetup
         connections={connectionsQuery.data ?? []}
         isLoading={connectionsQuery.isPending}
         isError={connectionsQuery.isError}
@@ -304,6 +392,22 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
         onRetry={() => void connectionsQuery.refetch()}
         value={settings}
         onChange={setSettings}
+        connection={connection}
+        open={setupOpen}
+        onOpenChange={setSetupOpen}
+        focusRequest={setupFocusRequest}
+      />
+
+      <GenerationActivityBar
+        projectId={projectId}
+        activity={activity}
+        autoRefreshStopped={Boolean(activity && activity.active > 0 && !tasksQuery.isPolling)}
+        loadError={
+          tasksQuery.isError
+            ? authErrorMessage(tasksQuery.error, activeAdminToken, "generation status")
+            : null
+        }
+        onRefresh={refresh}
       />
 
       {shots.length > 0 && batchOpen && (
@@ -320,7 +424,10 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
             errorMessage={
               batchMutation.error ? generationErrorMessage(batchMutation.error, "batch") : null
             }
-            onLaunch={(request) => batchMutation.mutate(request)}
+            onLaunch={(request) => {
+              resetPollingWindow();
+              batchMutation.mutate(request);
+            }}
           />
         </div>
       )}
@@ -371,6 +478,10 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
                   takesFailed={takesQuery.isError}
                   canGenerate={!generateDisabledReason && !enqueueMutation.isPending}
                   generateDisabledReason={generateDisabledReason}
+                  onSetUpGeneration={() => {
+                    setSetupOpen(true);
+                    setSetupFocusRequest((current) => current + 1);
+                  }}
                   onGenerate={() => openGenerate(selectedShot.id)}
                   isEditing={editingShotId === selectedShot.id}
                   onEdit={() => openEditor(selectedShot.id)}

@@ -60,6 +60,8 @@ interface ShotWorkspaceProps {
   takesFailed: boolean;
   canGenerate: boolean;
   generateDisabledReason: string | null;
+  /** Opens the generation setup; offered next to a setup-related disabled reason. */
+  onSetUpGeneration?: () => void;
   onGenerate: () => void;
   isEditing: boolean;
   onEdit: () => void;
@@ -82,6 +84,7 @@ export function ShotWorkspace({
   takesFailed,
   canGenerate,
   generateDisabledReason,
+  onSetUpGeneration,
   onGenerate,
   isEditing,
   onEdit,
@@ -250,7 +253,18 @@ export function ShotWorkspace({
           </div>
         </div>
         {generateDisabledReason && (
-          <p className="text-xs text-muted-foreground">{generateDisabledReason}</p>
+          <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+            {generateDisabledReason}
+            {onSetUpGeneration && (
+              <button
+                type="button"
+                onClick={onSetUpGeneration}
+                className="font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Set up generation
+              </button>
+            )}
+          </p>
         )}
 
         {isPredecessorOutOfOrder(shot, predecessor) && predecessor && (
