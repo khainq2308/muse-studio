@@ -301,7 +301,11 @@ class TimelineValidationService:
                 )
                 state["end"] = round(state["end"] + duration - dissolve, 3)
             else:
-                filters.append(f"[{state['acc']}][{label}]concat=n=2:v=1:a=0[{out}]")
+                # concat emits a 1/1000000 timebase; xfade needs both inputs on the same
+                # timebase, so pin it back to the output frame rate.
+                filters.append(
+                    f"[{state['acc']}][{label}]concat=n=2:v=1:a=0,settb=1/{safe_fps}[{out}]"
+                )
                 state["end"] = round(state["end"] + duration, 3)
             state["acc"], state["last"] = out, duration
 

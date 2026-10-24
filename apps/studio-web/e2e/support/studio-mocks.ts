@@ -257,6 +257,72 @@ export const timeline = {
   },
 };
 
+interface ClipEditRequest {
+  shot_id: string | null;
+  take_id: string | null;
+  asset_id: string | null;
+  order_index: number;
+  start_time_seconds: number | null;
+  source_duration_seconds: number;
+  trim_start_seconds: number;
+  trim_end_seconds: number;
+  transition_type: "hard_cut" | "cross_dissolve";
+  transition_duration_seconds: number;
+}
+
+/**
+ * TimelineAssembleOut for a `custom_clips` save, laid out like the backend: clips sorted by
+ * order_index, effective duration = source - trims, null start = right after the previous clip.
+ */
+export function assembledFromCustomClips(
+  sequenceId: string,
+  request: { name: string; custom_clips: ClipEditRequest[]; subtitle_content: string },
+) {
+  let total = 0;
+  const videoClips = [...request.custom_clips]
+    .sort((a, b) => a.order_index - b.order_index)
+    .map((item, index) => {
+      const effective = Math.max(
+        0.1,
+        Math.round(
+          (item.source_duration_seconds - item.trim_start_seconds - item.trim_end_seconds) * 1000,
+        ) / 1000,
+      );
+      const dissolve =
+        item.transition_type === "cross_dissolve" ? item.transition_duration_seconds : 0;
+      const start = item.start_time_seconds ?? (index === 0 ? 0 : Math.max(0, total - dissolve));
+      total = Math.max(total, start + effective);
+      return {
+        ...item,
+        start_time_seconds: start,
+        effective_duration_seconds: effective,
+        volume: 1,
+        fade_in_seconds: 0,
+        fade_out_seconds: 0,
+      };
+    });
+  const hasSubtitles = request.subtitle_content.trim().length > 0;
+  return {
+    sequence_id: sequenceId,
+    name: request.name,
+    aspect_ratio: timeline.aspect_ratio,
+    fps: timeline.fps,
+    resolution: timeline.resolution,
+    total_duration_seconds: total,
+    clip_count: videoClips.length,
+    audio_track_count: timeline.manifest.audio_tracks.length,
+    has_subtitles: hasSubtitles,
+    warnings: [],
+    manifest: {
+      ...timeline.manifest,
+      sequence_id: sequenceId,
+      total_duration_seconds: total,
+      has_subtitles: hasSubtitles,
+      video_clips: videoClips,
+    },
+  };
+}
+
 /** ExportLaunchOut for a given ExportLaunchIn. */
 export function exportLaunched(request: { resolution: string; aspect_ratio: string; fps: number }) {
   return {
