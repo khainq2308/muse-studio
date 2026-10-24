@@ -28,7 +28,7 @@ describe("QueryState", () => {
     render(<QueryState {...defaults} isError onRetry={onRetry} />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Could not load projects.");
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
@@ -51,9 +51,9 @@ describe("QueryState", () => {
 
     expect(screen.getByText("Project data")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Refresh failed; showing the last loaded results. Could not load projects.",
+      "Làm mới thất bại; đang hiển thị kết quả tải trước đó. Could not load projects.",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

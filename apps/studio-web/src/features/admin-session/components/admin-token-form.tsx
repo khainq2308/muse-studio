@@ -1,9 +1,11 @@
 import { KeyRound, ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useSessionStore } from "@/lib/stores/session-store";
 
 export function AdminTokenForm() {
+  const { t } = useTranslation("admin-session");
   const [draftAdminToken, setDraftAdminToken] = useState("");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const setAdminToken = useSessionStore((state) => state.setAdminToken);
@@ -34,10 +36,10 @@ export function AdminTokenForm() {
           />
         )}
         <input
-          aria-label="Studio admin token"
+          aria-label={t("ariaLabel")}
           type="password"
           autoComplete="off"
-          placeholder={activeAdminToken ? "Session active · update token" : "Studio admin token"}
+          placeholder={activeAdminToken ? t("placeholderActive") : t("placeholderEmpty")}
           value={draftAdminToken}
           onChange={(event) => setDraftAdminToken(event.target.value)}
           className="h-9 min-w-0 rounded-lg border border-input bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:w-52"
@@ -45,7 +47,7 @@ export function AdminTokenForm() {
       </div>
       <div className="flex items-center gap-1.5">
         <Button type="submit" size="sm" disabled={!canConnect}>
-          {activeAdminToken ? "Update token" : "Connect"}
+          {activeAdminToken ? t("updateToken") : t("connect")}
         </Button>
         {activeAdminToken && (
           <Button
@@ -57,7 +59,7 @@ export function AdminTokenForm() {
               clearAdminToken();
             }}
           >
-            Disconnect
+            {t("disconnect")}
           </Button>
         )}
       </div>

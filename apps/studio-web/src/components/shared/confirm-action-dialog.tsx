@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 
 interface ConfirmActionDialogProps {
@@ -22,6 +23,7 @@ export function ConfirmActionDialog({
   onConfirm,
   onCancel,
 }: ConfirmActionDialogProps) {
+  const { t } = useTranslation();
   const idPrefix = useId();
   const cancelButton = useRef<HTMLButtonElement | null>(null);
   useEffect(() => cancelButton.current?.focus(), []);
@@ -61,7 +63,7 @@ export function ConfirmActionDialog({
           {confirmLabel}
         </Button>
         <Button type="button" size="sm" variant="outline" ref={cancelButton} onClick={onCancel}>
-          Cancel
+          {t("actions.cancel")}
         </Button>
       </div>
     </div>

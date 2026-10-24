@@ -18,23 +18,21 @@ describe("shared API error classification", () => {
 
   it("asks for a token when a 401 occurs without an active token", () => {
     const error = new ApiError({ status: 401, detail: "Unauthorized" });
-    expect(authErrorMessage(error, "", "projects")).toBe("Admin token required to read projects.");
+    expect(authErrorMessage(error, "", "projects")).toBe("Cần có token quản trị để đọc projects.");
   });
 
   it("distinguishes a rejected token from resource-level permission denial", () => {
     const unauthorized = new ApiError({ status: 401, detail: "Unauthorized" });
     const forbidden = new ApiError({ status: 403, detail: "Forbidden" });
 
-    expect(authErrorMessage(unauthorized, "configured-token", "projects")).toContain("rejected");
-    expect(authErrorMessage(forbidden, "configured-token", "projects")).toContain(
-      "does not have permission",
-    );
-    expect(authErrorMessage(forbidden, "configured-token", "projects")).not.toContain("rejected");
+    expect(authErrorMessage(unauthorized, "configured-token", "projects")).toContain("bị từ chối");
+    expect(authErrorMessage(forbidden, "configured-token", "projects")).toContain("không có quyền");
+    expect(authErrorMessage(forbidden, "configured-token", "projects")).not.toContain("bị từ chối");
   });
 
   it("provides a generic retry message for non-auth errors", () => {
     expect(authErrorMessage(new Error("network"), "", "projects")).toBe(
-      "Could not load projects. Check the Orchestrator and retry.",
+      "Không thể tải projects. Kiểm tra Orchestrator và thử lại.",
     );
   });
 
@@ -101,11 +99,11 @@ describe("shared API error classification", () => {
     );
     const timeout = new ApiError({ status: 0, detail: "timed out", category: "timeout" });
     expect(actionErrorMessage(timeout, "token", "create backup")).toContain(
-      "Refresh before retrying",
+      "Hãy làm mới trước khi thử lại",
     );
     const unauthorized = new ApiError({ status: 401, detail: "Unauthorized" });
     expect(actionErrorMessage(unauthorized, "", "delete backup")).toBe(
-      "Admin token required to delete backup.",
+      "Cần có token quản trị để delete backup.",
     );
   });
 });
