@@ -5,15 +5,17 @@ import {
   Clock,
   Download,
   Film,
-  Info,
   LoaderCircle,
   Music,
   Play,
+  RotateCcw,
+  Save,
   SlidersHorizontal,
   Subtitles,
   Wand2,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
 import { Button } from "@/components/ui/button";
 import {
   useAssembleTimeline,
@@ -21,7 +23,26 @@ import {
   useLaunchTimelineExport,
   useProjectTimeline,
   useTimelineExportStatus,
+  type TimelineAssembleRequest,
+  type TimelineSequence,
 } from "@/features/timeline-editor/api";
+import {
+  carryOverAudioTracks,
+  clipErrorFromApi,
+  draftFromClips,
+  errorCount,
+  isDraftDirty,
+  layoutClips,
+  moveClip,
+  removeClip,
+  toCustomClips,
+  updateClip,
+  validateDraft,
+  type ClipPatch,
+  type DraftClip,
+} from "@/features/timeline-editor/clip-draft";
+import { ClipInspector } from "@/features/timeline-editor/components/clip-inspector";
+import { SortableVideoTrack } from "@/features/timeline-editor/components/sortable-video-track";
 import {
   EXPORT_ASPECT_RATIOS,
   RESOLUTIONS_BY_ASPECT,
@@ -54,9 +75,40 @@ function clampCrossDissolveDuration(value: number): number {
   );
 }
 
-function formatSeconds(value: number): string {
-  return `${Number(value.toFixed(2))}s`;
+/** TimelineAssembleIn.fps bounds. */
+function assembleFps(fps: number): number | null {
+  return Number.isInteger(fps) && fps >= 12 && fps <= 60 ? fps : null;
 }
+
+/**
+ * Request that re-saves the loaded sequence with the edited clips. `assemble` replaces the whole
+ * sequence, so everything GET /timeline returns is carried over (name, aspect ratio, fps, title
+ * card, audio track entries). Subtitle text is not returned by GET; the caller confirms its loss.
+ */
+function clipEditRequest(
+  timeline: TimelineSequence,
+  clips: readonly DraftClip[],
+  subtitleFormat: string,
+  subtitleContent: string,
+): TimelineAssembleRequest {
+  const hasSubtitleText = subtitleContent.trim().length > 0;
+  return {
+    name: timeline.name,
+    aspect_ratio: isExportAspectRatio(timeline.aspect_ratio) ? timeline.aspect_ratio : null,
+    fps: assembleFps(timeline.fps),
+    // Only used when building clips from shots; custom_clips define the sequence explicitly.
+    allow_missing_shots: true,
+    default_transition: "hard_cut",
+    transition_duration_seconds: 0,
+    title_card: timeline.manifest.title_card,
+    subtitle_format: hasSubtitleText ? subtitleFormat : timeline.manifest.subtitle_format,
+    subtitle_content: hasSubtitleText ? subtitleContent : "",
+    audio_tracks: carryOverAudioTracks(timeline.manifest.audio_tracks),
+    custom_clips: toCustomClips(clips),
+  };
+}
+
+const EMPTY_CLIPS: never[] = [];
 
 interface TimelineEditorPageProps {
   projectId: string;
@@ -66,6 +118,7 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const timelineQuery = useProjectTimeline(projectId);
   const assembleMutation = useAssembleTimeline(projectId);
+  const saveClipsMutation = useAssembleTimeline(projectId);
   const launchExportMutation = useLaunchTimelineExport(projectId);
   const downloadAssetMutation = useDownloadExportedAsset(projectId);
 
@@ -83,12 +136,17 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
   const [exportResolution, setExportResolution] = useState(defaultResolutionFor("16:9"));
   const [exportFps, setExportFps] = useState(24);
   const [activeExportId, setActiveExportId] = useState<string | null>(null);
-  // The selection is scoped to the sequence it was made in, so a re-assembled sequence with a
-  // new id starts again from its first clip instead of pointing at a stale index.
+  // Selection and draft are scoped to the sequence they were made in, so a re-assembled or saved
+  // sequence with a new id starts again from its own clips instead of a stale draft.
   const [clipSelection, setClipSelection] = useState<{
     sequenceId: string | null;
-    index: number;
-  }>({ sequenceId: null, index: 0 });
+    key: string | null;
+  }>({ sequenceId: null, key: null });
+  const [clipDraft, setClipDraft] = useState<{
+    sequenceId: string | null;
+    clips: DraftClip[] | null;
+  }>({ sequenceId: null, clips: null });
+  const [confirmingSubtitleLoss, setConfirmingSubtitleLoss] = useState(false);
 
   const exportStatusQuery = useTimelineExportStatus(projectId, activeExportId);
 
@@ -99,19 +157,88 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
     timelineQuery.error.status === 404;
 
   const sequenceId = timeline?.sequence_id ?? null;
-  const clips = timeline?.manifest.video_clips ?? [];
+  const clips = timeline?.manifest.video_clips ?? EMPTY_CLIPS;
   const audioTracks = timeline?.manifest.audio_tracks ?? [];
   const warnings = timeline?.warnings ?? [];
   const exportStatus = exportStatusQuery.data;
   const skippedFeatures = timeline ? skippedExportFeatures(timeline) : [];
-  const selectedClipIndex = clipSelection.sequenceId === sequenceId ? clipSelection.index : 0;
-  const activeClip = clips[selectedClipIndex] ?? clips[0] ?? null;
   const sequenceFormat = timeline ? `${timeline.resolution} · ${timeline.fps} fps` : "—";
 
-  const pixelsPerSecond = pixelsPerSecondFor(clips.map((clip) => clip.effective_duration_seconds));
+  const savedDraft = useMemo(() => draftFromClips(clips), [clips]);
+  const draftClips =
+    clipDraft.sequenceId === sequenceId && clipDraft.clips ? clipDraft.clips : savedDraft.clips;
+  const isDirty = isDraftDirty(savedDraft.clips, draftClips);
+  const { layouts, totalSeconds: draftTotalSeconds } = layoutClips(draftClips);
+  const clipErrors = validateDraft(draftClips);
+  const invalidClipCount = clipErrors.filter((errors) => errorCount(errors) > 0).length;
+  const serverClipError = clipErrorFromApi(saveClipsMutation.error);
+  const serverErrorClip = serverClipError ? (draftClips[serverClipError.index] ?? null) : null;
+  const invalidKeys = new Set(
+    draftClips.filter((_clip, index) => errorCount(clipErrors[index] ?? {}) > 0).map((c) => c.key),
+  );
+  if (serverErrorClip) invalidKeys.add(serverErrorClip.key);
+  const canSaveClips =
+    Boolean(timeline) &&
+    isDirty &&
+    draftClips.length > 0 &&
+    invalidClipCount === 0 &&
+    !saveClipsMutation.isPending;
+  const isBusy = assembleMutation.isPending || saveClipsMutation.isPending;
+
+  const selectedKey =
+    clipSelection.sequenceId === sequenceId &&
+    draftClips.some((clip) => clip.key === clipSelection.key)
+      ? clipSelection.key
+      : (draftClips[0]?.key ?? null);
+  const selectedIndex = draftClips.findIndex((clip) => clip.key === selectedKey);
+  const activeClip = selectedIndex >= 0 ? draftClips[selectedIndex]! : null;
+
+  const commitDraft = (next: DraftClip[]) => {
+    saveClipsMutation.reset();
+    setConfirmingSubtitleLoss(false);
+    setClipDraft({ sequenceId, clips: next });
+  };
+  const selectClip = (key: string | null) => setClipSelection({ sequenceId, key });
+  const patchClip = (key: string, patch: ClipPatch) =>
+    commitDraft(updateClip(draftClips, key, patch));
+  const moveDraftClip = (from: number, to: number) => {
+    const moved = draftClips[from];
+    commitDraft(moveClip(draftClips, from, to));
+    if (moved) selectClip(moved.key);
+  };
+  const removeDraftClip = (key: string) => {
+    const index = draftClips.findIndex((clip) => clip.key === key);
+    const next = removeClip(draftClips, key);
+    commitDraft(next);
+    selectClip(next[Math.min(Math.max(index, 0), next.length - 1)]?.key ?? null);
+  };
+  const discardDraft = () => {
+    saveClipsMutation.reset();
+    setConfirmingSubtitleLoss(false);
+    setClipDraft({ sequenceId: null, clips: null });
+  };
+  const submitClipEdits = () => {
+    if (!timeline) return;
+    setConfirmingSubtitleLoss(false);
+    saveClipsMutation.mutate(
+      clipEditRequest(timeline, draftClips, subtitleFormat, subtitleContent),
+      { onSuccess: () => setClipDraft({ sequenceId: null, clips: null }) },
+    );
+  };
+  const requestSaveClipEdits = () => {
+    if (!timeline || !canSaveClips) return;
+    if (timeline.manifest.has_subtitles && !subtitleContent.trim()) {
+      setConfirmingSubtitleLoss(true);
+      return;
+    }
+    submitClipEdits();
+  };
+
+  const pixelsPerSecond = pixelsPerSecondFor(layouts.map((layout) => layout.effectiveSeconds));
+  // The saved total also counts a title card; once the clips change, the draft defines the end.
   const sequenceEndSeconds = Math.max(
-    timeline?.total_duration_seconds ?? 0,
-    ...clips.map((clip) => clip.start_time_seconds + clip.effective_duration_seconds),
+    draftTotalSeconds,
+    isDirty ? 0 : (timeline?.total_duration_seconds ?? 0),
   );
   const ticks = rulerTicks(sequenceEndSeconds, pixelsPerSecond);
   const trackWidthPx = Math.ceil(sequenceEndSeconds * pixelsPerSecond) + TRACK_END_PADDING_PX;
@@ -128,8 +255,8 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
               Timeline Assembly &amp; Export
             </h2>
             <p className="text-[11px] text-muted-foreground">
-              Assemble selected shot takes into a sequence, choose transitions and launch
-              FFprobe-verified MP4 exports. Clip trim and reorder editing is not available yet.
+              Assemble selected shot takes into a sequence, then trim, reorder, remove clips and set
+              per-clip transitions before launching FFprobe-verified MP4 exports.
             </p>
           </div>
         </div>
@@ -141,7 +268,7 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
 
           <Button
             type="button"
-            disabled={assembleMutation.isPending}
+            disabled={isBusy || isDirty}
             onClick={() => {
               assembleMutation.mutate({
                 name: sequenceName.trim() || "Master Cut v1",
@@ -356,55 +483,30 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
           </div>
 
           {activeClip ? (
-            <dl className="space-y-1.5 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted-foreground">Clip</dt>
-                <dd className="font-mono font-semibold">
-                  #{activeClip.order_index + 1} of {clips.length}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted-foreground">Shot</dt>
-                <dd className="truncate font-mono">{activeClip.shot_id ?? "—"}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted-foreground">Take</dt>
-                <dd className="truncate font-mono">{activeClip.take_id ?? "unassigned"}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted-foreground">Starts at</dt>
-                <dd className="font-mono">
-                  {formatTimecode(activeClip.start_time_seconds, timeline?.fps)}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted-foreground">Duration</dt>
-                <dd className="font-mono">
-                  {formatSeconds(activeClip.effective_duration_seconds)}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted-foreground">Transition</dt>
-                <dd className="font-mono">
-                  {activeClip.transition_type}
-                  {activeClip.transition_type === "cross_dissolve"
-                    ? ` · ${formatSeconds(activeClip.transition_duration_seconds)}`
-                    : ""}
-                </dd>
-              </div>
-            </dl>
+            <ClipInspector
+              clip={activeClip}
+              index={selectedIndex}
+              count={draftClips.length}
+              layout={layouts[selectedIndex]}
+              errors={clipErrors[selectedIndex] ?? {}}
+              serverError={
+                serverErrorClip?.key === activeClip.key ? (serverClipError?.message ?? null) : null
+              }
+              fps={timeline?.fps}
+              disabled={saveClipsMutation.isPending}
+              onPatch={(patch) => patchClip(activeClip.key, patch)}
+              onMove={(to) => moveDraftClip(selectedIndex, to)}
+              onRemove={() => removeDraftClip(activeClip.key)}
+            />
           ) : (
             <p className="text-xs text-muted-foreground">
-              {timeline
-                ? "This sequence has no clips yet."
-                : "Assemble a timeline to inspect its clips."}
+              {!timeline
+                ? "Assemble a timeline to inspect its clips."
+                : clips.length === 0
+                  ? "This sequence has no clips yet."
+                  : "Every clip was removed from the draft. Discard changes to restore them."}
             </p>
           )}
-
-          <p className="flex items-start gap-1.5 border-t border-border pt-2.5 text-[11px] text-muted-foreground">
-            <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-            No in-browser preview. Export and download the verified MP4 to review the cut.
-          </p>
         </section>
 
         <div className="space-y-3.5 lg:col-span-2 xl:col-span-5">
@@ -506,6 +608,17 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
               </div>
             )}
 
+            {isDirty && (
+              <p
+                data-testid="export-unsaved-edits"
+                className="flex items-start gap-1.5 rounded-lg border border-warning/35 bg-warning/10 p-2.5 text-xs text-warning"
+              >
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                Export renders the saved sequence. Save or discard your clip edits before launching
+                an export.
+              </p>
+            )}
+
             {launchExportMutation.isError && (
               <p role="alert" className="text-xs text-destructive">
                 {actionErrorMessage(
@@ -519,7 +632,7 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
             <Button
               type="button"
               className="w-full"
-              disabled={!timeline || launchExportMutation.isPending}
+              disabled={!timeline || isDirty || launchExportMutation.isPending}
               onClick={() => {
                 launchExportMutation.mutate(
                   {
@@ -669,6 +782,124 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
         </div>
       </div>
 
+      {timeline && clips.length > 0 && (
+        <section
+          aria-label="Clip edits"
+          className="space-y-2.5 rounded-2xl border border-border bg-card p-4 shadow-2xs"
+        >
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-bold">Clip edits</h3>
+              <span
+                data-testid="clip-edit-status"
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                  isDirty
+                    ? "border-warning/35 bg-warning/10 text-warning"
+                    : "border-border bg-secondary text-muted-foreground",
+                )}
+              >
+                {isDirty ? "Unsaved changes" : "Matches saved sequence"}
+              </span>
+              {invalidClipCount > 0 && (
+                <span className="text-[11px] font-medium text-destructive">
+                  {invalidClipCount} {invalidClipCount === 1 ? "clip needs" : "clips need"} fixing
+                  before saving
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!isDirty || saveClipsMutation.isPending}
+                onClick={discardDraft}
+              >
+                <RotateCcw aria-hidden="true" />
+                Discard changes
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!canSaveClips || confirmingSubtitleLoss}
+                onClick={requestSaveClipEdits}
+              >
+                {saveClipsMutation.isPending ? (
+                  <LoaderCircle className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Save aria-hidden="true" />
+                )}
+                {saveClipsMutation.isPending ? "Saving clip edits..." : "Save clip edits"}
+              </Button>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            Saving creates a new version of this sequence from the clips below (order, trims,
+            transitions, gaps) and keeps its name, aspect ratio, fps, title card and{" "}
+            {audioTracks.length} audio track {audioTracks.length === 1 ? "entry" : "entries"}.
+            {timeline.manifest.has_subtitles &&
+              " The saved subtitle text cannot be read back from the server: paste it into “Subtitle cues” before saving to keep it."}
+            {isDirty &&
+              " Re-assembling from shots and exporting are disabled until you save or discard."}
+          </p>
+
+          {draftClips.length === 0 && (
+            <p className="text-[11px] font-medium text-destructive">
+              A sequence needs at least one clip. Discard changes to restore the removed clips.
+            </p>
+          )}
+
+          {savedDraft.normalizedOverlaps.length > 0 && (
+            <p className="text-[11px] text-warning">
+              Saved clip {savedDraft.normalizedOverlaps.map((n) => `#${n}`).join(", ")} overlapped
+              the previous clip without a matching cross dissolve, which the exporter refuses. The
+              editor places it right after the previous clip; saving applies that.
+            </p>
+          )}
+
+          {confirmingSubtitleLoss && (
+            <ConfirmActionDialog
+              title="Save clip edits and remove the saved subtitles?"
+              confirmLabel="Save without subtitles"
+              destructive
+              isSubmitting={saveClipsMutation.isPending}
+              onConfirm={submitClipEdits}
+              onCancel={() => setConfirmingSubtitleLoss(false)}
+            >
+              <p>
+                This sequence has saved {timeline.manifest.subtitle_format.toUpperCase()} subtitles,
+                but their text cannot be loaded back into the editor. Saving replaces the sequence,
+                so the saved subtitles will be removed unless you cancel and re-enter them in
+                “Subtitle cues”.
+              </p>
+            </ConfirmActionDialog>
+          )}
+
+          {saveClipsMutation.isError && (
+            <div
+              role="alert"
+              className="space-y-1.5 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive"
+            >
+              <p>
+                {actionErrorMessage(saveClipsMutation.error, activeAdminToken, "save clip edits")}
+              </p>
+              {serverErrorClip && serverClipError && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => selectClip(serverErrorClip.key)}
+                >
+                  Select clip #{serverClipError.index + 1}
+                </Button>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       <section
         aria-label="Timeline tracks"
         className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-slate-100 shadow-sm"
@@ -689,8 +920,10 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
           {timeline && (
             <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-indigo-300">
               <Clock className="size-3.5" aria-hidden="true" />
-              Total {formatTimecode(timeline.total_duration_seconds)} ({clips.length}{" "}
-              {clips.length === 1 ? "clip" : "clips"})
+              {isDirty ? "Draft " : ""}Total{" "}
+              {formatTimecode(isDirty ? draftTotalSeconds : timeline.total_duration_seconds)} (
+              {isDirty ? draftClips.length : clips.length}{" "}
+              {(isDirty ? draftClips.length : clips.length) === 1 ? "clip" : "clips"})
             </span>
           )}
         </div>
@@ -740,8 +973,9 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
             ) : (
               <>
                 <p className="text-[11px] text-slate-400">
-                  Read-only view: clip widths are proportional to duration. Select a clip to see its
-                  details.
+                  Clip widths are proportional to duration. Select a clip to edit it in the
+                  inspector. Drag the grip to reorder, or focus the grip, press Space and use the
+                  arrow keys.
                   <span className="sm:hidden"> Scroll sideways to see the whole sequence.</span>
                 </p>
 
@@ -784,50 +1018,22 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
                         ))}
                       </ol>
 
-                      <div className="relative h-24">
-                        {clips.map((clip, idx) => {
-                          const isSelected = activeClip === clip;
-                          return (
-                            <button
-                              key={`${clip.order_index}-${clip.shot_id ?? "clip"}`}
-                              type="button"
-                              aria-pressed={isSelected}
-                              onClick={() => setClipSelection({ sequenceId, index: idx })}
-                              className={cn(
-                                "absolute inset-y-0 overflow-hidden rounded-xl border p-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:outline-none",
-                                isSelected
-                                  ? "border-indigo-400 bg-slate-900 ring-1 ring-indigo-400/50"
-                                  : "border-slate-800 bg-slate-900/80 hover:border-slate-600",
-                              )}
-                              style={{
-                                left: clip.start_time_seconds * pixelsPerSecond,
-                                width: Math.max(
-                                  24,
-                                  clip.effective_duration_seconds * pixelsPerSecond - 4,
-                                ),
-                              }}
-                            >
-                              <span className="flex items-center justify-between gap-2 text-[11px]">
-                                <span className="rounded bg-indigo-500/25 px-1.5 py-0.5 font-mono font-semibold text-indigo-300">
-                                  #{clip.order_index + 1}
-                                </span>
-                                <span className="font-mono text-slate-400">
-                                  {formatSeconds(clip.effective_duration_seconds)}
-                                </span>
-                              </span>
-                              <span className="mt-1.5 block truncate font-mono text-xs font-semibold text-white">
-                                Shot: {clip.shot_id ?? "custom"}
-                              </span>
-                              <span className="mt-0.5 block truncate font-mono text-[11px] text-slate-400">
-                                Take: {clip.take_id ?? "unassigned"}
-                              </span>
-                              <span className="mt-1 block truncate font-mono text-[10px] text-slate-500">
-                                {clip.transition_type}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      {draftClips.length === 0 ? (
+                        <p className="flex h-24 items-center rounded-xl border border-dashed border-slate-800 px-3 text-xs text-slate-400">
+                          Every clip was removed from the draft.
+                        </p>
+                      ) : (
+                        <SortableVideoTrack
+                          clips={draftClips}
+                          layouts={layouts}
+                          pixelsPerSecond={pixelsPerSecond}
+                          selectedKey={selectedKey}
+                          invalidKeys={invalidKeys}
+                          disabled={saveClipsMutation.isPending}
+                          onSelect={selectClip}
+                          onMove={moveDraftClip}
+                        />
+                      )}
 
                       {timeline.manifest.has_subtitles && (
                         <div

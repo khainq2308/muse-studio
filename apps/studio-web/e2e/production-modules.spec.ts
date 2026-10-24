@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   PROJECT_ID,
   approvalResult,
+  assembledFromCustomClips,
   backups,
   createdWorkflow,
   exportLaunched,
@@ -283,6 +284,164 @@ test.describe("Timeline Editor module", () => {
       .split("x")
       .map(Number);
     expect(height).toBeGreaterThan(width);
+  });
+});
+
+test.describe("Timeline Editor clip editing", () => {
+  test("trims, reorders with the keyboard and saves custom clips with carried-over settings", async ({
+    page,
+  }) => {
+    const assemblePath = `/api/v1/projects/${PROJECT_ID}/timeline/assemble`;
+    let saved: ReturnType<typeof assembledFromCustomClips> | null = null;
+    const requests = await mockStudioApi(page, ({ method, pathname, body }) => {
+      if (method === "POST" && pathname === assemblePath) {
+        saved = assembledFromCustomClips(
+          "seq_e2e02",
+          body as Parameters<typeof assembledFromCustomClips>[1],
+        );
+        return { status: 201, body: saved };
+      }
+      if (method === "GET" && pathname === `/api/v1/projects/${PROJECT_ID}/timeline` && saved) {
+        // TimelineSequenceOut: the assemble result without its count fields.
+        const { sequence_id, name, aspect_ratio, fps, resolution, total_duration_seconds } = saved;
+        const sequence = {
+          sequence_id,
+          name,
+          aspect_ratio,
+          fps,
+          resolution,
+          total_duration_seconds,
+          warnings: saved.warnings,
+          manifest: saved.manifest,
+        };
+        return { status: 200, body: sequence };
+      }
+      return undefined;
+    });
+
+    await page.goto(`/projects/${PROJECT_ID}/timeline-editor`);
+    const tracks = page.getByRole("region", { name: "Timeline tracks" });
+    const inspector = page.getByRole("region", { name: "Selected clip" });
+    const edits = page.getByRole("region", { name: "Clip edits" });
+    await expect(tracks.getByText("Shot: shot-1")).toBeVisible();
+    await expect(edits.getByTestId("clip-edit-status")).toHaveText("Matches saved sequence");
+
+    // Trim the second clip (5 s source) to 3.5 s.
+    await tracks.getByRole("button", { name: /Shot: shot-2/ }).click();
+    await inspector.getByLabel("Trim start (s)").fill("0.5");
+    await inspector.getByLabel("Trim end (s)").fill("1");
+    await expect(inspector.getByTestId("clip-effective-duration")).toHaveText("3.5s of 5s source");
+    await expect(edits.getByTestId("clip-edit-status")).toHaveText("Unsaved changes");
+    await expect(
+      page
+        .getByRole("region", { name: "FFmpeg MP4 export" })
+        .getByRole("button", { name: "Launch Verified MP4 Export" }),
+    ).toBeDisabled();
+
+    // Keyboard reorder through dnd-kit: pick up clip 3, move it left twice, drop it.
+    const handle = tracks.getByRole("button", { name: "Reorder clip 3 (shot shot-3)" });
+    await handle.focus();
+    // Each step waits for dnd-kit's live-region announcement before the next key.
+    const announcement = page.locator("[id^='DndLiveRegion']");
+    await page.keyboard.press("Space");
+    await expect(announcement).toHaveText(
+      /Picked up clip 3 \(shot shot-3\)\.|clip 3 \(shot shot-3\) is over position 3\./,
+    );
+    await page.keyboard.press("ArrowLeft");
+    await expect(announcement).toContainText("is over position 2.");
+    await page.keyboard.press("ArrowLeft");
+    await expect(announcement).toContainText("is over position 1.");
+    await page.keyboard.press("Space");
+    await expect(announcement).toContainText("dropped at position 1.");
+    await expect(tracks.getByRole("button", { name: /Shot: shot-/ })).toHaveText([
+      /shot-3/,
+      /shot-1/,
+      /shot-2/,
+    ]);
+
+    // Saved subtitles cannot be read back, so saving asks before dropping them.
+    await edits.getByRole("button", { name: "Save clip edits" }).click();
+    const confirm = edits.getByRole("alertdialog");
+    await expect(confirm).toContainText("saved subtitles will be removed");
+    await page.screenshot({
+      path: "test-results/ui-evidence/timeline-editor-clip-edits-dirty.png",
+      fullPage: true,
+    });
+    await confirm.getByRole("button", { name: "Save without subtitles" }).click();
+
+    await expect(edits.getByTestId("clip-edit-status")).toHaveText("Matches saved sequence");
+    await expect(tracks).toContainText("Total 00:00:11");
+
+    const saves = requests.filter((r) => r.method === "POST" && r.pathname === assemblePath);
+    expect(saves).toHaveLength(1);
+    const body = saves[0].body as {
+      name: string;
+      aspect_ratio: string;
+      fps: number;
+      subtitle_content: string;
+      audio_tracks: unknown[];
+      custom_clips: Array<Record<string, unknown>>;
+    };
+    expect(body).toMatchObject({
+      name: "Master Cut v1",
+      aspect_ratio: "16:9",
+      fps: 24,
+      subtitle_content: "",
+      audio_tracks: [
+        {
+          track_type: "music",
+          name: "Main Score Track",
+          volume: 0.8,
+          fade_in_seconds: 0.5,
+          fade_out_seconds: 1,
+          muted: false,
+          asset_id: null,
+        },
+      ],
+    });
+    expect(
+      body.custom_clips.map((c) => ({
+        shot_id: c.shot_id,
+        take_id: c.take_id,
+        asset_id: c.asset_id,
+        order_index: c.order_index,
+        start_time_seconds: c.start_time_seconds,
+        trim_start_seconds: c.trim_start_seconds,
+        trim_end_seconds: c.trim_end_seconds,
+        transition_type: c.transition_type,
+      })),
+    ).toEqual([
+      {
+        shot_id: "shot-3",
+        take_id: "take-3",
+        asset_id: "ast-video-3",
+        order_index: 1,
+        start_time_seconds: null,
+        trim_start_seconds: 0,
+        trim_end_seconds: 0,
+        transition_type: "hard_cut",
+      },
+      {
+        shot_id: "shot-1",
+        take_id: "take-1",
+        asset_id: "ast-video-1",
+        order_index: 2,
+        start_time_seconds: null,
+        trim_start_seconds: 0,
+        trim_end_seconds: 0,
+        transition_type: "hard_cut",
+      },
+      {
+        shot_id: "shot-2",
+        take_id: "take-2",
+        asset_id: "ast-video-2",
+        order_index: 3,
+        start_time_seconds: null,
+        trim_start_seconds: 0.5,
+        trim_end_seconds: 1,
+        transition_type: "hard_cut",
+      },
+    ]);
   });
 });
 

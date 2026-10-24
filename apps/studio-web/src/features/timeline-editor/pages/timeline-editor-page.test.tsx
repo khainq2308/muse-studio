@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EXPORT_STATUS_POLL_INTERVAL_MS,
@@ -303,7 +303,9 @@ describe("TimelineEditorPage honest sequence view", () => {
     expect(screen.queryByRole("button", { name: /zoom/i })).toBeNull();
     expect(screen.getByLabelText("Selected clip")).toHaveTextContent(/Assemble a timeline/);
     expect(screen.getByRole("heading", { name: "Timeline Assembly & Export" })).toBeVisible();
-    expect(screen.getByText(/trim and reorder editing is not available yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/not available yet/i)).toBeNull();
+    expect(screen.getByText(/trim, reorder, remove clips/i)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Clip edits" })).toBeNull();
   });
 
   it("selects a clip through an accessible toggle button", async () => {
@@ -606,5 +608,339 @@ describe("TimelineEditorPage export", () => {
       /Could not download the exported MP4: .*Asset file missing/,
     );
     queryClient.clear();
+  });
+});
+
+function assembleOut(timeline: TimelineSequence) {
+  return {
+    ...timeline,
+    clip_count: timeline.manifest.video_clips.length,
+    audio_track_count: timeline.manifest.audio_tracks.length,
+    has_subtitles: timeline.manifest.has_subtitles,
+  };
+}
+
+type AssembleBody = {
+  name: string;
+  aspect_ratio: string | null;
+  fps: number | null;
+  subtitle_content: string;
+  subtitle_format: string;
+  title_card: Record<string, unknown>;
+  audio_tracks: unknown[];
+  custom_clips: Array<{
+    shot_id: string;
+    order_index: number;
+    start_time_seconds: number | null;
+    source_duration_seconds: number;
+    trim_start_seconds: number;
+    trim_end_seconds: number;
+    transition_type: string;
+    transition_duration_seconds: number;
+    volume: number;
+    fade_in_seconds: number;
+    fade_out_seconds: number;
+  }>;
+};
+
+function assembleBodies(fetchMock: ReturnType<typeof stubApi>): AssembleBody[] {
+  return callsTo(fetchMock, "POST", ASSEMBLE_PATH).map(
+    ([, init]) => JSON.parse(String(init!.body)) as AssembleBody,
+  );
+}
+
+/** Mounts with the three-clip timeline; assemble returns `assembleResponse` (default: 201). */
+async function mountEditor(
+  options: {
+    timeline?: TimelineSequence;
+    assembleResponse?: () => Response;
+  } = {},
+) {
+  let current = options.timeline ?? makeThreeClipTimeline();
+  const fetchMock = stubApi({
+    [`GET ${TIMELINE_PATH}`]: () => json(current),
+    [`POST ${ASSEMBLE_PATH}`]:
+      options.assembleResponse ??
+      (() => {
+        current = makeThreeClipTimeline("seq-2");
+        return json(assembleOut(current), 201);
+      }),
+    [`POST ${EXPORTS_PATH}`]: () => json({ detail: "not under test" }, 500),
+  });
+  const queryClient = mount();
+  await advance(0);
+  return { fetchMock, queryClient };
+}
+
+function setNumber(label: string, value: string) {
+  fireEvent.change(screen.getByLabelText(label), { target: { value } });
+}
+
+const saveButton = () => screen.getByRole("button", { name: "Save clip edits" });
+
+describe("TimelineEditorPage clip editing", () => {
+  it("saves trims as custom_clips with renumbered order and carried-over settings", async () => {
+    const timeline = makeThreeClipTimeline();
+    timeline.manifest.title_card = { text: "Opening", duration_seconds: 2 };
+    timeline.manifest.audio_tracks = [
+      {
+        name: "Main Score Track",
+        track_type: "music",
+        volume: 0.8,
+        fade_in_seconds: 0.5,
+        fade_out_seconds: 1,
+        muted: false,
+        asset_id: null,
+      },
+    ];
+    const { fetchMock } = await mountEditor({ timeline });
+    expect(screen.getByTestId("clip-edit-status")).toHaveTextContent("Matches saved sequence");
+    expect(saveButton()).toBeDisabled();
+
+    setNumber("Trim start (s)", "0.5");
+    setNumber("Trim end (s)", "1");
+    expect(screen.getByTestId("clip-effective-duration")).toHaveTextContent("2.5s of 4s source");
+    expect(screen.getByTestId("clip-edit-status")).toHaveTextContent("Unsaved changes");
+    expect(screen.getByText(/Draft Total 00:00:11/)).toBeInTheDocument();
+
+    fireEvent.click(saveButton());
+    await advance(0);
+
+    const [body] = assembleBodies(fetchMock);
+    expect(body).toBeDefined();
+    expect(body!.name).toBe("Master Cut v1");
+    expect(body!.aspect_ratio).toBe("16:9");
+    expect(body!.fps).toBe(24);
+    expect(body!.title_card).toEqual({ text: "Opening", duration_seconds: 2 });
+    expect(body!.audio_tracks).toEqual([
+      {
+        track_type: "music",
+        name: "Main Score Track",
+        asset_id: null,
+        volume: 0.8,
+        fade_in_seconds: 0.5,
+        fade_out_seconds: 1,
+        muted: false,
+      },
+    ]);
+    expect(body!.subtitle_content).toBe("");
+    expect(body!.custom_clips.map((c) => c.order_index)).toEqual([1, 2, 3]);
+    expect(body!.custom_clips[0]).toMatchObject({
+      shot_id: "shot-1",
+      start_time_seconds: null,
+      source_duration_seconds: 4,
+      trim_start_seconds: 0.5,
+      trim_end_seconds: 1,
+      transition_type: "hard_cut",
+      transition_duration_seconds: 0,
+      volume: 1,
+      fade_in_seconds: 0,
+      fade_out_seconds: 0,
+    });
+    expect(body!.custom_clips.map((c) => c.start_time_seconds)).toEqual([null, null, null]);
+
+    // The saved sequence replaces the draft.
+    expect(screen.getByTestId("clip-edit-status")).toHaveTextContent("Matches saved sequence");
+  });
+
+  it("reorders with the inspector buttons and sends moved clips with sequential placement", async () => {
+    const timeline = makeThreeClipTimeline();
+    // Clip 3 starts after a 2 s gap in the saved sequence.
+    timeline.manifest.video_clips[2]!.start_time_seconds = 11;
+    const { fetchMock } = await mountEditor({ timeline });
+
+    fireEvent.click(screen.getByRole("button", { name: /Shot: shot-3/ }));
+    expect(screen.getByLabelText("Gap before clip (s)")).toHaveValue(2);
+    expect(screen.getByRole("button", { name: "Move right" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Move left" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move left" }));
+    expect(screen.getByRole("button", { name: "Move left" })).toBeDisabled();
+    expect(screen.getByLabelText("Selected clip")).toHaveTextContent("#1 of 3 (saved as #3)");
+
+    const trackOrder = screen
+      .getAllByRole("button", { name: /Shot: shot-/ })
+      .map((button) => /shot-\d/.exec(button.textContent ?? "")?.[0]);
+    expect(trackOrder).toEqual(["shot-3", "shot-1", "shot-2"]);
+
+    fireEvent.click(saveButton());
+    await advance(0);
+
+    const [body] = assembleBodies(fetchMock);
+    expect(body!.custom_clips.map((c) => [c.shot_id, c.order_index, c.start_time_seconds])).toEqual(
+      [
+        ["shot-3", 1, null],
+        ["shot-1", 2, null],
+        ["shot-2", 3, null],
+      ],
+    );
+  });
+
+  it("blocks saving while trims exceed the source duration", async () => {
+    const { fetchMock } = await mountEditor();
+
+    setNumber("Trim start (s)", "3");
+    setNumber("Trim end (s)", "1");
+
+    expect(screen.getByText(/must leave at least 0.1 s of the 4 s source/)).toBeInTheDocument();
+    expect(screen.getByText(/1 clip needs fixing before saving/)).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
+    fireEvent.click(saveButton());
+    await advance(0);
+    expect(assembleBodies(fetchMock)).toHaveLength(0);
+  });
+
+  it("forces the first clip to a hard cut and validates later dissolves", async () => {
+    const { fetchMock } = await mountEditor();
+
+    expect(screen.getByLabelText("Transition in")).toBeDisabled();
+    expect(screen.getByLabelText("Transition in")).toHaveValue("hard_cut");
+    expect(screen.getByText(/first clip always opens with a hard cut/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Shot: shot-2/ }));
+    fireEvent.change(screen.getByLabelText("Transition in"), {
+      target: { value: "cross_dissolve" },
+    });
+    setNumber("Dissolve (s)", "4.5");
+    expect(screen.getByText(/shorter than this clip and the previous clip/)).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
+
+    setNumber("Dissolve (s)", "1");
+    // Move the dissolving clip to the front: it must be sent as a hard cut.
+    fireEvent.click(screen.getByRole("button", { name: "Move left" }));
+    fireEvent.click(saveButton());
+    await advance(0);
+
+    const [body] = assembleBodies(fetchMock);
+    expect(body!.custom_clips[0]).toMatchObject({
+      shot_id: "shot-2",
+      transition_type: "hard_cut",
+      transition_duration_seconds: 0,
+    });
+  });
+
+  it("sends an explicit start time for a clip with a gap", async () => {
+    const { fetchMock } = await mountEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: /Shot: shot-2/ }));
+    setNumber("Gap before clip (s)", "1.5");
+    expect(screen.getByLabelText("Selected clip")).toHaveTextContent("00:00:05:12");
+    fireEvent.click(saveButton());
+    await advance(0);
+
+    const [body] = assembleBodies(fetchMock);
+    expect(body!.custom_clips.map((c) => c.start_time_seconds)).toEqual([null, 5.5, null]);
+  });
+
+  it("requires confirmation before saving would drop saved subtitles", async () => {
+    const timeline = makeThreeClipTimeline();
+    timeline.manifest.has_subtitles = true;
+    const { fetchMock } = await mountEditor({ timeline });
+
+    setNumber("Trim start (s)", "1");
+    fireEvent.click(saveButton());
+    await advance(0);
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/saved subtitles will be removed unless you cancel/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await advance(0);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(assembleBodies(fetchMock)).toHaveLength(0);
+
+    fireEvent.click(saveButton());
+    fireEvent.click(screen.getByRole("button", { name: "Save without subtitles" }));
+    await advance(0);
+    const bodies = assembleBodies(fetchMock);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.subtitle_content).toBe("");
+  });
+
+  it("keeps re-entered subtitles without asking for confirmation", async () => {
+    const timeline = makeThreeClipTimeline();
+    timeline.manifest.has_subtitles = true;
+    const { fetchMock } = await mountEditor({ timeline });
+
+    fireEvent.change(screen.getByLabelText(/Subtitle cues/i), {
+      target: { value: "1\n00:00:00,000 --> 00:00:02,000\nHi" },
+    });
+    setNumber("Trim start (s)", "1");
+    fireEvent.click(saveButton());
+    await advance(0);
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const [body] = assembleBodies(fetchMock);
+    expect(body!.subtitle_content).toBe("1\n00:00:00,000 --> 00:00:02,000\nHi");
+    expect(body!.subtitle_format).toBe("srt");
+  });
+
+  it("removes a clip after confirmation and discard restores every saved clip", async () => {
+    const { fetchMock } = await mountEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: /Shot: shot-2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove from sequence" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getAllByTestId("timeline-clip")).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove from sequence" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove clip" }));
+    expect(screen.getAllByTestId("timeline-clip")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Shot: shot-2/ })).toBeNull();
+    setNumber("Trim end (s)", "1");
+    expect(screen.getByTestId("clip-edit-status")).toHaveTextContent("Unsaved changes");
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.getAllByTestId("timeline-clip")).toHaveLength(3);
+    expect(screen.getByTestId("clip-edit-status")).toHaveTextContent("Matches saved sequence");
+    expect(screen.getByLabelText("Trim end (s)")).toHaveValue(0);
+    expect(assembleBodies(fetchMock)).toHaveLength(0);
+  });
+
+  it("shows a 422 and points to the clip the server rejected", async () => {
+    await mountEditor({
+      assembleResponse: () =>
+        json({ detail: "custom_clips[1]: take_id không thuộc shot_id đã chọn." }, 422),
+    });
+
+    setNumber("Trim start (s)", "1");
+    fireEvent.click(saveButton());
+    await advance(0);
+
+    const alert = screen
+      .getAllByRole("alert")
+      .find((node) => node.textContent?.includes("Could not save clip edits"));
+    expect(alert).toHaveTextContent(/custom_clips\[1\]: take_id không thuộc shot_id/);
+    fireEvent.click(screen.getByRole("button", { name: "Select clip #2" }));
+    expect(screen.getByLabelText("Selected clip")).toHaveTextContent(
+      "Server rejected this clip: take_id không thuộc shot_id đã chọn.",
+    );
+    expect(screen.getByTestId("clip-edit-status")).toHaveTextContent("Unsaved changes");
+  });
+
+  it("disables export and re-assembly while clip edits are unsaved", async () => {
+    await mountEditor();
+    const launch = screen.getByRole("button", { name: /Launch Verified MP4 Export/i });
+    const assemble = screen.getByRole("button", { name: /Assemble \/ Refresh Timeline/i });
+    expect(launch).toBeEnabled();
+    expect(screen.queryByTestId("export-unsaved-edits")).toBeNull();
+
+    setNumber("Trim start (s)", "1");
+
+    expect(launch).toBeDisabled();
+    expect(assemble).toBeDisabled();
+    expect(screen.getByTestId("export-unsaved-edits")).toHaveTextContent(
+      /Export renders the saved sequence/,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(launch).toBeEnabled();
+    expect(assemble).toBeEnabled();
+  });
+
+  it("exposes a keyboard-operable drag handle for every clip", async () => {
+    await mountEditor();
+    const handles = screen.getAllByRole("button", { name: /^Reorder clip \d/ });
+    expect(handles).toHaveLength(3);
+    expect(handles[0]).toHaveAttribute("aria-roledescription", "sortable");
+    expect(handles[0]).toHaveAttribute("tabindex", "0");
   });
 });
