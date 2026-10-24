@@ -10,6 +10,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,16 +59,12 @@ interface ScriptStudioPageProps {
   onViewChange: (view: ScriptStudioView, options?: { replace?: boolean }) => void;
 }
 
-const VIEW_LABELS: Record<ScriptStudioView, string> = {
-  script: "Script import",
-  bible: "Story Bible",
-};
-
 const NO_BIBLE_FIELD_ERRORS: Partial<Record<BibleEntryField, string>> = {};
 const NO_IMPORT_FIELD_ERRORS: Partial<Record<ScriptImportField, string>> = {};
 const NEW_EDITOR_KEY = "__new__";
 
 export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudioPageProps) {
+  const { t } = useTranslation("script-studio");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
 
@@ -311,17 +308,17 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
       className="space-y-5"
     >
       <PageHeader
-        title="Script & Story Bible"
+        title={t("title")}
         headingId="script-studio-heading"
-        description="Import the script, then make sure every character and location in the Story Bible is right before generating shots."
+        description={t("description")}
         actions={
           <>
             <div
               role="group"
-              aria-label="Export shot list"
+              aria-label={t("exportShots")}
               className="flex items-center gap-1 rounded-md border border-border p-0.5"
             >
-              <span className="px-2 text-xs text-muted-foreground">Export shots</span>
+              <span className="px-2 text-xs text-muted-foreground">{t("exportShots")}</span>
               {(["json", "csv"] as const).map((format) => (
                 <Button
                   key={format}
@@ -329,7 +326,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
                   variant="ghost"
                   size="sm"
                   disabled={exportPending}
-                  aria-label={`Export shot list as ${format.toUpperCase()}`}
+                  aria-label={t("exportAria", { format: format.toUpperCase() })}
                   onClick={() => {
                     resetExport();
                     exportMutation.mutate(format);
@@ -355,7 +352,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
                 className={cn("size-4", bibleQuery.isFetching && "animate-spin")}
                 aria-hidden="true"
               />
-              Refresh
+              {t("refresh")}
             </Button>
           </>
         }
@@ -374,7 +371,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
       {!activeView ? (
         <p role="status" className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
           <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-          Loading script and Story Bible...
+          {t("loading")}
         </p>
       ) : (
         <div>
@@ -408,20 +405,18 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
                   )}
                 >
                   <Icon className="size-4" aria-hidden="true" />
-                  {VIEW_LABELS[value]}
+                  {t(`views.${value}`)}
                   {value === "bible" && entryCountKnown && (
                     <span className="rounded-full bg-secondary px-1.5 text-xs tabular-nums text-muted-foreground">
                       <span className="sr-only">, </span>
-                      {entries.length}
-                      <span className="sr-only"> entries</span>
+                      {t("views.entriesCount", { count: entries.length })}
                     </span>
                   )}
                   {value === "bible" && attentionItems.length > 0 && (
                     <span className="inline-flex items-center gap-0.5 rounded-full bg-warning/15 px-1.5 text-xs font-semibold tabular-nums text-warning">
                       <TriangleAlert className="size-3" aria-hidden="true" />
                       <span className="sr-only">, </span>
-                      {attentionItems.length}
-                      <span className="sr-only"> to fix</span>
+                      {t("views.toFixCount", { count: attentionItems.length })}
                     </span>
                   )}
                 </button>
@@ -487,13 +482,13 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 id="story-bible-section-heading" className="text-lg font-semibold">
-                    Story Bible ({entryCountKnown ? entries.length : "—"})
+                    {t("bible.title", { count: entryCountKnown ? entries.length : "—" })}
                   </h3>
                   <p
                     className="mt-0.5 text-xs text-muted-foreground"
                     data-testid="story-bible-summary"
                   >
-                    Characters, locations, style rules and props compiled into every shot prompt.
+                    {t("bible.summary")}
                   </p>
                 </div>
                 <Button
@@ -505,7 +500,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
                   onClick={openNewEditor}
                 >
                   <Plus className="size-4" aria-hidden="true" />
-                  New Bible entry
+                  {t("bible.newEntry")}
                 </Button>
               </div>
 
@@ -528,10 +523,10 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
                 isError={bibleQuery.isError}
                 hasData={Boolean(bibleQuery.data)}
                 isEmpty={entries.length === 0}
-                loadingMessage="Loading Story Bible..."
+                loadingMessage={t("loading")}
                 errorMessage={authErrorMessage(bibleQuery.error, activeAdminToken, "Story Bible")}
-                emptyTitle="No Story Bible entries yet"
-                emptyDescription="Import a script with auto-apply enabled or create an entry to define characters, locations and style locks."
+                emptyTitle={t("bible.emptyTitle")}
+                emptyDescription={t("bible.emptyDescription")}
                 onRetry={refresh}
               >
                 <StoryBibleList
@@ -549,13 +544,13 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
                   className="flex flex-col gap-3 rounded-xl border border-border bg-secondary/40 p-4 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <p className="text-sm">
-                    <span className="font-medium">Next: Shot Board.</span>{" "}
+                    <span className="font-medium">{t("nextStep.title")}</span>{" "}
                     <span className="text-muted-foreground">
                       {blockedByBible > 0
-                        ? `${blockedByBible} blocked ${blockedByBible === 1 ? "shot needs" : "shots need"} the reference images above; ${blockedByBible === 1 ? "it" : "they"} may have other blockers too.`
+                        ? t("nextStep.blockedByBible", { count: blockedByBible })
                         : blockedTotal > 0
-                          ? `${blockedTotal} ${blockedTotal === 1 ? "shot is" : "shots are"} blocked; the Shot Board shows why.`
-                          : `${shots.length} ${shots.length === 1 ? "shot" : "shots"} to review and generate.`}
+                          ? t("nextStep.blockedTotal", { count: blockedTotal })
+                          : t("nextStep.ready", { count: shots.length })}
                     </span>
                   </p>
                   <Link
@@ -563,7 +558,7 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
                     params={{ projectId, module: "shot-board" }}
                     className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
                   >
-                    Go to Shot Board
+                    {t("nextStep.action")}
                     <ArrowRight className="size-4" aria-hidden="true" />
                   </Link>
                 </div>

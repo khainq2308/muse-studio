@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, RefreshCw, Rocket } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import { useConnections } from "@/entities/connection/api";
@@ -78,6 +79,7 @@ const NO_FIELD_ERRORS: Partial<Record<ShotEditField, string>> = {};
 const ACTIVE_SHOTS_POLL_MS = 5_000;
 
 export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPageProps) {
+  const { t } = useTranslation("shot-board");
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
   const queryClient = useQueryClient();
@@ -329,12 +331,15 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
       className="space-y-4"
     >
       <PageHeader
-        title="Shot Board"
+        title={t("title")}
         headingId="shot-board-heading"
         description={
           shotsQuery.data
-            ? `${sceneIds.length} ${sceneIds.length === 1 ? "scene" : "scenes"} · ${shots.length} ${shots.length === 1 ? "shot" : "shots"}. Review each shot, generate takes and select one for the timeline.`
-            : "Review each shot, generate takes and select one for the timeline."
+            ? t("workspace.headerDescriptionWithShots", {
+                sceneCount: sceneIds.length,
+                shotCount: shots.length,
+              })
+            : t("workspace.headerDescriptionEmpty")
         }
         actions={
           <>
@@ -348,7 +353,7 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
                 onClick={() => setBatchOpen((current) => !current)}
               >
                 <Rocket className="size-4" aria-hidden="true" />
-                Batch launch
+                {t("batchLaunch")}
                 <ChevronDown
                   className={cn("size-4 transition-transform", batchOpen && "rotate-180")}
                   aria-hidden="true"
@@ -365,7 +370,7 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
                 className={cn("size-4", shotsQuery.isFetching && "animate-spin")}
                 aria-hidden="true"
               />
-              Refresh
+              {t("refresh")}
             </Button>
           </>
         }
@@ -429,10 +434,10 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
           isError={shotsQuery.isError}
           hasData={Boolean(shotsQuery.data)}
           isEmpty={shots.length === 0}
-          loadingMessage="Loading shots..."
+          loadingMessage={t("loading")}
           errorMessage={authErrorMessage(shotsQuery.error, activeAdminToken, "shots")}
-          emptyTitle="No shots yet"
-          emptyDescription="Import a script to break it into scenes and shots; they will appear here."
+          emptyTitle={t("workspace.emptyListTitle")}
+          emptyDescription={t("workspace.emptyListDescription")}
           onRetry={refresh}
         >
           <div className="grid items-start gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
@@ -449,8 +454,7 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
                   role="note"
                   className="rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-xs text-warning"
                 >
-                  Shot <span className="break-all font-mono">{missingShotId}</span> is not in this
-                  project; showing the first shot instead.
+                  {t("workspace.missingShotNote", { shotId: missingShotId })}
                 </p>
               )}
               {selectedShot && (

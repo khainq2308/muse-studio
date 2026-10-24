@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";
+import i18n from "@/lib/i18n";
 
 export type StoryBibleEntry = components["schemas"]["StoryBibleEntryOut"];
 export type StoryBibleEntryType = StoryBibleEntry["entry_type"];
@@ -356,8 +357,8 @@ export function mapBibleEntryError(error: unknown): BibleEntryErrorMapping {
       fieldErrors: {},
       formError:
         error instanceof Error
-          ? `Could not save the Story Bible entry: ${error.message}`
-          : "Could not save the Story Bible entry.",
+          ? i18n.t("script-studio:errors.saveFailed", { message: error.message })
+          : i18n.t("script-studio:errors.saveFailed", { message: "" }),
     };
   }
   if (error.status === 401 || error.status === 403) {
@@ -365,14 +366,14 @@ export function mapBibleEntryError(error: unknown): BibleEntryErrorMapping {
       fieldErrors: {},
       formError:
         error.status === 403
-          ? "The current session does not have permission to edit the Story Bible."
-          : "The admin token was rejected while saving the Story Bible entry. Update the token and try again.",
+          ? i18n.t("script-studio:errors.savePermissionDenied")
+          : i18n.t("script-studio:errors.saveAuthRequired"),
     };
   }
   if (error.status === 404) {
     return {
       fieldErrors: {},
-      formError: "This project no longer exists. Refresh the workspace.",
+      formError: i18n.t("script-studio:errors.projectNotFound"),
     };
   }
 
@@ -471,8 +472,8 @@ export function mapScriptImportError(error: unknown): ScriptImportErrorMapping {
       fieldErrors: {},
       formError:
         error instanceof Error
-          ? `Could not import the script: ${error.message}`
-          : "Could not import the script.",
+          ? i18n.t("script-studio:errors.importFailed", { message: error.message })
+          : i18n.t("script-studio:errors.importFailed", { message: "" }),
       requiresReplaceConfirmation: false,
     };
   }
@@ -481,15 +482,15 @@ export function mapScriptImportError(error: unknown): ScriptImportErrorMapping {
       fieldErrors: {},
       formError:
         error.status === 403
-          ? "The current session does not have permission to import scripts."
-          : "The admin token was rejected while importing the script. Update the token and try again.",
+          ? i18n.t("script-studio:errors.importPermissionDenied")
+          : i18n.t("script-studio:errors.importAuthRequired"),
       requiresReplaceConfirmation: false,
     };
   }
   if (error.status === 404) {
     return {
       fieldErrors: {},
-      formError: "This project no longer exists. Refresh the workspace.",
+      formError: i18n.t("script-studio:errors.projectNotFound"),
       requiresReplaceConfirmation: false,
     };
   }
@@ -530,33 +531,30 @@ export function mapScriptImportError(error: unknown): ScriptImportErrorMapping {
 export function referenceUploadErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) {
     return error instanceof Error
-      ? `Could not upload the reference image: ${error.message}`
-      : "Could not upload the reference image.";
+      ? i18n.t("script-studio:errors.uploadFailed", { message: error.message })
+      : i18n.t("script-studio:errors.uploadFailed", { message: "" });
   }
   if (error.status === 401) {
-    return "Could not upload the reference image: the admin token was rejected. Update the token and try again.";
+    return i18n.t("script-studio:errors.uploadAuthRequired");
   }
   if (error.status === 403) {
-    return "Could not upload the reference image: the current session does not have permission.";
+    return i18n.t("script-studio:errors.uploadPermissionDenied");
   }
-  if (error.status === 413 || error.category === "too_large") {
-    return `Could not upload the reference image: ${error.message}`;
-  }
-  return `Could not upload the reference image: ${error.message}`;
+  return i18n.t("script-studio:errors.uploadFailed", { message: error.message });
 }
 
 export function shotExportErrorMessage(error: unknown, format: ShotExportFormat): string {
   const label = format.toUpperCase();
   if (!(error instanceof ApiError)) {
     return error instanceof Error
-      ? `Could not export shots (${label}): ${error.message}`
-      : `Could not export shots (${label}).`;
+      ? i18n.t("script-studio:errors.exportFailed", { format: label, message: error.message })
+      : i18n.t("script-studio:errors.exportFailed", { format: label, message: "" });
   }
   if (error.status === 401) {
-    return `Could not export shots (${label}): the admin token was rejected. Update the token and try again.`;
+    return i18n.t("script-studio:errors.exportAuthRequired", { format: label });
   }
   if (error.status === 403) {
-    return `Could not export shots (${label}): the current session does not have permission.`;
+    return i18n.t("script-studio:errors.exportPermissionDenied", { format: label });
   }
-  return `Could not export shots (${label}): ${error.message}`;
+  return i18n.t("script-studio:errors.exportFailed", { format: label, message: error.message });
 }

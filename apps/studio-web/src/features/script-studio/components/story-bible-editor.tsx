@@ -2,6 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { CheckCircle2, LoaderCircle, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { ReferenceAssetPreview } from "@/features/script-studio/components/reference-asset-preview";
@@ -156,6 +157,7 @@ export function StoryBibleEditor({
   onSave,
   onClose,
 }: StoryBibleEditorProps) {
+  const { t } = useTranslation("script-studio");
   const headingId = useId();
   const idPrefix = useId();
   const initialEntryRef = useRef(entry);
@@ -321,11 +323,13 @@ export function StoryBibleEditor({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h4 id={headingId} className="font-semibold">
-            {entry ? `Edit ${entry.display_name} (${entry.code_name})` : "New Story Bible entry"}
+            {entry
+              ? t("bible.editor.editTitle", {
+                  codeName: `${entry.display_name} (${entry.code_name})`,
+                })
+              : t("bible.editor.newTitle")}
           </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Saving upserts the entry by code name and recompiles every shot prompt in the project.
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("bible.editor.subtitle")}</p>
         </div>
         <Button
           type="button"
@@ -334,11 +338,13 @@ export function StoryBibleEditor({
           disabled={busy}
           onClick={onClose}
           aria-label={
-            entry ? `Close editor for ${entry.display_name}` : "Close new Story Bible entry editor"
+            entry
+              ? t("bible.editor.closeAria", { name: entry.display_name })
+              : t("bible.editor.closeNewAria")
           }
         >
           <X aria-hidden="true" />
-          Close
+          {t("bible.editor.close")}
         </Button>
       </div>
 
@@ -358,15 +364,17 @@ export function StoryBibleEditor({
           className="mt-3 flex items-center gap-2 rounded-md border border-success/30 bg-success/10 p-3 text-sm text-success"
         >
           <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
-          Saved {upsertResult.code_name} ({upsertResult.id}). Downstream project shots were
-          recompiled.
+          {t("bible.editor.upsertSuccess", {
+            codeName: upsertResult.code_name,
+            id: upsertResult.id,
+          })}
         </p>
       )}
 
       <form className="mt-4 grid gap-4 md:grid-cols-2" onSubmit={submit} noValidate>
         <div className="space-y-1">
           <label htmlFor={fieldId("entry_type")} className="text-sm font-medium">
-            Entry type
+            {t("bible.editor.entryType")}
           </label>
           <select
             className={inputClass}
@@ -385,11 +393,11 @@ export function StoryBibleEditor({
 
         <div className="space-y-1">
           <label htmlFor={fieldId("code_name")} className="text-sm font-medium">
-            Code name
+            {t("bible.editor.codeName")}
           </label>
           <input
             type="text"
-            placeholder="e.g. char_detective_linh"
+            placeholder={t("bible.editor.codeNamePlaceholder")}
             maxLength={BIBLE_ENTRY_LIMITS.codeNameMaxChars}
             className={cn(inputClass, "font-mono")}
             {...fieldProps("code_name")}
@@ -401,11 +409,11 @@ export function StoryBibleEditor({
 
         <div className="space-y-1 md:col-span-2">
           <label htmlFor={fieldId("display_name")} className="text-sm font-medium">
-            Display name
+            {t("bible.editor.displayName")}
           </label>
           <input
             type="text"
-            placeholder="e.g. Detective Linh"
+            placeholder={t("bible.editor.displayNamePlaceholder")}
             maxLength={BIBLE_ENTRY_LIMITS.displayNameMaxChars}
             className={inputClass}
             {...fieldProps("display_name")}
@@ -416,11 +424,11 @@ export function StoryBibleEditor({
 
         <div className="space-y-1 md:col-span-2">
           <label htmlFor={fieldId("immutable_traits")} className="text-sm font-medium">
-            Immutable traits
+            {t("bible.editor.immutableTraits")}
           </label>
           <textarea
             rows={3}
-            placeholder="Fixed visual traits locked into every compiled shot prompt..."
+            placeholder={t("bible.editor.immutableTraitsPlaceholder")}
             maxLength={BIBLE_ENTRY_LIMITS.immutableTraitsMaxChars}
             className={inputClass}
             {...fieldProps("immutable_traits")}
@@ -432,11 +440,11 @@ export function StoryBibleEditor({
         {entryType === "character" && (
           <div className="space-y-1 md:col-span-2">
             <label htmlFor={fieldId("current_outfit")} className="text-sm font-medium">
-              Current outfit
+              {t("bible.editor.currentOutfit")}
             </label>
             <input
               type="text"
-              placeholder="e.g. charcoal trench coat"
+              placeholder={t("bible.editor.currentOutfitPlaceholder")}
               maxLength={BIBLE_ENTRY_LIMITS.mutableStringAttrMaxChars}
               className={inputClass}
               {...fieldProps("current_outfit")}
@@ -450,11 +458,11 @@ export function StoryBibleEditor({
           <>
             <div className="space-y-1">
               <label htmlFor={fieldId("time_of_day")} className="text-sm font-medium">
-                Time of day
+                {t("bible.editor.timeOfDay")}
               </label>
               <input
                 type="text"
-                placeholder="e.g. rainy night"
+                placeholder={t("bible.editor.timeOfDayPlaceholder")}
                 maxLength={BIBLE_ENTRY_LIMITS.mutableStringAttrMaxChars}
                 className={inputClass}
                 {...fieldProps("time_of_day")}
@@ -464,11 +472,11 @@ export function StoryBibleEditor({
             </div>
             <div className="space-y-1">
               <label htmlFor={fieldId("lighting_rule")} className="text-sm font-medium">
-                Lighting rule
+                {t("bible.editor.lightingRule")}
               </label>
               <input
                 type="text"
-                placeholder="e.g. neon rim lighting"
+                placeholder={t("bible.editor.lightingRulePlaceholder")}
                 maxLength={BIBLE_ENTRY_LIMITS.mutableStringAttrMaxChars}
                 className={inputClass}
                 {...fieldProps("lighting_rule")}
@@ -483,11 +491,11 @@ export function StoryBibleEditor({
           <>
             <div className="space-y-1 md:col-span-2">
               <label htmlFor={fieldId("color_palette")} className="text-sm font-medium">
-                Color palette
+                {t("bible.editor.style.colorPalette")}
               </label>
               <input
                 type="text"
-                placeholder="e.g. teal and amber noir contrast"
+                placeholder={t("bible.editor.style.colorPalettePlaceholder")}
                 maxLength={BIBLE_ENTRY_LIMITS.styleColorPaletteMaxChars}
                 className={inputClass}
                 {...fieldProps("color_palette")}
@@ -497,11 +505,11 @@ export function StoryBibleEditor({
             </div>
             <div className="space-y-1">
               <label htmlFor={fieldId("negative_constraints_text")} className="text-sm font-medium">
-                Negative constraints (comma-separated)
+                {t("bible.editor.style.negativeConstraints")}
               </label>
               <input
                 type="text"
-                placeholder="e.g. 3d cgi, deformed hands"
+                placeholder={t("bible.editor.style.negativeConstraintsPlaceholder")}
                 className={inputClass}
                 {...fieldProps("negative_constraints_text")}
                 {...register("negative_constraints_text")}
@@ -510,11 +518,11 @@ export function StoryBibleEditor({
             </div>
             <div className="space-y-1">
               <label htmlFor={fieldId("forbidden_terms_text")} className="text-sm font-medium">
-                Forbidden terms (comma-separated)
+                {t("bible.editor.style.forbiddenTerms")}
               </label>
               <input
                 type="text"
-                placeholder="e.g. photorealistic, live action"
+                placeholder={t("bible.editor.style.forbiddenTermsPlaceholder")}
                 className={inputClass}
                 {...fieldProps("forbidden_terms_text")}
                 {...register("forbidden_terms_text")}
@@ -533,11 +541,10 @@ export function StoryBibleEditor({
                 className="size-4 rounded border-input"
                 {...register("requires_reference_lock")}
               />
-              Require reference lock for downstream shots
+              {t("bible.editor.requiresReference")}
             </label>
             <p className="mt-1 text-xs text-muted-foreground">
-              When enabled on a character, any shot featuring this character is blocked from
-              generation until at least one reference asset is attached.
+              {t("bible.editor.requiresReferenceHelp")}
             </p>
           </div>
         )}
@@ -546,11 +553,13 @@ export function StoryBibleEditor({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-sm font-medium">
-                Reference assets ({referenceAssetIds.length}/{BIBLE_ENTRY_LIMITS.maxReferenceAssets}
-                )
+                {t("bible.editor.referenceAssetsCount", {
+                  count: referenceAssetIds.length,
+                  max: BIBLE_ENTRY_LIMITS.maxReferenceAssets,
+                })}
               </p>
               <p className="text-xs text-muted-foreground">
-                Upload a PNG, JPEG or WebP reference image, or attach an existing project asset ID.
+                {t("bible.editor.referenceAssetsHelp")}
               </p>
             </div>
           </div>
@@ -573,7 +582,7 @@ export function StoryBibleEditor({
                       variant="ghost"
                       disabled={busy}
                       onClick={() => removeAssetId(assetId)}
-                      aria-label={`Remove reference asset ${assetId}`}
+                      aria-label={t("bible.editor.removeAssetAria", { id: assetId })}
                     >
                       <Trash2 className="size-3 text-destructive" aria-hidden="true" />
                     </Button>
@@ -586,7 +595,7 @@ export function StoryBibleEditor({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label htmlFor={fieldId("upload-file")} className="text-xs font-medium">
-                Upload reference image
+                {t("bible.editor.uploadButton")}
               </label>
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -614,7 +623,7 @@ export function StoryBibleEditor({
                   ) : (
                     <Upload className="size-3.5" aria-hidden="true" />
                   )}
-                  Upload &amp; attach
+                  {t("bible.editor.uploadAndAttach")}
                 </Button>
               </div>
               {(clientUploadError ?? uploadError) && (
@@ -624,15 +633,17 @@ export function StoryBibleEditor({
               )}
               {uploadedAsset && (
                 <p role="status" className="text-xs text-success">
-                  Attached uploaded asset <code className="font-mono">{uploadedAsset.id}</code> (
-                  {uploadedAsset.filename}).
+                  {t("bible.editor.attachedSuccess", {
+                    id: uploadedAsset.id,
+                    filename: uploadedAsset.filename,
+                  })}
                 </p>
               )}
             </div>
 
             <div className="space-y-1.5">
               <label htmlFor={fieldId("manual-asset-id")} className="text-xs font-medium">
-                Attach existing asset ID
+                {t("bible.editor.attachExistingAsset")}
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -657,7 +668,7 @@ export function StoryBibleEditor({
                   onClick={addAssetId}
                 >
                   <Plus className="size-3.5" aria-hidden="true" />
-                  Add ID
+                  {t("bible.editor.addId")}
                 </Button>
               </div>
             </div>
@@ -668,7 +679,7 @@ export function StoryBibleEditor({
 
         <div className="flex flex-wrap items-center justify-end gap-2 md:col-span-2">
           <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
-            Cancel
+            {t("bible.editor.cancel")}
           </Button>
           <Button type="submit" disabled={busy}>
             {isSaving ? (
@@ -676,7 +687,7 @@ export function StoryBibleEditor({
             ) : (
               <Save className="size-4" aria-hidden="true" />
             )}
-            {entry ? "Save entry" : "Create entry"}
+            {entry ? t("bible.editor.saveEntry") : t("bible.editor.createEntry")}
           </Button>
         </div>
       </form>

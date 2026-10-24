@@ -1,5 +1,6 @@
 import { Columns2, LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,6 +52,7 @@ export function ShotTakeReview({
   modelId,
   regenerateDisabledReason,
 }: ShotTakeReviewProps) {
+  const { t } = useTranslation("shot-board");
   const headingId = useId();
   const activeAdminToken = useSessionStore((state) => state.adminToken);
   const sessionVersion = useSessionStore((state) => state.sessionVersion);
@@ -266,14 +268,14 @@ export function ShotTakeReview({
         isError={takesQuery.isError}
         hasData={Boolean(takesQuery.data)}
         isEmpty={takes.length === 0}
-        loadingMessage="Loading takes..."
+        loadingMessage={t("loadingTakes")}
         errorMessage={
           takesQuery.isError && !isAuthError(takesQuery.error)
             ? takeActionErrorMessage(takesQuery.error, "load")
             : authErrorMessage(takesQuery.error, activeAdminToken, "takes")
         }
-        emptyTitle="No takes yet"
-        emptyDescription="Generate this shot; each finished generation adds a take here."
+        emptyTitle={t("takes.emptyTitle")}
+        emptyDescription={t("takes.emptyDescription")}
         onRetry={refresh}
       >
         <div className="space-y-3">

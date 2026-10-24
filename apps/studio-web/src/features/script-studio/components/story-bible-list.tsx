@@ -11,6 +11,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { isBlockingMissingReference } from "@/features/script-studio/attention";
 import { ReferenceAssetPreview } from "@/features/script-studio/components/reference-asset-preview";
@@ -74,6 +75,7 @@ export function StoryBibleList({
   onEdit,
   renderEntryEditor,
 }: StoryBibleListProps) {
+  const { t } = useTranslation("script-studio");
   const [filter, setFilter] = useState<StoryBibleFilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -121,7 +123,7 @@ export function StoryBibleList({
   );
 
   const filterButtons: ReadonlyArray<{ value: StoryBibleFilterType; label: string }> = [
-    { value: "all", label: "All" },
+    { value: "all", label: t("bible.filterAll") },
     ...STORY_BIBLE_ENTRY_TYPES.map((type) => ({
       value: type,
       label: STORY_BIBLE_ENTRY_LABELS[type],
@@ -142,15 +144,15 @@ export function StoryBibleList({
               type="search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search entries..."
-              aria-label="Search Story Bible entries"
+              placeholder={t("bible.searchPlaceholder")}
+              aria-label={t("bible.searchAria")}
               className="h-9 w-full rounded-lg border border-input bg-background pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             />
           </div>
 
           <div
             role="group"
-            aria-label="Filter Story Bible entries by type"
+            aria-label={t("bible.filterAria")}
             className="flex flex-wrap items-center gap-1.5"
           >
             {filterButtons.map(({ value, label }) => {
@@ -175,14 +177,14 @@ export function StoryBibleList({
         <div className="flex items-center justify-end gap-1.5 border-t border-border/60 pt-2 lg:border-t-0 lg:pt-0">
           <div
             role="group"
-            aria-label="Story Bible view mode"
+            aria-label={t("bible.viewModeAria")}
             className="inline-flex items-center rounded-lg border border-border bg-muted/40 p-0.5"
           >
             <button
               type="button"
               onClick={() => setViewMode("grid")}
               aria-pressed={viewMode === "grid"}
-              aria-label="Portrait grid view"
+              aria-label={t("bible.viewGridAria")}
               className={cn(
                 "inline-flex size-7 items-center justify-center rounded-md text-xs transition-colors",
                 viewMode === "grid"
@@ -196,7 +198,7 @@ export function StoryBibleList({
               type="button"
               onClick={() => setViewMode("list")}
               aria-pressed={viewMode === "list"}
-              aria-label="Detailed list view"
+              aria-label={t("bible.viewListAria")}
               className={cn(
                 "inline-flex size-7 items-center justify-center rounded-md text-xs transition-colors",
                 viewMode === "list"
@@ -216,16 +218,14 @@ export function StoryBibleList({
             data-testid="story-bible-search-empty"
             className="rounded-xl border border-dashed border-border bg-card/50 p-8 text-center text-sm break-words text-muted-foreground"
           >
-            No {filter === "all" ? "" : `${STORY_BIBLE_ENTRY_LABELS[filter].toLowerCase()} `}
-            entries match the search &ldquo;{trimmedQuery}&rdquo;.
+            {t("bible.searchEmpty", { query: trimmedQuery })}
           </p>
         ) : (
           <p
             data-testid="story-bible-filter-empty"
             className="rounded-xl border border-dashed border-border bg-card/50 p-8 text-center text-sm text-muted-foreground"
           >
-            No {filter === "all" ? "" : `${STORY_BIBLE_ENTRY_LABELS[filter].toLowerCase()} `}
-            entries match the selected filter.
+            {t("bible.filterEmpty")}
           </p>
         )
       ) : (
@@ -306,7 +306,7 @@ export function StoryBibleList({
                           {entry.entry_type === "character" && entry.requires_reference_lock && (
                             <span className="inline-flex items-center gap-1 rounded-md border border-white/20 bg-slate-950/75 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-md">
                               <Lock className="size-2.5 text-amber-300" aria-hidden="true" />
-                              Ref Lock
+                              {t("bible.card.locked")}
                             </span>
                           )}
                         </div>
@@ -340,11 +340,14 @@ export function StoryBibleList({
                               disabled={isEditorBusy}
                               aria-expanded={isEditing}
                               onClick={() => onEdit(entry)}
-                              aria-label={`Edit ${entry.display_name} (${entry.code_name})`}
+                              aria-label={t("bible.card.editAria", {
+                                name: entry.display_name,
+                                code: entry.code_name,
+                              })}
                               className="h-7 shrink-0 px-2.5 text-xs"
                             >
                               <Pencil className="size-3" aria-hidden="true" />
-                              Edit
+                              {t("bible.card.edit")}
                             </Button>
                           </div>
 
@@ -445,7 +448,7 @@ export function StoryBibleList({
                             {entry.entry_type === "character" && entry.requires_reference_lock && (
                               <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                                 <Lock className="size-3" aria-hidden="true" />
-                                Reference lock required
+                                {t("bible.card.locked")}
                               </span>
                             )}
                           </div>
@@ -465,10 +468,13 @@ export function StoryBibleList({
                           disabled={isEditorBusy}
                           aria-expanded={isEditing}
                           onClick={() => onEdit(entry)}
-                          aria-label={`Edit ${entry.display_name} (${entry.code_name})`}
+                          aria-label={t("bible.card.editAria", {
+                            name: entry.display_name,
+                            code: entry.code_name,
+                          })}
                         >
                           <Pencil className="size-3.5" aria-hidden="true" />
-                          Edit
+                          {t("bible.card.edit")}
                         </Button>
                       </div>
 

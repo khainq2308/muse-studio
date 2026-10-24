@@ -1,4 +1,5 @@
 import { AlertTriangle, CircleCheck, Info, OctagonAlert } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ShotLintIssue } from "@/features/shot-board/state";
 import { cn } from "@/lib/utils";
 
@@ -22,11 +23,12 @@ interface ShotLintReportProps {
 
 /** The backend Prompt Linter report (`lint_report`), rendered as plain text. */
 export function ShotLintReport({ issues, label }: ShotLintReportProps) {
+  const { t } = useTranslation("shot-board");
   if (issues.length === 0) {
     return (
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <CircleCheck className="size-4 text-success" aria-hidden="true" />
-        Prompt Linter: no issues
+        {t("lint.noIssues")}
       </p>
     );
   }

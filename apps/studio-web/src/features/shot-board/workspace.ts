@@ -7,6 +7,7 @@ import {
   type ProjectShot,
   type ShotSceneGroup,
 } from "@/features/shot-board/state";
+import i18n from "@/lib/i18n";
 
 /** Placeholder for a value the API did not provide; never replaced by an invented default. */
 export const MISSING = "—";
@@ -126,7 +127,10 @@ export function shotLintSummary(shot: Pick<ProjectShot, "lint_report">): ShotLin
   if (blockers > 0) {
     return {
       level: "blocker",
-      label: `${blockers} lint ${blockers === 1 ? "blocker" : "blockers"}`,
+      label: i18n.t("shot-board:lint.blockerCount", {
+        count: blockers,
+        defaultValue: `${blockers} lint ${blockers === 1 ? "blocker" : "blockers"}`,
+      }),
       tone: "border border-destructive/30 bg-destructive/10 text-destructive",
     };
   }
@@ -134,13 +138,18 @@ export function shotLintSummary(shot: Pick<ProjectShot, "lint_report">): ShotLin
   if (warnings > 0) {
     return {
       level: "warning",
-      label: `${warnings} lint ${warnings === 1 ? "warning" : "warnings"}`,
+      label: i18n.t("shot-board:lint.warningCount", {
+        count: warnings,
+        defaultValue: `${warnings} lint ${warnings === 1 ? "warning" : "warnings"}`,
+      }),
       tone: "border border-warning/30 bg-warning/10 text-warning",
     };
   }
   return {
     level: "clear",
-    label: "Lint clear",
+    label: i18n.t("shot-board:lint.clear", {
+      defaultValue: "Lint clear",
+    }),
     tone: "border border-success/30 bg-success/10 text-success",
   };
 }
