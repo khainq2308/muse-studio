@@ -47,6 +47,7 @@ import {
 import { authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/shared/page-header";
 
 interface ScriptStudioPageProps {
   projectId: string;
@@ -295,61 +296,56 @@ export function ScriptStudioPage({ projectId, view, onViewChange }: ScriptStudio
       aria-labelledby="script-studio-heading"
       className="space-y-5"
     >
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 id="script-studio-heading" className="text-2xl font-semibold tracking-tight">
-            Script &amp; Story Bible
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Import the script, then make sure every character and location in the Story Bible is
-            right before generating shots.
-          </p>
-        </div>
+      <PageHeader
+        title="Script & Story Bible"
+        headingId="script-studio-heading"
+        description="Import the script, then make sure every character and location in the Story Bible is right before generating shots."
+        actions={
+          <>
+            <div
+              role="group"
+              aria-label="Export shot list"
+              className="flex items-center gap-1 rounded-md border border-border p-0.5"
+            >
+              <span className="px-2 text-xs text-muted-foreground">Export shots</span>
+              {(["json", "csv"] as const).map((format) => (
+                <Button
+                  key={format}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={exportPending}
+                  aria-label={`Export shot list as ${format.toUpperCase()}`}
+                  onClick={() => {
+                    resetExport();
+                    exportMutation.mutate(format);
+                  }}
+                >
+                  {exportPending && exportFormat === format ? (
+                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Download className="size-4" aria-hidden="true" />
+                  )}
+                  {format.toUpperCase()}
+                </Button>
+              ))}
+            </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div
-            role="group"
-            aria-label="Export shot list"
-            className="flex items-center gap-1 rounded-md border border-border p-0.5"
-          >
-            <span className="px-2 text-xs text-muted-foreground">Export shots</span>
-            {(["json", "csv"] as const).map((format) => (
-              <Button
-                key={format}
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={exportPending}
-                aria-label={`Export shot list as ${format.toUpperCase()}`}
-                onClick={() => {
-                  resetExport();
-                  exportMutation.mutate(format);
-                }}
-              >
-                {exportPending && exportFormat === format ? (
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Download className="size-4" aria-hidden="true" />
-                )}
-                {format.toUpperCase()}
-              </Button>
-            ))}
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            onClick={refresh}
-            aria-busy={bibleQuery.isFetching}
-          >
-            <RefreshCw
-              className={cn("size-4", bibleQuery.isFetching && "animate-spin")}
-              aria-hidden="true"
-            />
-            Refresh
-          </Button>
-        </div>
-      </header>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={refresh}
+              aria-busy={bibleQuery.isFetching}
+            >
+              <RefreshCw
+                className={cn("size-4", bibleQuery.isFetching && "animate-spin")}
+                aria-hidden="true"
+              />
+              Refresh
+            </Button>
+          </>
+        }
+      />
 
       {exportError && (
         <p

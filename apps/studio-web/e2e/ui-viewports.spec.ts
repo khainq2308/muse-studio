@@ -69,7 +69,7 @@ const PAGES: PageCase[] = [
     path: `/projects/${PROJECT_ID}/workflow-canvas`,
     module: "workflow-canvas",
     ready: async (page) => {
-      await page.getByRole("button", { name: "Initialize M3 Pipeline DAG" }).click();
+      await page.getByRole("button", { name: "Create pipeline workflow" }).click();
       await expect(page.locator(".react-flow__node")).toHaveCount(7);
     },
   },

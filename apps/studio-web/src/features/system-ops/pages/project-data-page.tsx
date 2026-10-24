@@ -57,7 +57,7 @@ export function ProjectDataPage({ projectId }: ProjectDataPageProps) {
     <div data-testid="project-data-page" data-project-id={projectId} className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Backups & assets</h2>
+          <h3 className="text-lg font-semibold tracking-tight">Backups & assets</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Snapshot this project into a downloadable ZIP, and upload or remove its media assets.
           </p>
@@ -102,10 +102,10 @@ export function ProjectDataPage({ projectId }: ProjectDataPageProps) {
           className="space-y-4 rounded-xl border border-border bg-card p-5"
         >
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-            <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
+            <h4 className="flex min-w-0 items-center gap-2 text-base font-semibold">
               <Archive className="size-4 shrink-0 text-primary" aria-hidden="true" />
               <span>Project Backups ({backups.length})</span>
-            </h3>
+            </h4>
             <span className="break-all sm:text-right font-mono text-xs text-muted-foreground">
               GET /api/v1/projects/{projectId}/backups
             </span>
@@ -222,10 +222,10 @@ export function ProjectDataPage({ projectId }: ProjectDataPageProps) {
           className="space-y-4 rounded-xl border border-border bg-card p-5"
         >
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-            <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
+            <h4 className="flex min-w-0 items-center gap-2 text-base font-semibold">
               <Database className="size-4 shrink-0 text-primary" aria-hidden="true" />
               <span>Project Media Asset Manager</span>
-            </h3>
+            </h4>
             <span className="break-all sm:text-right font-mono text-xs text-muted-foreground">
               /api/v1/assets/*
             </span>
@@ -325,10 +325,10 @@ export function ProjectDataPage({ projectId }: ProjectDataPageProps) {
         aria-label="Project logs"
         className="space-y-3 rounded-xl border border-border bg-card p-5"
       >
-        <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold">
+        <h4 className="flex min-w-0 items-center gap-2 text-base font-semibold">
           <Activity className="size-4 shrink-0 text-primary" aria-hidden="true" />
           <span>Recent logs for this project ({logs.length})</span>
-        </h3>
+        </h4>
         <QueryState
           isLoading={logsQuery.isPending}
           isError={logsQuery.isError}

@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Film, FolderPlus, Sparkles } from "lucide-react";
+import { ArrowRight, FolderPlus, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 } from "@/entities/project/options";
 import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
+import { PageHeader } from "@/components/shared/page-header";
 
 /** Workspace-level project list: find a project, open it, or create a new one. */
 export function ProjectsPage() {
@@ -41,30 +42,26 @@ export function ProjectsPage() {
 
   return (
     <div data-testid="projects-page" className="space-y-6">
-      <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Film className="size-5 text-primary" aria-hidden="true" />
-            <h2 className="text-xl font-semibold tracking-tight">Projects</h2>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Each project holds one film: its script, Story Bible, shots, takes and timeline.
-          </p>
-        </div>
-
-        <Button
-          type="button"
-          size="sm"
-          variant={showNewForm ? "secondary" : "default"}
-          onClick={() => {
-            createMutation.reset();
-            setShowNewForm((current) => !current);
-          }}
-        >
-          <FolderPlus className="size-4" aria-hidden="true" />
-          {showNewForm ? "Close form" : "New project"}
-        </Button>
-      </div>
+      <PageHeader
+        title="Projects"
+        description="Each project holds one film: its script, Story Bible, shots, takes and timeline."
+        actions={
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant={showNewForm ? "secondary" : "default"}
+              onClick={() => {
+                createMutation.reset();
+                setShowNewForm((current) => !current);
+              }}
+            >
+              <FolderPlus className="size-4" aria-hidden="true" />
+              {showNewForm ? "Close form" : "New project"}
+            </Button>
+          </>
+        }
+      />
 
       {created && (
         <div

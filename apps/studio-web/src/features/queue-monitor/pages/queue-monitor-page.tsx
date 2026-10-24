@@ -18,6 +18,7 @@ import {
 import { queueReplyErrorMessage } from "@/features/queue-monitor/reply-errors";
 import { authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
+import { PageHeader } from "@/components/shared/page-header";
 
 interface QueueMonitorPageProps {
   projectId: string;
@@ -138,33 +139,28 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
       aria-labelledby="queue-monitor-heading"
       className="space-y-6"
     >
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-primary">Project queue</p>
-          <h2 id="queue-monitor-heading" className="mt-1 text-2xl font-semibold tracking-tight">
-            Generation Queue
-          </h2>
-          <p className="mt-2 break-all text-sm text-muted-foreground">
-            Monitor generation tasks for project{" "}
-            <span className="font-medium text-foreground">{projectId}</span>.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <AwaitingInputNotifications />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={refreshQueue}
-            aria-busy={tasksQuery.isFetching}
-          >
-            <RefreshCw
-              className={cn("mr-2 size-4", tasksQuery.isFetching && "animate-spin")}
-              aria-hidden="true"
-            />
-            Refresh
-          </Button>
-        </div>
-      </header>
+      <PageHeader
+        title="Generation Queue"
+        headingId="queue-monitor-heading"
+        description="Every generation task of this project: follow progress, answer provider questions, and pause, resume or cancel tasks."
+        actions={
+          <>
+            <AwaitingInputNotifications />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={refreshQueue}
+              aria-busy={tasksQuery.isFetching}
+            >
+              <RefreshCw
+                className={cn("mr-2 size-4", tasksQuery.isFetching && "animate-spin")}
+                aria-hidden="true"
+              />
+              Refresh
+            </Button>
+          </>
+        }
+      />
 
       <div className="grid gap-3 sm:grid-cols-3" role="group" aria-label="Queue summary">
         <article className="rounded-xl border border-border bg-card p-4">

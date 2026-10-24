@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Calendar, Copy, FolderCog, History, LoaderCircle } from "lucide-react";
+import { Calendar, Copy, History, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { PROJECT_DUPLICATE_SCOPE_NOTE } from "@/entities/project/options";
 import { useProjectRevisions } from "@/features/projects/api";
 import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
+import { PageHeader } from "@/components/shared/page-header";
 
 interface ProjectSettingsPageProps {
   projectId: string;
@@ -26,43 +27,39 @@ export function ProjectSettingsPage({ projectId }: ProjectSettingsPageProps) {
 
   return (
     <div data-testid="project-settings-page" className="space-y-6">
-      <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <FolderCog className="size-5 text-primary" aria-hidden="true" />
-            <h2 className="text-xl font-semibold tracking-tight">Project settings</h2>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            The project profile and its revision history. Duplicating copies these settings into a
-            new, empty project.
-          </p>
-        </div>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={duplicateMutation.isPending}
-          onClick={() => {
-            setDuplicated(null);
-            duplicateMutation.mutate(projectId, {
-              onSuccess: (created) => setDuplicated({ projectId: created.id, name: created.name }),
-            });
-          }}
-        >
-          {duplicateMutation.isPending ? (
-            <>
-              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-              Duplicating...
-            </>
-          ) : (
-            <>
-              <Copy className="size-4" aria-hidden="true" />
-              Duplicate settings
-            </>
-          )}
-        </Button>
-      </div>
+      <PageHeader
+        title="Project settings"
+        description="The project profile and its revision history. Duplicating copies these settings into a new, empty project."
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={duplicateMutation.isPending}
+              onClick={() => {
+                setDuplicated(null);
+                duplicateMutation.mutate(projectId, {
+                  onSuccess: (created) =>
+                    setDuplicated({ projectId: created.id, name: created.name }),
+                });
+              }}
+            >
+              {duplicateMutation.isPending ? (
+                <>
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  Duplicating...
+                </>
+              ) : (
+                <>
+                  <Copy className="size-4" aria-hidden="true" />
+                  Duplicate settings
+                </>
+              )}
+            </Button>
+          </>
+        }
+      />
 
       {duplicated && (
         <div

@@ -144,7 +144,7 @@ function renderPage() {
 }
 
 async function createWorkflow() {
-  fireEvent.click(screen.getByRole("button", { name: /Initialize M3 Pipeline DAG/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Create pipeline workflow/i }));
   await screen.findByRole("region", { name: "Workflow DAG canvas" });
 }
 
@@ -182,15 +182,15 @@ describe("WorkflowCanvasPage", () => {
     renderPage();
     await createWorkflow();
 
-    fireEvent.click(screen.getByRole("button", { name: /Create new M3 DAG/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Create a new workflow/i }));
     const dialog = screen.getByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(requestsTo(fetchMock, "POST", BASE)).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /Create new M3 DAG/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Create a new workflow/i }));
     fireEvent.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Create new DAG" }),
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Create new workflow" }),
     );
     await waitFor(() => expect(requestsTo(fetchMock, "POST", BASE)).toHaveLength(2));
   });
@@ -407,7 +407,7 @@ describe("WorkflowCanvasPage", () => {
   it("renders create errors with the action error message", async () => {
     mockApi([{ method: "POST", path: BASE, status: 422, body: { detail: "Name is too long." } }]);
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: /Initialize M3 Pipeline DAG/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Create pipeline workflow/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not create the workflow: Name is too long.",

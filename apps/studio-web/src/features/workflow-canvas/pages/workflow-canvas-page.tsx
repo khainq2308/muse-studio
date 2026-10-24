@@ -49,6 +49,7 @@ import {
 import { actionErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/shared/page-header";
 
 interface WorkflowCanvasPageProps {
   projectId: string;
@@ -316,69 +317,65 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
 
   return (
     <div data-testid="workflow-canvas-page" data-project-id={projectId} className="space-y-6">
-      <div className="flex flex-col gap-4 border-b border-border pb-5 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <GitBranch className="size-5 text-primary" aria-hidden="true" />
-            <h2 className="text-xl font-semibold tracking-tight">Workflow Automation</h2>
-            <span className="rounded-full border border-warning/35 bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
-              Simulation / Planning Engine
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Inspect typed DAG nodes, verify deterministic Merkle cache keys, plan execution order
-            with Dry Run, or step through Manual Approval gates. Real provider renders run in Shot
-            Board & Generation Queue.
-          </p>
-        </div>
+      <PageHeader
+        title="Workflow Automation"
+        description="Advanced: inspect the preset production pipeline as a graph, dry-run it to see execution order and cache hits, and step through manual approval gates. Shots themselves are generated from the Shot Board."
+        badge={
+          <span className="rounded-full border border-warning/35 bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
+            Simulation
+          </span>
+        }
+        actions={
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant={workflow ? "outline" : "default"}
+                size="sm"
+                disabled={createWorkflow.isPending || confirmingReplace}
+                onClick={() => {
+                  if (workflow) {
+                    setConfirmingReplace(true);
+                    return;
+                  }
+                  submitCreate();
+                }}
+              >
+                {createWorkflow.isPending ? (
+                  <>
+                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                    Initializing DAG...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="size-4" aria-hidden="true" />
+                    {workflow ? "Create a new workflow" : "Create pipeline workflow"}
+                  </>
+                )}
+              </Button>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant={workflow ? "outline" : "default"}
-            size="sm"
-            disabled={createWorkflow.isPending || confirmingReplace}
-            onClick={() => {
-              if (workflow) {
-                setConfirmingReplace(true);
-                return;
-              }
-              submitCreate();
-            }}
-          >
-            {createWorkflow.isPending ? (
-              <>
-                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                Initializing DAG...
-              </>
-            ) : (
-              <>
-                <Plus className="size-4" aria-hidden="true" />
-                {workflow ? "Create new M3 DAG" : "Initialize M3 Pipeline DAG"}
-              </>
-            )}
-          </Button>
-
-          {workflow && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={saveLayout.isPending}
-              onClick={() =>
-                sendLayout({ workflowId: workflow.id, layout: layoutFromNodes(flowNodes) })
-              }
-            >
-              {saveLayout.isPending ? (
-                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Save className="size-4" aria-hidden="true" />
+              {workflow && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={saveLayout.isPending}
+                  onClick={() =>
+                    sendLayout({ workflowId: workflow.id, layout: layoutFromNodes(flowNodes) })
+                  }
+                >
+                  {saveLayout.isPending ? (
+                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Save className="size-4" aria-hidden="true" />
+                  )}
+                  Save canvas layout
+                </Button>
               )}
-              Save canvas layout
-            </Button>
-          )}
-        </div>
-      </div>
+            </div>
+          </>
+        }
+      />
 
       <p
         role="note"
@@ -395,7 +392,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
       {confirmingReplace && workflow && (
         <ConfirmActionDialog
           title="Create a new workflow and leave the current one?"
-          confirmLabel="Create new DAG"
+          confirmLabel="Create new workflow"
           isSubmitting={createWorkflow.isPending}
           onConfirm={submitCreate}
           onCancel={() => setConfirmingReplace(false)}
@@ -435,9 +432,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
             <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
               <GitBranch className="size-6" aria-hidden="true" />
             </div>
-            <h3 className="text-base font-semibold">
-              Initialize the M3 Typed DAG Workflow Template
-            </h3>
+            <h3 className="text-base font-semibold">Create the preset pipeline workflow</h3>
             <p className="text-sm text-muted-foreground">
               Create a project workflow instance to inspect topological execution order, node port
               contracts, Merkle cache keys, and interactive approval gates.

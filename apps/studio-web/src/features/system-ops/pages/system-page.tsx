@@ -1,4 +1,4 @@
-import { Activity, HardDrive, RefreshCw, Search, ShieldAlert, Trash2, Upload } from "lucide-react";
+import { Activity, RefreshCw, Search, ShieldAlert, Trash2, Upload } from "lucide-react";
 import { useState } from "react";
 import { DeleteAssetForm } from "@/features/system-ops/components/delete-asset-form";
 import { ConfirmActionDialog } from "@/components/shared/confirm-action-dialog";
@@ -28,6 +28,7 @@ import {
 } from "@/features/system-ops/format";
 import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
+import { PageHeader } from "@/components/shared/page-header";
 
 /** Workspace-level operations that are not scoped to one project. */
 export function SystemPage() {
@@ -61,31 +62,26 @@ export function SystemPage() {
 
   return (
     <div data-testid="system-page" className="space-y-6">
-      <div className="flex flex-col gap-4 border-b border-border pb-5 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <HardDrive className="size-5 text-primary" aria-hidden="true" />
-            <h2 className="text-xl font-semibold tracking-tight">System & maintenance</h2>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Workspace-wide tools. Restoring a backup creates a new project, and orphan cleanup scans
-            the media root shared by every project. Back up a single project from its Settings page.
-          </p>
-        </div>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            void metricsQuery.refetch();
-            void logsQuery.refetch();
-          }}
-        >
-          <RefreshCw className="size-4" aria-hidden="true" />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="System & maintenance"
+        description="Workspace-wide tools. Restoring a backup creates a new project, and orphan cleanup scans the media root shared by every project. Back up a single project from its Settings page."
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void metricsQuery.refetch();
+                void logsQuery.refetch();
+              }}
+            >
+              <RefreshCw className="size-4" aria-hidden="true" />
+              Refresh
+            </Button>
+          </>
+        }
+      />
 
       <QueryState
         isLoading={metricsQuery.isPending}
