@@ -121,9 +121,7 @@ test.describe("Connections module", () => {
 
     await page.goto("/connections");
 
-    await expect(
-      page.getByRole("heading", { name: "Provider Connections & Account Pools" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
     await expect(page.getByText("Live gateway", { exact: true })).toBeVisible();
     await expect(page.getByText("Mock provider", { exact: true })).toBeVisible();
     await expect(page.getByText("Upstream returned HTTP 503")).toBeVisible();
@@ -174,7 +172,7 @@ test.describe("Workflow Canvas module", () => {
     await page.goto(`/projects/${PROJECT_ID}/workflow-canvas`);
     await expect(page.getByRole("heading", { name: "Workflow Automation" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Initialize M3 Pipeline DAG" }).click();
+    await page.getByRole("button", { name: "Create pipeline workflow" }).click();
     const canvas = page.getByRole("region", { name: "Workflow DAG canvas" });
     await expect(canvas.locator(".react-flow__node")).toHaveCount(7);
     await expect(canvas.getByTestId("workflow-node-n_approval")).toContainText("ManualApproval");
@@ -250,7 +248,7 @@ test.describe("Timeline Editor module", () => {
     await expect(ruler.getByText("Shot: shot-3")).toBeVisible();
     await expect(ruler).toContainText("Shot 4 has no selected take and was skipped.");
 
-    const exportPanel = page.getByRole("region", { name: "FFmpeg MP4 export" });
+    const exportPanel = page.getByRole("region", { name: "MP4 export" });
     const aspect = exportPanel.getByLabel("Aspect ratio");
     const resolution = exportPanel.getByLabel("Resolution");
     await expect(resolution.locator("option")).toHaveText(["1920x1080", "1280x720"]);
@@ -262,14 +260,14 @@ test.describe("Timeline Editor module", () => {
 
     const skipped = exportPanel.getByTestId("export-skipped-features");
     await expect(skipped).toBeVisible();
-    await expect(skipped).toContainText("This export will not include:");
+    await expect(skipped).toContainText("It will not include:");
     await expect(skipped.getByRole("listitem")).toHaveText([
       "clip audio (output carries a silent AAC track)",
       "subtitles",
       "audio tracks (background music)",
     ]);
 
-    await exportPanel.getByRole("button", { name: "Launch Verified MP4 Export" }).click();
+    await exportPanel.getByRole("button", { name: "Export MP4", exact: true }).click();
     const status = page.getByRole("region", { name: "Export job status" });
     await expect(status).toContainText("succeeded");
     await expect(status).toContainText("subtitles, audio_tracks");
@@ -332,8 +330,8 @@ test.describe("Timeline Editor clip editing", () => {
     await expect(edits.getByTestId("clip-edit-status")).toHaveText("Unsaved changes");
     await expect(
       page
-        .getByRole("region", { name: "FFmpeg MP4 export" })
-        .getByRole("button", { name: "Launch Verified MP4 Export" }),
+        .getByRole("region", { name: "MP4 export" })
+        .getByRole("button", { name: "Export MP4", exact: true }),
     ).toBeDisabled();
 
     // Keyboard reorder through dnd-kit: pick up clip 3, move it left twice, drop it.

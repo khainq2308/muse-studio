@@ -178,7 +178,7 @@ async function launchExport(statusResponses: Array<() => Response>) {
   });
   const queryClient = mount();
   await advance(0);
-  fireEvent.click(screen.getByRole("button", { name: /Launch Verified MP4 Export/i }));
+  fireEvent.click(screen.getByRole("button", { name: /^Export MP4$/ }));
   await advance(0);
   return { fetchMock, queryClient };
 }
@@ -204,7 +204,7 @@ describe("TimelineEditorPage timeline loading", () => {
     expect(callsTo(fetchMock, "GET", TIMELINE_PATH)).toHaveLength(1);
     expect(screen.getByText(/Shot: shot-1/i)).toBeInTheDocument();
     expect(screen.getByText(/Shot 2 has no selected take yet/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Launch Verified MP4 Export/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Export MP4$/ })).toBeEnabled();
   });
 
   it("shows the empty state, not an error, when the timeline returns 404", async () => {
@@ -214,7 +214,7 @@ describe("TimelineEditorPage timeline loading", () => {
 
     expect(screen.getByText(/No timeline assembled for this project yet/i)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Launch Verified MP4 Export/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Export MP4$/ })).toBeDisabled();
   });
 
   it("shows an auth alert instead of the empty state when the timeline returns 401", async () => {
@@ -304,7 +304,7 @@ describe("TimelineEditorPage honest sequence view", () => {
     expect(screen.getByLabelText("Selected clip")).toHaveTextContent(/Assemble a timeline/);
     expect(screen.getByRole("heading", { name: "Timeline & Export" })).toBeVisible();
     expect(screen.queryByText(/not available yet/i)).toBeNull();
-    expect(screen.getByText(/trim, reorder, remove clips/i)).toBeInTheDocument();
+    expect(screen.getByText(/adjust clips on the timeline/i)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Clip edits" })).toBeNull();
   });
 
@@ -351,6 +351,71 @@ describe("TimelineEditorPage honest sequence view", () => {
   });
 });
 
+describe("TimelineEditorPage export contents and layout", () => {
+  it("lists what the MP4 will contain from the saved clips and the chosen format", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(makeThreeClipTimeline()) });
+    mount();
+    await advance(0);
+
+    const contents = screen.getByTestId("export-contents");
+    expect(contents).toHaveTextContent("3 video clips in timeline order");
+    expect(contents).toHaveTextContent("a cross dissolve is shortened");
+    expect(contents).toHaveTextContent("1920x1080 at 24 fps");
+    expect(contents).toHaveTextContent("a silent audio track");
+    fireEvent.change(screen.getByLabelText("Resolution"), { target: { value: "1280x720" } });
+    expect(contents).toHaveTextContent("1280x720 at 24 fps");
+  });
+
+  it("hides the contents and blocks export when the sequence has no clips", async () => {
+    const empty = makeTimeline();
+    empty.manifest.video_clips = [];
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(empty) });
+    mount();
+    await advance(0);
+
+    expect(screen.queryByTestId("export-contents")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Export MP4$/ })).toBeDisabled();
+  });
+
+  it("explains that the title card time is not in the MP4", async () => {
+    const timeline = makeThreeClipTimeline();
+    timeline.manifest.title_card = { text: "Episode 1", duration_seconds: 3 };
+    timeline.total_duration_seconds = 16;
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(timeline) });
+    mount();
+    await advance(0);
+
+    expect(screen.getByTestId("export-duration-note")).toHaveTextContent(
+      "MP4 about 13s: the 3s title card is not rendered",
+    );
+  });
+
+  it("puts the selected clip inspector before the assembly settings", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(makeThreeClipTimeline()) });
+    mount();
+    await advance(0);
+
+    const inspector = screen.getByRole("region", { name: "Selected clip" });
+    const assembly = screen.getByRole("region", { name: "Assembly settings" });
+    expect(
+      inspector.compareDocumentPosition(assembly) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("labels the assemble action by whether a timeline exists", async () => {
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json({ detail: "Timeline not found" }, 404) });
+    mount();
+    await advance(0);
+    expect(screen.getByRole("button", { name: "Assemble timeline" })).toBeInTheDocument();
+    cleanup();
+
+    stubApi({ [`GET ${TIMELINE_PATH}`]: () => json(makeTimeline()) });
+    mount();
+    await advance(0);
+    expect(screen.getByRole("button", { name: "Re-assemble timeline" })).toBeInTheDocument();
+  });
+});
+
 describe("TimelineEditorPage assemble", () => {
   it("clamps the cross-dissolve duration to the 3s schema maximum in the request body", async () => {
     const fetchMock = stubApi({
@@ -367,7 +432,7 @@ describe("TimelineEditorPage assemble", () => {
     expect(durationInput).toHaveAttribute("max", "3");
     expect(durationInput).toHaveAttribute("min", "0");
     fireEvent.change(durationInput, { target: { value: "7" } });
-    fireEvent.click(screen.getByRole("button", { name: /Assemble \/ Refresh Timeline/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^(Re-)?assemble timeline$/i }));
     await advance(0);
 
     const [call] = callsTo(fetchMock, "POST", ASSEMBLE_PATH);
@@ -385,7 +450,7 @@ describe("TimelineEditorPage assemble", () => {
     mount();
     await advance(0);
     const assemble = () =>
-      fireEvent.click(screen.getByRole("button", { name: /Assemble \/ Refresh Timeline/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^(Re-)?assemble timeline$/i }));
 
     assemble();
     await advance(0);
@@ -412,7 +477,7 @@ describe("TimelineEditorPage assemble", () => {
     mount();
     await advance(0);
 
-    fireEvent.click(screen.getByRole("button", { name: /Assemble \/ Refresh Timeline/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^(Re-)?assemble timeline$/i }));
     await advance(0);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -433,7 +498,7 @@ describe("TimelineEditorPage audio and subtitle limits", () => {
     const subtitles = screen.getByLabelText(/Subtitle cues/i);
     expect(subtitles.tagName).toBe("TEXTAREA");
     fireEvent.change(subtitles, { target: { value: "1\n00:00:00,000 --> 00:00:02,000\nHi" } });
-    fireEvent.click(screen.getByRole("button", { name: /Assemble \/ Refresh Timeline/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^(Re-)?assemble timeline$/i }));
     await advance(0);
 
     const [call] = callsTo(fetchMock, "POST", ASSEMBLE_PATH);
@@ -488,7 +553,7 @@ describe("TimelineEditorPage export", () => {
     expect(offered).toEqual(["1080x1920", "720x1280"]);
 
     fireEvent.change(resolution, { target: { value: "720x1280" } });
-    fireEvent.click(screen.getByRole("button", { name: /Launch Verified MP4 Export/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Export MP4$/ }));
     await advance(0);
 
     const [call] = callsTo(fetchMock, "POST", EXPORTS_PATH);
@@ -521,7 +586,7 @@ describe("TimelineEditorPage export", () => {
     mount();
     await advance(0);
 
-    fireEvent.click(screen.getByRole("button", { name: /Launch Verified MP4 Export/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Export MP4$/ }));
     await advance(0);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -918,8 +983,8 @@ describe("TimelineEditorPage clip editing", () => {
 
   it("disables export and re-assembly while clip edits are unsaved", async () => {
     await mountEditor();
-    const launch = screen.getByRole("button", { name: /Launch Verified MP4 Export/i });
-    const assemble = screen.getByRole("button", { name: /Assemble \/ Refresh Timeline/i });
+    const launch = screen.getByRole("button", { name: /^Export MP4$/ });
+    const assemble = screen.getByRole("button", { name: /^(Re-)?assemble timeline$/i });
     expect(launch).toBeEnabled();
     expect(screen.queryByTestId("export-unsaved-edits")).toBeNull();
 

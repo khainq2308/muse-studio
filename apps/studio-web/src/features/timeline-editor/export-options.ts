@@ -38,3 +38,13 @@ export function skippedExportFeatures(timeline: TimelineSequence): string[] {
   if (manifest.audio_tracks.length > 0) features.push("audio tracks (background music)");
   return features;
 }
+
+/**
+ * Seconds the sequence reserves for a title card. The backend adds them to
+ * `total_duration_seconds` (`assemble_timeline`), but the exporter does not render the title
+ * card, so the MP4 is that much shorter than the sequence duration.
+ */
+export function titleCardSeconds(timeline: TimelineSequence): number {
+  const value = Number(timeline.manifest.title_card?.duration_seconds ?? 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}

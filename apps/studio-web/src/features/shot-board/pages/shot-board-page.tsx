@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, LayoutGrid, RefreshCw, Rocket } from "lucide-react";
+import { ChevronDown, RefreshCw, Rocket } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { QueryState } from "@/components/shared/query-state";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,7 @@ import { authErrorMessage } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/shared/page-header";
 
 export interface ShotBoardNavigateOptions {
   /** Replace the current history entry instead of pushing a new one. */
@@ -327,58 +328,48 @@ export function ShotBoardPage({ projectId, search, onSearchChange }: ShotBoardPa
       aria-labelledby="shot-board-heading"
       className="space-y-4"
     >
-      <header className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-2xs lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
-            <LayoutGrid className="size-4" aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 id="shot-board-heading" className="text-xl font-bold tracking-tight">
-                Shot Board
-              </h2>
-              {shotsQuery.data && (
-                <span className="font-mono text-xs text-muted-foreground">
-                  {sceneIds.length} {sceneIds.length === 1 ? "scene" : "scenes"} · {shots.length}{" "}
-                  {shots.length === 1 ? "shot" : "shots"}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <QueueMonitorLink projectId={projectId} />
-          {shots.length > 0 && (
+      <PageHeader
+        title="Shot Board"
+        headingId="shot-board-heading"
+        description={
+          shotsQuery.data
+            ? `${sceneIds.length} ${sceneIds.length === 1 ? "scene" : "scenes"} · ${shots.length} ${shots.length === 1 ? "shot" : "shots"}. Review each shot, generate takes and select one for the timeline.`
+            : "Review each shot, generate takes and select one for the timeline."
+        }
+        actions={
+          <>
+            <QueueMonitorLink projectId={projectId} />
+            {shots.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                aria-expanded={batchOpen}
+                aria-controls={batchPanelId}
+                onClick={() => setBatchOpen((current) => !current)}
+              >
+                <Rocket className="size-4" aria-hidden="true" />
+                Batch launch
+                <ChevronDown
+                  className={cn("size-4 transition-transform", batchOpen && "rotate-180")}
+                  aria-hidden="true"
+                />
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
-              aria-expanded={batchOpen}
-              aria-controls={batchPanelId}
-              onClick={() => setBatchOpen((current) => !current)}
+              onClick={refresh}
+              aria-busy={shotsQuery.isFetching}
             >
-              <Rocket className="size-4" aria-hidden="true" />
-              Batch launch
-              <ChevronDown
-                className={cn("size-4 transition-transform", batchOpen && "rotate-180")}
+              <RefreshCw
+                className={cn("size-4", shotsQuery.isFetching && "animate-spin")}
                 aria-hidden="true"
               />
+              Refresh
             </Button>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={refresh}
-            aria-busy={shotsQuery.isFetching}
-          >
-            <RefreshCw
-              className={cn("size-4", shotsQuery.isFetching && "animate-spin")}
-              aria-hidden="true"
-            />
-            Refresh
-          </Button>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <GenerationSetup
         connections={connectionsQuery.data ?? []}

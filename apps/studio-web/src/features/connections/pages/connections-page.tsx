@@ -1,6 +1,5 @@
 import {
   Activity,
-  Cable,
   CheckCircle2,
   KeyRound,
   LoaderCircle,
@@ -28,6 +27,7 @@ import {
 import { actionErrorMessage, authErrorMessage } from "@/lib/api/errors";
 import { useSessionStore } from "@/lib/stores/session-store";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/shared/page-header";
 
 /** Limits mirrored from the OpenAPI ConnectionCreateIn / AccountCreateIn schemas. */
 const MAX_CONCURRENCY_LIMITS = { min: 1, max: 20 } as const;
@@ -439,46 +439,39 @@ export function ConnectionsPage() {
 
   return (
     <div data-testid="connections-page" className="space-y-6">
-      <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Cable className="size-5 text-primary" aria-hidden="true" />
-            <h2 className="text-xl font-semibold tracking-tight">
-              Provider Connections & Account Pools
-            </h2>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Configure video/image generation gateways, run health and capability probes, and manage
-            prioritized account pools.
-          </p>
-        </div>
-
-        <Button
-          type="button"
-          size="sm"
-          variant={showCreateForm ? "outline" : "default"}
-          onClick={() => {
-            if (showCreateForm) {
-              closeCreateForm();
-              return;
-            }
-            createConnection.reset();
-            setShowCreateForm(true);
-          }}
-        >
-          {showCreateForm ? (
-            <>
-              <X className="size-4" aria-hidden="true" />
-              Close form
-            </>
-          ) : (
-            <>
-              <Plus className="size-4" aria-hidden="true" />
-              New connection
-            </>
-          )}
-        </Button>
-      </div>
+      <PageHeader
+        title="Connections"
+        description="Provider gateways every project generates through: health and capability probes, and the account pool each one rotates through."
+        actions={
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant={showCreateForm ? "outline" : "default"}
+              onClick={() => {
+                if (showCreateForm) {
+                  closeCreateForm();
+                  return;
+                }
+                createConnection.reset();
+                setShowCreateForm(true);
+              }}
+            >
+              {showCreateForm ? (
+                <>
+                  <X className="size-4" aria-hidden="true" />
+                  Close form
+                </>
+              ) : (
+                <>
+                  <Plus className="size-4" aria-hidden="true" />
+                  New connection
+                </>
+              )}
+            </Button>
+          </>
+        }
+      />
 
       {showCreateForm && (
         <form

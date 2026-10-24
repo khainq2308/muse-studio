@@ -1,6 +1,7 @@
 import { useQueries } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FolderPlus } from "lucide-react";
+import { PageHeader } from "@/components/shared/page-header";
 import { QueryState } from "@/components/shared/query-state";
 import { useConnections } from "@/entities/connection/api";
 import { useProjects } from "@/entities/project/api";
@@ -54,21 +55,19 @@ export function OverviewPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight">Overview</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Recently updated projects, each with the next step its shots call for.
-          </p>
-        </div>
-        <Link
-          to="/projects"
-          className="inline-flex h-9 items-center gap-2 self-start rounded-lg border border-border bg-background px-3.5 text-sm font-medium transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:self-auto"
-        >
-          <FolderPlus className="size-4 text-muted-foreground" aria-hidden="true" />
-          All projects & new project
-        </Link>
-      </div>
+      <PageHeader
+        title="Overview"
+        description="Recently updated projects, each with the next step its shots call for."
+        actions={
+          <Link
+            to="/projects"
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3.5 text-sm font-medium transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <FolderPlus className="size-4 text-muted-foreground" aria-hidden="true" />
+            All projects & new project
+          </Link>
+        }
+      />
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <section aria-labelledby="overview-recent" className="min-w-0 space-y-3">

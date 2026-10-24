@@ -114,12 +114,7 @@ export default function ProjectModuleRoute() {
         )}
       </div>
       <ProjectModuleNav projectId={projectId} activeModule={module} />
-      <section
-        data-testid="project-module-route"
-        data-project-id={projectId}
-        data-module={module}
-        className="rounded-xl border border-border bg-card p-6 shadow-xs"
-      >
+      <section data-testid="project-module-route" data-project-id={projectId} data-module={module}>
         {content}
       </section>
     </>
