@@ -302,7 +302,7 @@ describe("TimelineEditorPage honest sequence view", () => {
     expect(screen.queryByText(/^Full$/)).toBeNull();
     expect(screen.queryByRole("button", { name: /zoom/i })).toBeNull();
     expect(screen.getByLabelText("Selected clip")).toHaveTextContent(/Assemble a timeline/);
-    expect(screen.getByRole("heading", { name: "Timeline Assembly & Export" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Timeline & Export" })).toBeVisible();
     expect(screen.queryByText(/not available yet/i)).toBeNull();
     expect(screen.getByText(/trim, reorder, remove clips/i)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Clip edits" })).toBeNull();

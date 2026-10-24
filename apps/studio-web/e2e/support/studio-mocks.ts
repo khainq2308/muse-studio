@@ -660,6 +660,8 @@ function defaultResponse({ method, pathname }: Recorded): MockResponse {
     "/api/v1/metrics/summary": metricsSummary,
     "/api/v1/system/logs": systemLogs,
     [`${P}/shots`]: shots,
+    // The second project has no shots yet, so the overview asks for a script.
+    "/api/v1/projects/second-project/shots": [],
     "/api/v1/queue/shots/shot-1/takes": shotOneTakes,
     "/api/v1/queue/shots/shot-2/takes": [],
     "/api/v1/queue/shots/shot-3/takes": [],

@@ -1,3 +1,4 @@
+import { isShotBlocked } from "@/entities/shot/status";
 import type { ShotBoardTab } from "@/features/shot-board/search";
 import {
   groupShotsByScene,
@@ -21,14 +22,7 @@ export function textOrMissing(value: string | null | undefined): string {
   return value && value.trim() ? value : MISSING;
 }
 
-/** Blocked by the backend generation state or by a Prompt Linter blocker. */
-export function isShotBlocked(shot: ProjectShot): boolean {
-  return (
-    shot.generation_state === "blocked_reference" ||
-    shot.generation_state === "blocked_upstream_frame" ||
-    shotLintBlockers(shot.lint_report).length > 0
-  );
-}
+export { isShotBlocked };
 
 /** Rail filters, each derived from a real `ProjectShotOut` field. */
 export const SHOT_FILTERS = ["all", "needs_take", "blocked", "approved"] as const;

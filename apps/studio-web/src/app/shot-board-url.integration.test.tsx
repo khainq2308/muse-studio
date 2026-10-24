@@ -112,7 +112,7 @@ describe("Shot Board URL state", () => {
       "true",
     );
 
-    await user.click(screen.getAllByRole("link", { name: "Open Queue Monitor" })[0]!);
+    await user.click(screen.getAllByRole("link", { name: "Open Generation Queue" })[0]!);
     await waitFor(() =>
       expect(router.state.location.pathname).toBe("/projects/project-1/queue-monitor"),
     );

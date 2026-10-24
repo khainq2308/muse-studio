@@ -17,15 +17,17 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => () => Promise.resolve(),
   Link: ({
     children,
+    to,
     params,
     "aria-current": ariaCurrent,
   }: {
     children: unknown;
+    to: string;
     params?: { projectId: string; module: string };
     "aria-current"?: "page";
   }) => (
     <a
-      href={params ? `/projects/${params.projectId}/${params.module}` : "/"}
+      href={params ? `/projects/${params.projectId}/${params.module}` : to}
       aria-current={ariaCurrent}
     >
       {children as string}
@@ -73,21 +75,15 @@ vi.mock("@/features/timeline-editor", () => ({
   },
 }));
 
-vi.mock("@/features/connections", () => ({
-  default: function ConnectionsStub({ projectId }: { projectId: string }) {
-    return <div data-testid="connections-stub">{projectId}</div>;
-  },
-}));
-
 vi.mock("@/features/projects", () => ({
-  default: function ProjectsStub({ projectId }: { projectId: string }) {
-    return <div data-testid="projects-stub">{projectId}</div>;
+  ProjectSettingsPage: function ProjectSettingsStub({ projectId }: { projectId: string }) {
+    return <div data-testid="project-settings-stub">{projectId}</div>;
   },
 }));
 
 vi.mock("@/features/system-ops", () => ({
-  default: function SystemOpsStub({ projectId }: { projectId: string }) {
-    return <div data-testid="system-ops-stub">{projectId}</div>;
+  ProjectDataPage: function ProjectDataStub({ projectId }: { projectId: string }) {
+    return <div data-testid="project-data-stub">{projectId}</div>;
   },
 }));
 
@@ -123,7 +119,7 @@ describe("ProjectModuleRoute", () => {
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Project modules" });
     const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
-    const queue = within(nav).getByRole("link", { name: "Queue Monitor" });
+    const queue = within(nav).getByRole("link", { name: "Generation Queue" });
     expect(shotBoard).toHaveAttribute("aria-current", "page");
     expect(shotBoard).toHaveAttribute("href", "/projects/project-a/shot-board");
     expect(queue).not.toHaveAttribute("aria-current");
@@ -137,34 +133,72 @@ describe("ProjectModuleRoute", () => {
     expect(screen.getByTestId("script-studio-stub").textContent).toBe("project-a");
     expect(screen.queryByTestId("project-module-placeholder")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const scriptStudio = within(nav).getByRole("link", { name: "Script Studio" });
+    const scriptStudio = within(nav).getByRole("link", { name: "Script & Story Bible" });
     const shotBoard = within(nav).getByRole("link", { name: "Shot Board" });
     expect(scriptStudio).toHaveAttribute("aria-current", "page");
     expect(scriptStudio).toHaveAttribute("href", "/projects/project-a/script-studio");
     expect(shotBoard).not.toHaveAttribute("aria-current");
   });
 
-  it("marks Project Settings as the active module on the projects route", () => {
-    mocks.params = { projectId: "project-a", module: "projects" };
+  it("orders the production steps and keeps workspace tools out of project navigation", () => {
+    mocks.params = { projectId: "project-a", module: "shot-board" };
     render(<ProjectModuleRoute />);
 
-    expect(screen.getByTestId("projects-stub").textContent).toBe("project-a");
     const nav = screen.getByRole("navigation", { name: "Project modules" });
-    const settings = within(nav).getByRole("link", { name: "Project Settings" });
-    const systemOps = within(nav).getByRole("link", { name: "System & Backups" });
-    expect(settings).toHaveAttribute("aria-current", "page");
-    expect(settings).toHaveAttribute("href", "/projects/project-a/projects");
-    expect(systemOps).not.toHaveAttribute("aria-current");
-    expect(systemOps).toHaveAttribute("href", "/projects/project-a/system-ops");
+    const steps = within(within(nav).getByRole("list", { name: "Production steps" })).getAllByRole(
+      "link",
+    );
+    expect(steps.map((link) => link.textContent)).toEqual([
+      "1Script & Story Bible",
+      "2Shot Board",
+      "3Generation Queue",
+      "4Timeline & Export",
+    ]);
+    const more = within(nav).getByRole("list", { name: "More project tools" });
+    expect(within(more).getByRole("link", { name: /Workflow Automation/ })).toHaveTextContent(
+      "Advanced",
+    );
+    expect(within(more).getByRole("link", { name: "Project Settings" })).toHaveAttribute(
+      "href",
+      "/projects/project-a/settings",
+    );
+    expect(within(nav).queryByRole("link", { name: /Connections/ })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: /System/ })).toBeNull();
   });
 
-  it("renders Workflow Canvas, Timeline Editor, Connections, Projects, and System Ops modules", () => {
+  it("renders the project name in a breadcrumb back to the workspace project list", () => {
+    mocks.projects = {
+      isPending: false,
+      isSuccess: true,
+      data: [{ id: "project-a", name: "Neon Horizon" } as { id: string }],
+    };
+    render(<ProjectModuleRoute />);
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link", { name: "Projects" })).toHaveAttribute(
+      "href",
+      "/projects",
+    );
+    expect(within(breadcrumb).getByText("Neon Horizon")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("composes project settings with the project's backups and assets", () => {
+    mocks.params = { projectId: "project-a", module: "settings" };
+    render(<ProjectModuleRoute />);
+
+    expect(screen.getByTestId("project-settings-stub").textContent).toBe("project-a");
+    expect(screen.getByTestId("project-data-stub").textContent).toBe("project-a");
+    const nav = screen.getByRole("navigation", { name: "Project modules" });
+    expect(within(nav).getByRole("link", { name: "Project Settings" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("renders the Workflow Automation and Timeline & Export modules", () => {
     for (const [module, testId] of [
       ["workflow-canvas", "workflow-canvas-stub"],
       ["timeline-editor", "timeline-editor-stub"],
-      ["connections", "connections-stub"],
-      ["projects", "projects-stub"],
-      ["system-ops", "system-ops-stub"],
     ] as const) {
       mocks.params = { projectId: "project-a", module };
       const { unmount } = render(<ProjectModuleRoute />);

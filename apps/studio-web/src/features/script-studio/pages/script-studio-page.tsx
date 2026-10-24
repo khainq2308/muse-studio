@@ -199,7 +199,7 @@ export function ScriptStudioPage({ projectId }: ScriptStudioPageProps) {
         <div>
           <p className="text-sm font-medium text-primary">Script &amp; Story Bible</p>
           <h2 id="script-studio-heading" className="mt-1 text-2xl font-semibold tracking-tight">
-            Script Studio
+            Script &amp; Story Bible
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Import scripts, lock Story Bible references and export the compiled shot list for this

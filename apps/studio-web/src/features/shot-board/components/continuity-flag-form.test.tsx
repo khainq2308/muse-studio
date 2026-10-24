@@ -65,7 +65,7 @@ describe("ContinuityFlagForm confirmation", () => {
     );
   });
 
-  it("shows the Queue Monitor link and a take refresh for an unknown outcome", async () => {
+  it("shows the Generation Queue link and a take refresh for an unknown outcome", async () => {
     const user = userEvent.setup();
     const initial = props({
       error: { message: "The outcome is unknown: check first.", outcomeUnknown: true },
@@ -73,7 +73,7 @@ describe("ContinuityFlagForm confirmation", () => {
     render(<ContinuityFlagForm {...initial} />);
 
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("Check the Queue Monitor");
+    expect(alert).toHaveTextContent("Check the Generation Queue");
     await user.click(screen.getByRole("button", { name: "Refresh takes" }));
     expect(initial.onRefreshTakes).toHaveBeenCalledTimes(1);
   });

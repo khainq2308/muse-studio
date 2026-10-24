@@ -50,7 +50,7 @@ type QueryOptionsShape = {
   }) => number | false;
 };
 
-describe("Queue Monitor query hooks", () => {
+describe("Generation Queue query hooks", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();

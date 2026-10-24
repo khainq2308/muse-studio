@@ -155,7 +155,7 @@ export function flagErrorFeedback(error: unknown, regenerate: boolean): FlagErro
     return {
       message:
         "The outcome is unknown: the continuity flag and a regeneration task may already exist. " +
-        "Check the Queue Monitor and refresh the take list before retrying, otherwise a second " +
+        "Check the Generation Queue and refresh the take list before retrying, otherwise a second " +
         "generation may be started.",
       outcomeUnknown: true,
     };

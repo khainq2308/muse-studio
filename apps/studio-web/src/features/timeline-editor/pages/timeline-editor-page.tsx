@@ -251,9 +251,7 @@ export function TimelineEditorPage({ projectId }: TimelineEditorPageProps) {
             <Clapperboard className="size-4" aria-hidden="true" />
           </div>
           <div>
-            <h2 className="text-base font-bold tracking-tight sm:text-lg">
-              Timeline Assembly &amp; Export
-            </h2>
+            <h2 className="text-base font-bold tracking-tight sm:text-lg">Timeline &amp; Export</h2>
             <p className="text-[11px] text-muted-foreground">
               Assemble selected shot takes into a sequence, then trim, reorder, remove clips and set
               per-clip transitions before launching FFprobe-verified MP4 exports.

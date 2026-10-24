@@ -153,7 +153,7 @@ export function ContinuityFlagForm({
           <p>{error.message}</p>
           {error.outcomeUnknown && (
             <div className="flex flex-wrap items-center gap-3">
-              <QueueMonitorLink projectId={projectId} label="Check the Queue Monitor" />
+              <QueueMonitorLink projectId={projectId} label="Check the Generation Queue" />
               <Button type="button" size="sm" variant="outline" onClick={onRefreshTakes}>
                 <RefreshCw aria-hidden="true" />
                 Refresh takes

@@ -460,7 +460,7 @@ function FlagResult({
       ) : null}
       <div className="flex flex-wrap items-center gap-3">
         {result.regenerated_task_id && (
-          <QueueMonitorLink projectId={projectId} label="Follow regeneration in Queue Monitor" />
+          <QueueMonitorLink projectId={projectId} label="Follow regeneration in Generation Queue" />
         )}
         <Button type="button" size="sm" variant="ghost" onClick={onDismiss}>
           Dismiss

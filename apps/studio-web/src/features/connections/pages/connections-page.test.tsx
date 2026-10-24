@@ -91,7 +91,7 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <ConnectionsPage projectId="proj-1" />
+      <ConnectionsPage />
     </QueryClientProvider>,
   );
 }

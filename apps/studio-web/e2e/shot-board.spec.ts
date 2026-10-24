@@ -314,7 +314,7 @@ test("launches a batch after confirmation and lists frame-chain warnings and blo
 
   await page.screenshot({ path: "test-results/shot-board-batch.png", fullPage: true });
 
-  await result.getByRole("link", { name: "Follow progress in Queue Monitor" }).click();
+  await result.getByRole("link", { name: "Follow progress in Generation Queue" }).click();
   await expect(page).toHaveURL(/\/projects\/test-project\/queue-monitor$/);
-  await expect(page.getByRole("heading", { name: "Queue Monitor" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Generation Queue" })).toBeVisible();
 });

@@ -32,18 +32,7 @@ export function useStoryBible(projectId: string) {
   });
 }
 
-/** Project shot list (`GET /api/v1/projects/{project_id}/shots`). */
-export function useProjectShots(projectId: string) {
-  const sessionVersion = useSessionStore((state) => state.sessionVersion);
-  return useQuery({
-    queryKey: queryKeys.projectShots(sessionVersion, projectId),
-    queryFn: ({ signal }) =>
-      apiGet("/api/v1/projects/{project_id}/shots", {
-        signal,
-        pathParams: { project_id: projectId },
-      }),
-  });
-}
+export { useProjectShots } from "@/entities/shot/api";
 
 function invalidateStoryBibleAndShots(
   queryClient: ReturnType<typeof useQueryClient>,

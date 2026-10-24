@@ -4,7 +4,7 @@ import { ListChecks } from "lucide-react";
 /** Route link to this project's Queue Monitor, where generation progress is tracked. */
 export function QueueMonitorLink({
   projectId,
-  label = "Open Queue Monitor",
+  label = "Open Generation Queue",
 }: {
   projectId: string;
   label?: string;

@@ -15,8 +15,8 @@ import {
 
 const ASPECT_RATIO_PATTERN = /^(16:9|9:16|1:1|21:9)$/;
 
-test.describe("Projects module", () => {
-  test("shows project settings, creates a project with a valid aspect ratio and duplicates settings only", async ({
+test.describe("Projects and project settings", () => {
+  test("creates a project from the workspace list and duplicates settings from the project", async ({
     page,
   }) => {
     const requests = await mockStudioApi(page, ({ method, pathname, body }) => {
@@ -48,24 +48,14 @@ test.describe("Projects module", () => {
       return undefined;
     });
 
-    await page.goto(`/projects/${PROJECT_ID}/projects`);
-
-    await expect(
-      page.getByRole("heading", { name: "Project Settings & Revision History" }),
-    ).toBeVisible();
-    const profile = page.getByRole("region", { name: "Active project profile" });
-    await expect(profile).toContainText("Test project");
-    await expect(profile).toContainText("16:9 · 24 fps");
-    await expect(profile).toContainText("2d_anime_cinematic");
-    const history = page.getByRole("region", { name: "Revision history" });
-    await expect(history).toContainText("Project Revision History (2)");
-    await expect(history).toContainText("Imported script revision v2");
-    await expect(page.getByRole("region", { name: "Workspace switcher" })).toContainText(
+    await page.goto("/projects");
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "All projects" })).toContainText(
       "Episode 02 - Glass Citadel",
     );
 
-    await page.getByRole("button", { name: "New workspace" }).click();
-    const form = page.getByRole("form", { name: "Create new workspace" });
+    await page.getByRole("button", { name: "New project" }).click();
+    const form = page.getByRole("form", { name: "Create new project" });
     await form.getByLabel("Project name").fill("Episode 03 - Vertical teaser");
     await expect(form.getByLabel("Aspect ratio").locator("option")).toHaveText([
       "16:9",
@@ -74,7 +64,7 @@ test.describe("Projects module", () => {
       "21:9",
     ]);
     await form.getByLabel("Aspect ratio").selectOption("9:16");
-    await form.getByRole("button", { name: "Create workspace" }).click();
+    await form.getByRole("button", { name: "Create project" }).click();
 
     await expect(page.getByRole("status")).toContainText(
       "Created project Episode 03 - Vertical teaser (created-project).",
@@ -94,6 +84,16 @@ test.describe("Projects module", () => {
       style_preset: "2d_anime_cinematic",
       output_profile: "1080p_h264",
     });
+
+    await page.goto(`/projects/${PROJECT_ID}/settings`);
+    await expect(page.getByRole("heading", { name: "Project settings" })).toBeVisible();
+    const profile = page.getByRole("region", { name: "Active project profile" });
+    await expect(profile).toContainText("Test project");
+    await expect(profile).toContainText("16:9 · 24 fps");
+    await expect(profile).toContainText("2d_anime_cinematic");
+    const history = page.getByRole("region", { name: "Revision history" });
+    await expect(history).toContainText("Project Revision History (2)");
+    await expect(history).toContainText("Imported script revision v2");
 
     await page.getByRole("button", { name: "Duplicate settings" }).click();
     const duplicated = page.getByRole("status");
@@ -119,7 +119,7 @@ test.describe("Connections module", () => {
         : undefined,
     );
 
-    await page.goto(`/projects/${PROJECT_ID}/connections`);
+    await page.goto("/connections");
 
     await expect(
       page.getByRole("heading", { name: "Provider Connections & Account Pools" }),
@@ -172,9 +172,7 @@ test.describe("Workflow Canvas module", () => {
     });
 
     await page.goto(`/projects/${PROJECT_ID}/workflow-canvas`);
-    await expect(
-      page.getByRole("heading", { name: "Workflow DAG Canvas & Merkle Execution" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Workflow Automation" })).toBeVisible();
 
     await page.getByRole("button", { name: "Initialize M3 Pipeline DAG" }).click();
     const canvas = page.getByRole("region", { name: "Workflow DAG canvas" });
@@ -445,7 +443,7 @@ test.describe("Timeline Editor clip editing", () => {
   });
 });
 
-test.describe("System Ops module", () => {
+test.describe("Project backups and System maintenance", () => {
   test("lists backups, confirms backup deletion and gates real orphan cleanup behind a dry-run", async ({
     page,
   }) => {
@@ -462,17 +460,13 @@ test.describe("System Ops module", () => {
       return undefined;
     });
 
-    await page.goto(`/projects/${PROJECT_ID}/system-ops`);
+    await page.goto(`/projects/${PROJECT_ID}/settings`);
 
     const backupsRegion = page.getByRole("region", { name: "Project backups" });
     await expect(backupsRegion).toContainText("Project Backups (2)");
     for (const backup of backups) {
       await expect(backupsRegion.getByText(backup.filename)).toBeVisible();
     }
-    await expect(page.getByRole("region", { name: "Observability summary" })).toContainText(
-      "2 archives",
-    );
-
     const deletes = () => requests.filter((r) => r.method === "DELETE");
     await backupsRegion
       .getByRole("button", { name: `Delete backup ${backups[0].filename}` })
@@ -492,6 +486,12 @@ test.describe("System Ops module", () => {
       .click();
     await expect.poll(() => deletes().map((r) => r.pathname)).toEqual(["/api/v1/backups/bak-1"]);
 
+    // Orphan cleanup touches every project, so it lives on the workspace System page.
+    await expect(page.getByRole("region", { name: "Orphan media maintenance" })).toHaveCount(0);
+    await page.goto("/system");
+    await expect(page.getByRole("region", { name: "Observability summary" })).toContainText(
+      "2 archives",
+    );
     const orphans = page.getByRole("region", { name: "Orphan media maintenance" });
     const realCleanup = orphans.getByRole("button", { name: "Delete Orphan Files" });
     await expect(realCleanup).toBeDisabled();

@@ -11,10 +11,19 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({
     children,
     params,
+    "aria-label": ariaLabel,
   }: {
     children: ReactNode;
     params?: { projectId: string; module: string };
-  }) => <a href={params ? `/projects/${params.projectId}/${params.module}` : "/"}>{children}</a>,
+    "aria-label"?: string;
+  }) => (
+    <a
+      href={params ? `/projects/${params.projectId}/${params.module}` : "/"}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </a>
+  ),
 }));
 
 const BACKEND_ASPECT_RATIO = /^(16:9|9:16|1:1|21:9)$/;
@@ -85,7 +94,7 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <ProjectsPage projectId="proj_a" />
+      <ProjectsPage />
     </QueryClientProvider>,
   );
 }
@@ -103,9 +112,9 @@ describe("ProjectsPage", () => {
   it("only offers aspect ratios the backend accepts", async () => {
     stubApi();
     renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "New workspace" }));
+    await userEvent.click(screen.getByRole("button", { name: "New project" }));
 
-    const form = screen.getByRole("form", { name: "Create new workspace" });
+    const form = screen.getByRole("form", { name: "Create new project" });
     const options = within(within(form).getByLabelText("Aspect ratio"))
       .getAllByRole("option")
       .map((option) => option.getAttribute("value"));
@@ -115,18 +124,21 @@ describe("ProjectsPage", () => {
     expect(within(form).getByText(/export does not apply output profiles yet/i)).toBeVisible();
   });
 
-  it("creates a project with a valid body and reports creation, not duplication", async () => {
+  it("creates a project with a valid body and points to the script as the first step", async () => {
     const calls = stubApi();
     renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "New workspace" }));
-    const form = screen.getByRole("form", { name: "Create new workspace" });
+    await userEvent.click(screen.getByRole("button", { name: "New project" }));
+    const form = screen.getByRole("form", { name: "Create new project" });
     await userEvent.type(within(form).getByLabelText("Project name"), "Glass Citadel");
     await userEvent.selectOptions(within(form).getByLabelText("Aspect ratio"), "21:9");
-    await userEvent.click(within(form).getByRole("button", { name: "Create workspace" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Create project" }));
 
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent("Created project Glass Citadel (proj_new).");
-    expect(status).not.toHaveTextContent(/duplicat/i);
+    expect(within(status).getByRole("link", { name: /Start with the script/ })).toHaveAttribute(
+      "href",
+      "/projects/proj_new/script-studio",
+    );
 
     const post = calls.find((call) => call.method === "POST" && call.url.endsWith("/projects"));
     expect(post?.body).toEqual({
@@ -141,32 +153,36 @@ describe("ProjectsPage", () => {
     expect((post?.body as { aspect_ratio: string }).aspect_ratio).toMatch(BACKEND_ASPECT_RATIO);
   });
 
-  it("states that duplication copies only project settings", async () => {
-    stubApi();
-    renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "Duplicate settings" }));
-
-    const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("Duplicated project settings as Neon Horizon (Copy)");
-    expect(status).toHaveTextContent(
-      "Only project settings are copied; Story Bible, shots and assets are not copied.",
+  it("lists projects most recently updated first, each opening inside the project", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json([
+          project({ id: "proj_old", name: "Old Cut", updated_at: "2026-09-01T00:00:00Z" }),
+          project({ id: "proj_new", name: "New Cut", updated_at: "2026-10-20T00:00:00Z" }),
+        ]),
+      ),
     );
-    expect(status).not.toHaveTextContent(/cloned Story Bible/i);
+    renderPage();
+
+    const list = await screen.findByRole("region", { name: "All projects" });
+    const opens = await within(list).findAllByRole("link", { name: /^Open / });
+    expect(opens[0]).toHaveAccessibleName("Open New Cut");
+    expect(opens[0]).toHaveAttribute("href", "/projects/proj_new/shot-board");
+    expect(within(list).getAllByRole("link", { name: "Settings" })[1]).toHaveAttribute(
+      "href",
+      "/projects/proj_old/settings",
+    );
   });
 
-  it("shows create and duplicate mutation errors", async () => {
-    stubApi({ createStatus: 422, duplicateStatus: 404 });
+  it("shows a create mutation error inside the form", async () => {
+    stubApi({ createStatus: 422 });
     renderPage();
 
-    await userEvent.click(screen.getByRole("button", { name: "Duplicate settings" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not duplicate project: Original project not found.",
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "New workspace" }));
-    const form = screen.getByRole("form", { name: "Create new workspace" });
+    await userEvent.click(screen.getByRole("button", { name: "New project" }));
+    const form = screen.getByRole("form", { name: "Create new project" });
     await userEvent.type(within(form).getByLabelText("Project name"), "X");
-    await userEvent.click(within(form).getByRole("button", { name: "Create workspace" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Create project" }));
     await waitFor(() =>
       expect(within(form).getByRole("alert")).toHaveTextContent(
         "Could not create project: Project name cannot be blank.",

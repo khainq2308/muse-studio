@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { PROJECT_ID, createdWorkflow, mockStudioApi } from "./support/studio-mocks";
 
 /**
- * Viewport evidence: each production module loaded with populated mocks, captured as a full-page
+ * Viewport evidence: each workspace page and project module loaded with populated mocks, captured as a full-page
  * screenshot under test-results/ui-evidence/, and checked for horizontal page overflow.
  */
 
@@ -13,26 +13,60 @@ const VIEWPORTS = [
   { width: 390, height: 844 },
 ] as const;
 
-interface ModuleCase {
-  module: string;
+interface PageCase {
+  /** Screenshot name. */
+  name: string;
+  path: string;
+  /** Project module rendered at `path`; absent for workspace pages. */
+  module?: string;
   /** Waits until the populated state is on screen (and drives it there when needed). */
   ready: (page: Page) => Promise<void>;
 }
 
-const MODULES: ModuleCase[] = [
+const PAGES: PageCase[] = [
   {
-    module: "projects",
+    name: "overview",
+    path: "/",
     ready: async (page) => {
-      await expect(page.getByText("Imported script revision v2")).toBeVisible();
+      await expect(page.getByRole("list", { name: "Recently updated projects" })).toBeVisible();
+      await expect(page.getByText("Next step").first()).toBeVisible();
     },
   },
   {
-    module: "connections",
+    name: "projects",
+    path: "/projects",
+    ready: async (page) => {
+      await expect(page.getByText("Episode 02 - Glass Citadel")).toBeVisible();
+    },
+  },
+  {
+    name: "connections",
+    path: "/connections",
     ready: async (page) => {
       await expect(page.getByText("Primary account", { exact: true })).toBeVisible();
     },
   },
   {
+    name: "system",
+    path: "/system",
+    ready: async (page) => {
+      await expect(page.getByRole("region", { name: "Observability summary" })).toBeVisible();
+    },
+  },
+  {
+    name: "settings",
+    path: `/projects/${PROJECT_ID}/settings`,
+    module: "settings",
+    ready: async (page) => {
+      await expect(page.getByText("Imported script revision v2")).toBeVisible();
+      await expect(page.getByRole("region", { name: "Project backups" })).toContainText(
+        "Project Backups (2)",
+      );
+    },
+  },
+  {
+    name: "workflow-canvas",
+    path: `/projects/${PROJECT_ID}/workflow-canvas`,
     module: "workflow-canvas",
     ready: async (page) => {
       await page.getByRole("button", { name: "Initialize M3 Pipeline DAG" }).click();
@@ -40,21 +74,16 @@ const MODULES: ModuleCase[] = [
     },
   },
   {
+    name: "timeline-editor",
+    path: `/projects/${PROJECT_ID}/timeline-editor`,
     module: "timeline-editor",
     ready: async (page) => {
       await expect(page.getByText("Shot: shot-1")).toBeVisible();
     },
   },
   {
-    module: "system-ops",
-    ready: async (page) => {
-      await expect(page.getByRole("region", { name: "Project backups" })).toContainText(
-        "Project Backups (2)",
-      );
-      await expect(page.getByRole("region", { name: "Observability summary" })).toBeVisible();
-    },
-  },
-  {
+    name: "shot-board",
+    path: `/projects/${PROJECT_ID}/shot-board`,
     module: "shot-board",
     ready: async (page) => {
       // Shot 1 opens by default on its Takes tab (it has takes), with frame thumbnails loaded.
@@ -74,6 +103,8 @@ const MODULES: ModuleCase[] = [
     },
   },
   {
+    name: "script-studio",
+    path: `/projects/${PROJECT_ID}/script-studio`,
     module: "script-studio",
     ready: async (page) => {
       await expect(page.getByText("Detective Linh").first()).toBeVisible();
@@ -114,23 +145,25 @@ for (const viewport of VIEWPORTS) {
   test.describe(`viewport ${size}`, () => {
     test.use({ viewport });
 
-    for (const { module, ready } of MODULES) {
-      test(`${module} renders without horizontal overflow`, async ({ page }) => {
+    for (const { name, path, module, ready } of PAGES) {
+      test(`${name} renders without horizontal overflow`, async ({ page }) => {
         await mockStudioApi(page, ({ method, pathname }) =>
           method === "POST" && pathname === `/api/v1/projects/${PROJECT_ID}/workflows`
             ? { status: 201, body: createdWorkflow }
             : undefined,
         );
 
-        await page.goto(`/projects/${PROJECT_ID}/${module}`);
-        await expect(page.getByTestId("project-module-route")).toHaveAttribute(
-          "data-module",
-          module,
-        );
+        await page.goto(path);
+        if (module) {
+          await expect(page.getByTestId("project-module-route")).toHaveAttribute(
+            "data-module",
+            module,
+          );
+        }
         await ready(page);
 
         await page.screenshot({
-          path: `test-results/ui-evidence/${module}-${size}.png`,
+          path: `test-results/ui-evidence/${name}-${size}.png`,
           fullPage: true,
         });
 
@@ -141,7 +174,7 @@ for (const viewport of VIEWPORTS) {
         const culprits = scrollWidth > innerWidth + 1 ? await overflowCulprits(page) : [];
         expect(
           scrollWidth,
-          `${module} @ ${size}: documentElement.scrollWidth=${scrollWidth} > innerWidth=${innerWidth}. Overflowing elements:\n${culprits.join("\n")}`,
+          `${name} @ ${size}: documentElement.scrollWidth=${scrollWidth} > innerWidth=${innerWidth}. Overflowing elements:\n${culprits.join("\n")}`,
         ).toBeLessThanOrEqual(innerWidth + 1);
       });
     }

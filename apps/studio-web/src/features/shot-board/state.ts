@@ -1,3 +1,4 @@
+import { groupShotsByScene as groupShotsByEntityScene } from "@/entities/shot/order";
 import { ApiError } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";
 
@@ -138,19 +139,10 @@ export interface ShotSceneGroup {
 /**
  * Group shots by scene, keeping scenes in the order of their first shot and shots in
  * `sequence_index` order. The API returns shots ordered by sequence index but does not
- * promise it, so sort defensively.
+ * promise it, so sort defensively. Shared with the overview through `entities/shot/order`.
  */
 export function groupShotsByScene(shots: readonly ProjectShot[]): ShotSceneGroup[] {
-  const ordered = [...shots].sort(
-    (left, right) => left.sequence_index - right.sequence_index || left.id.localeCompare(right.id),
-  );
-  const groups = new Map<string, ProjectShot[]>();
-  for (const shot of ordered) {
-    const group = groups.get(shot.scene_id);
-    if (group) group.push(shot);
-    else groups.set(shot.scene_id, [shot]);
-  }
-  return [...groups.entries()].map(([sceneId, sceneShots]) => ({ sceneId, shots: sceneShots }));
+  return groupShotsByEntityScene(shots);
 }
 
 /** Backend `ShotUpdateIn` bounds (`MAX_SHOT_DURATION_SECONDS` and column lengths). */

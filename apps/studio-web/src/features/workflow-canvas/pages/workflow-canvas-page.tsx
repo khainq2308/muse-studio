@@ -320,9 +320,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <GitBranch className="size-5 text-primary" aria-hidden="true" />
-            <h2 className="text-xl font-semibold tracking-tight">
-              Workflow DAG Canvas & Merkle Execution
-            </h2>
+            <h2 className="text-xl font-semibold tracking-tight">Workflow Automation</h2>
             <span className="rounded-full border border-warning/35 bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
               Simulation / Planning Engine
             </span>
@@ -330,7 +328,7 @@ export function WorkflowCanvasPage({ projectId }: WorkflowCanvasPageProps) {
           <p className="mt-1 text-sm text-muted-foreground">
             Inspect typed DAG nodes, verify deterministic Merkle cache keys, plan execution order
             with Dry Run, or step through Manual Approval gates. Real provider renders run in Shot
-            Board & Queue Monitor.
+            Board & Generation Queue.
           </p>
         </div>
 

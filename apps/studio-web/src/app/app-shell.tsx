@@ -1,40 +1,68 @@
-import { Link, Outlet } from "@tanstack/react-router";
-import { Film, LayoutDashboard, Sparkles } from "lucide-react";
+import { Link, Outlet, useMatchRoute } from "@tanstack/react-router";
+import { Cable, Film, FolderOpen, HardDrive, LayoutDashboard, type LucideIcon } from "lucide-react";
 import { AdminTokenForm } from "@/features/admin-session/components/admin-token-form";
 import { ApiStatusBadge } from "@/features/api-status/components/api-status-badge";
+import { cn } from "@/lib/utils";
+
+/** Workspace-wide destinations; project work happens inside a project's own navigation. */
+const WORKSPACE_NAV: ReadonlyArray<{
+  to: "/" | "/projects" | "/connections" | "/system";
+  label: string;
+  icon: LucideIcon;
+}> = [
+  { to: "/", label: "Overview", icon: LayoutDashboard },
+  { to: "/projects", label: "Projects", icon: FolderOpen },
+  { to: "/connections", label: "Connections", icon: Cable },
+  { to: "/system", label: "System", icon: HardDrive },
+];
+
+const NAV_LINK_CLASS =
+  "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const NAV_ACTIVE_CLASS = "bg-secondary text-foreground";
 
 export function AppShell() {
+  const matchRoute = useMatchRoute();
+  // Inside a project the Projects area stays highlighted, but only the open project module
+  // carries aria-current="page" (exact matching keeps the router from adding it here).
+  const inProject = Boolean(matchRoute({ to: "/projects/$projectId", fuzzy: true }));
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="border-b border-border bg-card/85 backdrop-blur-md">
-        <div className="mx-auto max-w-[1440px] px-4 py-3.5 sm:px-6 lg:px-8">
-          <header className="flex flex-col gap-3.5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex size-10 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
-                  <Film className="size-5" aria-hidden="true" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-xl font-bold tracking-tight sm:text-2xl">MuseStudio</h1>
-                    <span className="hidden items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary sm:inline-flex">
-                      <Sparkles className="size-3" aria-hidden="true" />
-                      Studio Suite
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">AI video production workspace</p>
-                </div>
-              </div>
-
-              <div className="hidden h-6 w-px bg-border sm:block" aria-hidden="true" />
-
+        <div className="mx-auto max-w-[1440px] px-4 py-3 sm:px-6 lg:px-8">
+          <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
               <Link
                 to="/"
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground shadow-2xs transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                activeOptions={{ exact: true }}
+                className="flex items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <LayoutDashboard className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                Workspace Overview
+                <span className="flex size-9 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary">
+                  <Film className="size-5" aria-hidden="true" />
+                </span>
+                <h1 className="text-lg font-bold tracking-tight sm:text-xl">MuseStudio</h1>
               </Link>
+
+              <nav aria-label="Workspace">
+                <ul className="flex flex-wrap items-center gap-1">
+                  {WORKSPACE_NAV.map(({ to, label, icon: Icon }) => (
+                    <li key={to}>
+                      <Link
+                        to={to}
+                        activeOptions={{ exact: true, includeSearch: false }}
+                        className={cn(
+                          NAV_LINK_CLASS,
+                          to === "/projects" && inProject && NAV_ACTIVE_CLASS,
+                        )}
+                        activeProps={{ className: NAV_ACTIVE_CLASS }}
+                      >
+                        <Icon className="size-4 shrink-0" aria-hidden="true" />
+                        {label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
             </div>
 
             <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">

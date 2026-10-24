@@ -142,7 +142,7 @@ export function QueueMonitorPage({ projectId }: QueueMonitorPageProps) {
         <div>
           <p className="text-sm font-medium text-primary">Project queue</p>
           <h2 id="queue-monitor-heading" className="mt-1 text-2xl font-semibold tracking-tight">
-            Queue Monitor
+            Generation Queue
           </h2>
           <p className="mt-2 break-all text-sm text-muted-foreground">
             Monitor generation tasks for project{" "}
