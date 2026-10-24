@@ -111,7 +111,7 @@ describe("QueueMonitorPage with the real query client", () => {
     await advance(apiRetryDelay(1, null));
     await advance(DEFAULT_REQUEST_TIMEOUT_MS);
 
-    expect(screen.getByRole("alert")).toHaveTextContent(/timed out/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/timed out|hết thời gian/i);
     expect(screen.getByTestId("queue-task-task-a")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
     queryClient.clear();
@@ -132,7 +132,9 @@ describe("QueueMonitorPage with the real query client", () => {
     // First poll at 2s fails (503), one retry 1s later fails too -> error state with data.
     await advance(2_000);
     await advance(1_000);
-    expect(screen.getByRole("alert")).toHaveTextContent(/showing the last loaded results/);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /showing the last loaded results|đang hiển thị kết quả tải trước đó/i,
+    );
     expect(screen.getByTestId("queue-task-task-a")).toBeTruthy();
     const callsAtError = calls;
 

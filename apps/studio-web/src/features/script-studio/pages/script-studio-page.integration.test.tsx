@@ -192,14 +192,14 @@ describe("ScriptStudioPage", () => {
     mount();
 
     expect(
-      await screen.findByText("Admin token required to read Story Bible."),
+      await screen.findByText("Cần có token quản trị để đọc Story Bible."),
     ).toBeInTheDocument();
     cleanup();
 
     useSessionStore.getState().setAdminToken("test-token");
     stubApi(() => ({ status: 200, body: [] }));
     mount("bible");
-    expect(await screen.findByText("No Story Bible entries yet")).toBeInTheDocument();
+    expect(await screen.findByText("Chưa có mục Story Bible nào")).toBeInTheDocument();
   });
 
   it("uploads a reference image, attaches its ID, and creates a new Story Bible entry", async () => {
@@ -242,37 +242,37 @@ describe("ScriptStudioPage", () => {
     });
     mount("bible");
 
-    await screen.findByText("No Story Bible entries yet");
-    await user.click(screen.getByRole("button", { name: "New Bible entry" }));
+    await screen.findByText("Chưa có mục Story Bible nào");
+    await user.click(screen.getByRole("button", { name: "Thêm mục Story Bible" }));
 
     const editor = screen.getByTestId("story-bible-editor-new");
-    await user.type(within(editor).getByLabelText("Code name"), "char_hero");
-    await user.type(within(editor).getByLabelText("Display name"), "Hero Kai");
+    await user.type(within(editor).getByLabelText("Mã định danh (code_name)"), "char_hero");
+    await user.type(within(editor).getByLabelText("Tên hiển thị"), "Hero Kai");
     await user.type(
-      within(editor).getByLabelText("Immutable traits"),
+      within(editor).getByLabelText("Đặc điểm nhận dạng cố định"),
       "short spiky black hair and amber eyes",
     );
-    await user.type(within(editor).getByLabelText("Current outfit"), "navy jacket");
+    await user.type(within(editor).getByLabelText("Trang phục hiện tại"), "navy jacket");
     await user.click(
       within(editor).getByRole("checkbox", {
-        name: "Require reference lock for downstream shots",
+        name: "Bắt buộc có ảnh tham chiếu để sinh video",
       }),
     );
 
     const file = new File([pngBytes], "portrait.png", { type: "image/png" });
-    await user.upload(within(editor).getByLabelText("Upload reference image"), file);
-    await user.click(within(editor).getByRole("button", { name: "Upload & attach" }));
+    await user.upload(within(editor).getByLabelText("Tải ảnh tham chiếu lên"), file);
+    await user.click(within(editor).getByRole("button", { name: "Tải lên & gắn vào" }));
 
-    expect(await within(editor).findByText(/Attached uploaded asset/)).toBeInTheDocument();
+    expect(await within(editor).findByText(/Đã gắn asset tải lên/)).toBeInTheDocument();
     expect(within(editor).getByTestId("editor-reference-assets")).toHaveTextContent(
       "ast_uploaded_1",
     );
 
-    await user.click(within(editor).getByRole("button", { name: "Create entry" }));
+    await user.click(within(editor).getByRole("button", { name: "Tạo mục" }));
     expect(await within(editor).findByTestId("story-bible-upsert-result")).toHaveTextContent(
-      "Saved char_hero (bib_new). Downstream project shots were recompiled.",
+      "Đã lưu char_hero (bib_new). Các shot hạ nguồn của dự án đã được biên dịch lại.",
     );
-    expect(within(editor).getByLabelText("Code name")).toHaveValue("");
+    expect(within(editor).getByLabelText("Mã định danh (code_name)")).toHaveValue("");
     expect(within(editor).queryByTestId("editor-reference-assets")).not.toBeInTheDocument();
 
     const upsertCall = requests.find(
@@ -304,16 +304,16 @@ describe("ScriptStudioPage", () => {
 
     const linhCard = await screen.findByTestId("story-bible-entry-char_linh");
     await user.click(
-      within(linhCard).getByRole("button", { name: "Edit Detective Linh (char_linh)" }),
+      within(linhCard).getByRole("button", { name: "Chỉnh sửa Detective Linh (char_linh)" }),
     );
 
     const editor = within(linhCard).getByTestId("story-bible-editor-char_linh");
-    const displayNameInput = within(editor).getByLabelText("Display name");
+    const displayNameInput = within(editor).getByLabelText("Tên hiển thị");
     await user.clear(displayNameInput);
     await user.type(displayNameInput, "Detective Linh — Undercover");
 
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(within(editor).getByLabelText("Display name")).toHaveValue(
+    await user.click(screen.getByRole("button", { name: "Làm mới" }));
+    expect(within(editor).getByLabelText("Tên hiển thị")).toHaveValue(
       "Detective Linh — Undercover",
     );
   });
@@ -358,16 +358,16 @@ describe("ScriptStudioPage", () => {
     mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
-    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Chèn kịch bản mẫu" }));
     await user.click(
       within(importPanel).getByRole("checkbox", {
-        name: /Apply changes directly to Story Bible & shots/,
+        name: /Tự động áp dụng các mục Story Bible và shot được đề xuất/,
       }),
     );
     expect(
       within(importPanel).getByTestId("existing-pipeline-overwrite-warning"),
     ).toBeInTheDocument();
-    await user.click(within(importPanel).getByRole("button", { name: "Import & apply script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Nhập & áp dụng kịch bản" }));
 
     expect(
       await within(importPanel).findAllByText(/Retry with replace_existing=true to confirm/),
@@ -375,13 +375,13 @@ describe("ScriptStudioPage", () => {
 
     await user.click(
       within(importPanel).getByRole("checkbox", {
-        name: /Confirm replacing existing shots and generated takes/,
+        name: /Xác nhận thay thế các shot hiện tại và take đã sinh/,
       }),
     );
-    await user.click(within(importPanel).getByRole("button", { name: "Import & apply script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Nhập & áp dụng kịch bản" }));
 
     const resultBanner = await within(importPanel).findByTestId("script-import-result");
-    expect(resultBanner).toHaveTextContent("Imported script revision v2 (scr_rev02)");
+    expect(resultBanner).toHaveTextContent("Đã nhập revision kịch bản v2 (scr_rev02)");
     expect(within(resultBanner).getByTestId("script-import-warnings")).toHaveTextContent(
       "SHOT 2: Duration clamped to 600s.",
     );
@@ -394,7 +394,7 @@ describe("ScriptStudioPage", () => {
     expect(postBodies[1]?.replace_existing).toBe(true);
     expect(
       within(importPanel).getByRole("checkbox", {
-        name: /Confirm replacing existing shots and generated takes/,
+        name: /Xác nhận thay thế các shot hiện tại và take đã sinh/,
       }),
     ).not.toBeChecked();
   });
@@ -474,9 +474,9 @@ describe("ScriptStudioPage", () => {
     mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
-    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Chèn kịch bản mẫu" }));
     await user.click(
-      within(importPanel).getByRole("button", { name: "Save draft revision & analyze" }),
+      within(importPanel).getByRole("button", { name: "Lưu bản thảo revision & phân tích" }),
     );
 
     const resultBanner = await within(importPanel).findByTestId("script-import-result");
@@ -531,8 +531,8 @@ describe("ScriptStudioPage", () => {
     });
     mount("bible");
 
-    await screen.findByText("No Story Bible entries yet");
-    await user.click(screen.getByRole("button", { name: "Export shot list as JSON" }));
+    await screen.findByText("Chưa có mục Story Bible nào");
+    await user.click(screen.getByRole("button", { name: "Xuất danh sách shot dưới dạng JSON" }));
     await waitFor(() =>
       expect(
         requests.some(
@@ -543,9 +543,9 @@ describe("ScriptStudioPage", () => {
       ).toBe(true),
     );
 
-    await user.click(screen.getByRole("button", { name: "Export shot list as CSV" }));
+    await user.click(screen.getByRole("button", { name: "Xuất danh sách shot dưới dạng CSV" }));
     expect(await screen.findByTestId("shot-export-error")).toHaveTextContent(
-      "Could not export shots (CSV): Export storage unavailable",
+      "Không thể xuất danh sách shot (CSV): Export storage unavailable",
     );
   });
 
@@ -577,10 +577,10 @@ describe("ScriptStudioPage", () => {
     mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
-    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Chèn kịch bản mẫu" }));
     await user.click(
       within(importPanel).getByRole("checkbox", {
-        name: /Apply changes directly to Story Bible & shots/,
+        name: /Tự động áp dụng các mục Story Bible và shot được đề xuất/,
       }),
     );
     const warning = within(importPanel).getByTestId("existing-pipeline-overwrite-warning");
@@ -603,10 +603,10 @@ describe("ScriptStudioPage", () => {
     mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
-    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Chèn kịch bản mẫu" }));
     await user.click(
       within(importPanel).getByRole("checkbox", {
-        name: /Apply changes directly to Story Bible & shots/,
+        name: /Tự động áp dụng các mục Story Bible và shot được đề xuất/,
       }),
     );
     const unverifiedWarning = await within(importPanel).findByTestId(
@@ -643,7 +643,7 @@ describe("ScriptStudioPage", () => {
     const importPanel = await screen.findByTestId("script-import-panel");
     await user.click(
       within(importPanel).getByRole("checkbox", {
-        name: /Apply changes directly to Story Bible & shots/,
+        name: /Tự động áp dụng các mục Story Bible và shot được đề xuất/,
       }),
     );
 
@@ -656,7 +656,7 @@ describe("ScriptStudioPage", () => {
       expect(within(importPanel).queryByTestId("pipeline-checking-status")).not.toBeInTheDocument();
     });
     expect(
-      within(importPanel).getByRole("button", { name: "Import & apply script" }),
+      within(importPanel).getByRole("button", { name: "Nhập & áp dụng kịch bản" }),
     ).not.toBeDisabled();
   });
   it("keeps the entry being edited mounted when search or filter excludes it, and explains search-empty results", async () => {
@@ -674,34 +674,34 @@ describe("ScriptStudioPage", () => {
 
     const linhCard = await screen.findByTestId("story-bible-entry-char_linh");
     await user.click(
-      within(linhCard).getByRole("button", { name: "Edit Detective Linh (char_linh)" }),
+      within(linhCard).getByRole("button", { name: "Chỉnh sửa Detective Linh (char_linh)" }),
     );
     const editor = within(linhCard).getByTestId("story-bible-editor-char_linh");
-    const displayNameInput = within(editor).getByLabelText("Display name");
+    const displayNameInput = within(editor).getByLabelText("Tên hiển thị");
     await user.clear(displayNameInput);
     await user.type(displayNameInput, "Linh draft");
 
-    const search = screen.getByRole("searchbox", { name: "Search Story Bible entries" });
+    const search = screen.getByRole("searchbox", { name: "Tìm kiếm các mục Story Bible" });
     await user.type(search, "noir");
     expect(screen.getByTestId("story-bible-entry-style_noir")).toBeInTheDocument();
     expect(screen.queryByTestId("story-bible-entry-char_minh")).not.toBeInTheDocument();
     expect(screen.getByTestId("story-bible-editor-char_linh")).toBe(editor);
-    expect(within(editor).getByLabelText("Display name")).toHaveValue("Linh draft");
+    expect(within(editor).getByLabelText("Tên hiển thị")).toHaveValue("Linh draft");
     expect(screen.getByTestId("story-bible-editing-outside-filter")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Location (0)" }));
-    expect(within(editor).getByLabelText("Display name")).toHaveValue("Linh draft");
+    expect(within(editor).getByLabelText("Tên hiển thị")).toHaveValue("Linh draft");
 
     // Closing the editor leaves no visible entries, so the search-specific message appears.
-    await user.click(screen.getByRole("button", { name: "Edit Detective Linh (char_linh)" }));
+    await user.click(screen.getByRole("button", { name: "Chỉnh sửa Detective Linh (char_linh)" }));
     expect(screen.getByTestId("story-bible-search-empty")).toHaveTextContent(
-      /No location entries match the search .noir./,
+      /Không có mục nào khớp với từ khóa tìm kiếm "noir"./,
     );
     expect(screen.queryByTestId("story-bible-filter-empty")).not.toBeInTheDocument();
 
     await user.clear(search);
     expect(screen.getByTestId("story-bible-filter-empty")).toHaveTextContent(
-      "No location entries match the selected filter.",
+      "Không có mục nào khớp với bộ lọc đã chọn.",
     );
   });
 
@@ -722,7 +722,7 @@ describe("ScriptStudioPage", () => {
     expect(await screen.findByRole("heading", { name: "Story Bible (—)" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^Story Bible/ })).not.toHaveTextContent(/\d/);
 
-    await user.click(screen.getByRole("tab", { name: "Script import" }));
+    await user.click(screen.getByRole("tab", { name: "Nhập kịch bản" }));
     const importPanel = await screen.findByTestId("script-import-panel");
     await waitFor(() => {
       expect(within(importPanel).getByTestId("active-shots-count")).toHaveTextContent(
@@ -743,7 +743,7 @@ describe("ScriptStudioPage", () => {
       "Local outline preview — not analyzer output",
     );
     await user.type(
-      within(importPanel).getByLabelText("Script content"),
+      within(importPanel).getByLabelText("Nội dung kịch bản"),
       "SHOT 1: Cold open{enter}SCENE 1: Neon Alley{enter}SHOT 2: Arrival",
     );
 
@@ -813,7 +813,7 @@ describe("ScriptStudioPage views", () => {
   it("starts an empty project on the script import and a populated one on the Story Bible", async () => {
     stubApi(() => ({ status: 200, body: [] }));
     mount();
-    expect(await screen.findByRole("tab", { name: "Script import" })).toHaveAttribute(
+    expect(await screen.findByRole("tab", { name: "Nhập kịch bản" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -838,7 +838,7 @@ describe("ScriptStudioPage views", () => {
     stubApi(() => ({ status: 200, body: [] }));
     mount();
 
-    const scriptTab = await screen.findByRole("tab", { name: "Script import" });
+    const scriptTab = await screen.findByRole("tab", { name: "Nhập kịch bản" });
     scriptTab.focus();
     await user.keyboard("{ArrowRight}");
     const bibleTab = screen.getByRole("tab", { name: /^Story Bible/ });
@@ -859,22 +859,24 @@ describe("ScriptStudioPage views", () => {
     mount();
 
     const attention = await screen.findByTestId("story-bible-attention");
-    expect(within(attention).getByRole("heading")).toHaveTextContent("Needs a reference image (1)");
+    expect(within(attention).getByRole("heading")).toHaveTextContent(
+      "Cần bổ sung ảnh tham chiếu (1)",
+    );
     expect(attention).toHaveTextContent("Inspector Minh");
-    expect(attention).toHaveTextContent("Blocks 1 shot");
+    expect(attention).toHaveTextContent("Chặn 1 shot");
     expect(attention).not.toHaveTextContent("Detective Linh");
-    expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveTextContent("1 to fix");
+    expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveTextContent("1 cần sửa");
 
     await user.click(
-      within(attention).getByRole("button", { name: "Add a reference image for Inspector Minh" }),
+      within(attention).getByRole("button", { name: "Thêm ảnh tham chiếu cho Inspector Minh" }),
     );
     expect(await screen.findByTestId("story-bible-editor-char_minh")).toBeVisible();
 
     const next = screen.getByTestId("script-studio-next-step");
     expect(next).toHaveTextContent(
-      "1 blocked shot needs the reference images above; it may have other blockers too.",
+      "1 shot bị chặn đang cần các ảnh tham chiếu ở trên; có thể còn các nguyên nhân chặn khác.",
     );
-    expect(within(next).getByRole("link", { name: /Go to Shot Board/ })).toHaveAttribute(
+    expect(within(next).getByRole("link", { name: /Chuyển tới Shot Board/ })).toHaveAttribute(
       "href",
       "/projects/project-1/shot-board",
     );
@@ -904,15 +906,15 @@ describe("ScriptStudioPage views", () => {
     mount();
 
     const importPanel = await screen.findByTestId("script-import-panel");
-    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Chèn kịch bản mẫu" }));
     await user.click(
       within(importPanel).getByRole("checkbox", {
-        name: /Apply changes directly to Story Bible & shots/,
+        name: /Tự động áp dụng các mục Story Bible và shot được đề xuất/,
       }),
     );
-    await user.click(within(importPanel).getByRole("button", { name: "Import & apply script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Nhập & áp dụng kịch bản" }));
     const result = await screen.findByTestId("script-import-result");
-    await user.click(within(result).getByRole("button", { name: "Review Story Bible" }));
+    await user.click(within(result).getByRole("button", { name: "Xem lại Story Bible" }));
 
     expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveAttribute(
       "aria-selected",
@@ -949,19 +951,19 @@ describe("ScriptStudioPage views", () => {
     mount();
 
     const importPanel = await screen.findByTestId("script-import-panel");
-    await user.click(within(importPanel).getByRole("button", { name: "Insert sample script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Chèn kịch bản mẫu" }));
     await user.click(
       within(importPanel).getByRole("checkbox", {
-        name: /Apply changes directly to Story Bible & shots/,
+        name: /Tự động áp dụng các mục Story Bible và shot được đề xuất/,
       }),
     );
-    await user.click(within(importPanel).getByRole("button", { name: "Import & apply script" }));
+    await user.click(within(importPanel).getByRole("button", { name: "Nhập & áp dụng kịch bản" }));
     await screen.findByTestId("script-import-result");
     // The refetched Story Bible now has entries; the view must not switch on its own.
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveTextContent("3 entries"),
+      expect(screen.getByRole("tab", { name: /^Story Bible/ })).toHaveTextContent("3 mục"),
     );
-    expect(screen.getByRole("tab", { name: "Script import" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Nhập kịch bản" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -978,25 +980,27 @@ describe("ScriptStudioPage views", () => {
     mount("script");
 
     const importPanel = await screen.findByTestId("script-import-panel");
-    const textarea = within(importPanel).getByRole("textbox", { name: /script/i });
+    const textarea = within(importPanel).getByRole("textbox", { name: /kịch bản|script/i });
     await user.type(textarea, "SCENE 1: Dock at night");
 
     await user.click(screen.getByRole("tab", { name: /^Story Bible/ }));
     await user.click(
-      await screen.findByRole("button", { name: "Edit Detective Linh (char_linh)" }),
+      await screen.findByRole("button", { name: "Chỉnh sửa Detective Linh (char_linh)" }),
     );
     const editor = await screen.findByTestId("story-bible-editor-char_linh");
-    const traits = within(editor).getByLabelText("Immutable traits");
+    const traits = within(editor).getByLabelText("Đặc điểm nhận dạng cố định");
     await user.clear(traits);
     await user.type(traits, "unsaved trait edit");
 
-    await user.click(screen.getByRole("tab", { name: "Script import" }));
-    expect(within(importPanel).getByRole("textbox", { name: /script/i })).toHaveValue(
+    await user.click(screen.getByRole("tab", { name: "Nhập kịch bản" }));
+    expect(within(importPanel).getByRole("textbox", { name: /kịch bản|script/i })).toHaveValue(
       "SCENE 1: Dock at night",
     );
     await user.click(screen.getByRole("tab", { name: /^Story Bible/ }));
     expect(
-      within(screen.getByTestId("story-bible-editor-char_linh")).getByLabelText("Immutable traits"),
+      within(screen.getByTestId("story-bible-editor-char_linh")).getByLabelText(
+        "Đặc điểm nhận dạng cố định",
+      ),
     ).toHaveValue("unsaved trait edit");
   });
 
@@ -1028,7 +1032,9 @@ describe("ScriptStudioPage views", () => {
     mount();
 
     const next = await screen.findByTestId("script-studio-next-step");
-    expect(next).toHaveTextContent("1 shot is blocked; the Shot Board shows why.");
+    expect(next).toHaveTextContent(
+      "1 shot đang bị chặn; xem chi tiết nguyên nhân trên Shot Board.",
+    );
     expect(screen.queryByTestId("story-bible-attention")).toBeNull();
   });
 });

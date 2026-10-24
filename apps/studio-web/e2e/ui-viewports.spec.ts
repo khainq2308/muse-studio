@@ -28,8 +28,12 @@ const PAGES: PageCase[] = [
     name: "overview",
     path: "/",
     ready: async (page) => {
-      await expect(page.getByRole("list", { name: "Recently updated projects" })).toBeVisible();
-      await expect(page.getByText("Next step").first()).toBeVisible();
+      await expect(
+        page.getByRole("list", {
+          name: /Recently updated projects|Cập nhật gần đây|Dự án gần đây/i,
+        }),
+      ).toBeVisible();
+      await expect(page.getByText(/(?:Next step|Bước tiếp theo)/i).first()).toBeVisible();
     },
   },
   {

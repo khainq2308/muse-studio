@@ -136,9 +136,9 @@ describe("ShotBoardPage", () => {
     const chase = screen.getByTestId("shot-card-shot-2");
     expect(chase).toHaveAccessibleName("Shot 2 · Chase");
     expect(within(chase).getByTestId("shot-generation-state")).toHaveTextContent(
-      "Blocked: upstream frame missing",
+      "Bị chặn: thiếu khung hình trước",
     );
-    expect(within(chase).getByTestId("shot-approval-state")).toHaveTextContent("Needs review");
+    expect(within(chase).getByTestId("shot-approval-state")).toHaveTextContent("Cần xem lại");
     expect(within(chase).getByTestId("shot-continuity")).toHaveTextContent("Frame chain");
     // The first shot is open by default.
     expect(screen.getByTestId("shot-card-shot-1")).toHaveAttribute("aria-current", "true");
@@ -152,7 +152,7 @@ describe("ShotBoardPage", () => {
       within(panel).getByRole("heading", { level: 3, name: "Shot 2 · Chase" }),
     ).toBeInTheDocument();
     expect(within(panel).getByTestId("shot-generation-state")).toHaveTextContent(
-      "Blocked: upstream frame missing",
+      "Bị chặn: thiếu khung hình trước",
     );
     // No takes: the panel opens on Details, which shows the stored fields read-only.
     expect(await within(panel).findByRole("tab", { name: "Details" })).toHaveAttribute(
@@ -164,7 +164,7 @@ describe("ShotBoardPage", () => {
     );
     const details = within(panel).getByTestId("shot-details");
     expect(within(details).getByTestId("shot-first-frame")).toHaveTextContent("asset-ff");
-    expect(details).toHaveTextContent("Frame chain");
+    expect(details).toHaveTextContent("Nối khung hình");
     expect(details).toHaveTextContent("Shot 1 · Hero enters");
     expect(within(panel).queryByTestId("shot-predecessor-warning")).not.toBeInTheDocument();
 
@@ -185,12 +185,12 @@ describe("ShotBoardPage", () => {
     );
     mount();
 
-    expect(await screen.findByText("Admin token required to read shots.")).toBeInTheDocument();
+    expect(await screen.findByText("Cần có token quản trị để đọc shots.")).toBeInTheDocument();
     cleanup();
 
     stubApi(() => ({ status: 200, body: [] }));
     mount();
-    expect(await screen.findByText("No shots yet")).toBeInTheDocument();
+    expect(await screen.findByText("Chưa có shot nào")).toBeInTheDocument();
   });
 
   it("maps a 422 PATCH response to the field and then shows the recompiled prompt", async () => {
@@ -332,7 +332,7 @@ describe("ShotBoardPage workspace navigation", () => {
     expect(within(panel).getByTestId("shot-prompt-final")).toHaveTextContent(
       "wide static shot of the hero walking into the hall",
     );
-    expect(within(panel).getByText("Prompt Linter: no issues")).toBeInTheDocument();
+    expect(within(panel).getByText("Prompt Linter: không có vấn đề")).toBeInTheDocument();
 
     await user.click(screen.getByTestId("shot-card-shot-2"));
     // Selecting a shot pushes a history entry and resets the tab to the shot's default.
@@ -352,7 +352,7 @@ describe("ShotBoardPage workspace navigation", () => {
 
     expect(await screen.findByTestId("shot-workspace-shot-1")).toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent(
-      "Shot shot-deleted is not in this project; showing the first shot instead.",
+      "Shot shot-deleted không có trong dự án; hiển thị shot đầu tiên.",
     );
     expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
   });
@@ -461,7 +461,7 @@ describe("ShotBoardPage workspace navigation", () => {
     );
     mount();
 
-    const toggle = await screen.findByRole("button", { name: "Batch launch" });
+    const toggle = await screen.findByRole("button", { name: "Sinh media hàng loạt" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("batch-launch-panel")).not.toBeInTheDocument();
     await user.click(toggle);
@@ -495,9 +495,9 @@ describe("ShotBoardPage workspace navigation", () => {
     await user.click(takesTab);
     const review = await within(panel).findByTestId("shot-take-review-shot-1");
     expect(await within(review).findByRole("alert")).toHaveTextContent(
-      "Could not load takes: Database unavailable",
+      "Không thể tải danh sách take: Database unavailable",
     );
-    expect(within(review).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(within(review).getByRole("button", { name: "Thử lại" })).toBeInTheDocument();
     expect(takeLoads()).toBe(2);
   });
 });

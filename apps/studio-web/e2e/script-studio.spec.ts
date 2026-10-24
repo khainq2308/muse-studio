@@ -166,55 +166,70 @@ test("imports a script with replace_existing confirmation and edits a Story Bibl
 
   await page.goto("/projects/test-project/script-studio");
 
-  await expect(page.getByRole("heading", { name: "Script & Story Bible" })).toBeVisible();
-  const nav = page.getByRole("navigation", { name: "Project modules" });
-  await expect(nav.getByRole("link", { name: "Script & Story Bible" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  await expect(
+    page.getByRole("heading", { name: /^(?:Script & Story Bible|Kịch bản & Story Bible)$/i }),
+  ).toBeVisible();
+  const nav = page.getByRole("navigation", { name: /Project modules|Module dự án/i });
+  await expect(
+    nav.getByRole("link", { name: /Script & Story Bible|Kịch bản & Story Bible/i }),
+  ).toHaveAttribute("aria-current", "page");
 
   // A project with a Story Bible opens on it; re-importing starts from the Script import view.
   await expect(page.getByRole("tab", { name: /^Story Bible/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await page.getByRole("tab", { name: "Script import" }).click();
+  await page.getByRole("tab", { name: /^(?:Script import|Nhập kịch bản)$/i }).click();
   await expect(page).toHaveURL("/projects/test-project/script-studio?view=script");
 
   const importPanel = page.getByTestId("script-import-panel");
-  await importPanel.getByRole("button", { name: "Insert sample script" }).click();
   await importPanel
-    .getByRole("checkbox", { name: /Apply changes directly to Story Bible & shots/ })
+    .getByRole("button", { name: /^(?:Insert sample script|Chèn kịch bản mẫu)$/i })
+    .click();
+  await importPanel
+    .getByRole("checkbox", {
+      name: /Apply changes directly to Story Bible & shots|Tự động áp dụng/i,
+    })
     .check();
   await expect(importPanel.getByTestId("existing-pipeline-overwrite-warning")).toBeVisible();
-  await importPanel.getByRole("button", { name: "Import & apply script" }).click();
+  await importPanel
+    .getByRole("button", { name: /^(?:Import & apply script|Nhập & áp dụng kịch bản)$/i })
+    .click();
 
   await expect(
     importPanel.getByText(/Retry with replace_existing=true to confirm/).first(),
   ).toBeVisible();
 
   await importPanel
-    .getByRole("checkbox", { name: /Confirm replacing existing shots and generated takes/ })
+    .getByRole("checkbox", {
+      name: /Confirm replacing existing shots and generated takes|Xác nhận thay thế/i,
+    })
     .check();
-  await importPanel.getByRole("button", { name: "Import & apply script" }).click();
+  await importPanel
+    .getByRole("button", { name: /^(?:Import & apply script|Nhập & áp dụng kịch bản)$/i })
+    .click();
 
   await expect(page.getByTestId("script-import-result")).toContainText(
-    "Imported script revision v2 (scr_e2e01)",
+    /(?:Imported script revision v2 \(scr_e2e01\)|Đã nhập revision kịch bản v2 \(scr_e2e01\))/i,
   );
 
   await page
     .getByTestId("script-import-result")
-    .getByRole("button", { name: "Review Story Bible" })
+    .getByRole("button", { name: /^(?:Review Story Bible|Xem lại Story Bible)$/i })
     .click();
   await expect(page).toHaveURL("/projects/test-project/script-studio?view=bible");
 
-  await page.getByRole("button", { name: "Edit 2D Anime Noir (style_noir)" }).click();
+  await page
+    .getByRole("button", {
+      name: /Edit 2D Anime Noir \(style_noir\)|Chỉnh sửa 2D Anime Noir \(style_noir\)/i,
+    })
+    .click();
   const editor = page.getByTestId("story-bible-editor-style_noir");
-  await editor.getByLabel("Color palette").fill("emerald and gold noir");
-  await editor.getByRole("button", { name: "Save entry" }).click();
+  await editor.getByLabel(/^(?:Color palette|Bảng màu chủ đạo)$/i).fill("emerald and gold noir");
+  await editor.getByRole("button", { name: /^(?:Save entry|Lưu mục)$/i }).click();
 
   await expect(editor.getByTestId("story-bible-upsert-result")).toContainText(
-    "Saved style_noir (bib_style1). Downstream project shots were recompiled.",
+    /(?:Saved style_noir \(bib_style1\)|Đã lưu style_noir \(bib_style1\))/i,
   );
 
   const bibleSaves = requests.filter(

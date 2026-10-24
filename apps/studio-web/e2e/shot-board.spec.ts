@@ -191,7 +191,7 @@ test("edits a shot, maps a 422 to the field and shows the recompiled prompt", as
   await page.goto("/projects/test-project/shot-board");
 
   await expect(page.getByRole("heading", { name: "Shot Board" })).toBeVisible();
-  const nav = page.getByRole("navigation", { name: "Project modules" });
+  const nav = page.getByRole("navigation", { name: /Project modules|Module dự án/i });
   await expect(nav.getByRole("link", { name: "Shot Board" })).toHaveAttribute(
     "aria-current",
     "page",
@@ -284,7 +284,9 @@ test("launches a batch after confirmation and lists frame-chain warnings and blo
   );
 
   // Batch launch lives behind a toolbar toggle.
-  const batchToggle = page.getByRole("button", { name: "Batch launch", exact: true });
+  const batchToggle = page.getByRole("button", {
+    name: /^(?:Batch launch|Sinh media hàng loạt)$/i,
+  });
   await expect(batchToggle).toHaveAttribute("aria-expanded", "false");
   await batchToggle.click();
   await expect(batchToggle).toHaveAttribute("aria-expanded", "true");

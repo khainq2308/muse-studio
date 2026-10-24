@@ -73,12 +73,11 @@ describe("Script & Story Bible URL state", () => {
     const router = mount("/projects/project-1/script-studio?view=script");
 
     // The URL wins over the data-derived default (this project has entries).
-    expect(await screen.findByRole("tab", { name: "Script import" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(
+      await screen.findByRole("tab", { name: /Script import|Nhập kịch bản/i }),
+    ).toHaveAttribute("aria-selected", "true");
 
-    await user.click(screen.getByRole("tab", { name: /^Story Bible/ }));
+    await user.click(screen.getByRole("tab", { name: /^Story Bible/i }));
     await waitFor(() =>
       expect(router.state.location.href).toBe("/projects/project-1/script-studio?view=bible"),
     );
@@ -87,7 +86,7 @@ describe("Script & Story Bible URL state", () => {
     // Browser back returns to the previous view.
     router.history.back();
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Script import" })).toHaveAttribute(
+      expect(screen.getByRole("tab", { name: /Script import|Nhập kịch bản/i })).toHaveAttribute(
         "aria-selected",
         "true",
       ),
@@ -100,7 +99,7 @@ describe("Script & Story Bible URL state", () => {
     const router = mount("/projects/project-1/script-studio?view=bogus");
 
     // Falls back to the data-derived default: the project has a Story Bible.
-    expect(await screen.findByRole("tab", { name: /^Story Bible/ })).toHaveAttribute(
+    expect(await screen.findByRole("tab", { name: /^Story Bible/i })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -108,7 +107,7 @@ describe("Script & Story Bible URL state", () => {
     await waitFor(() => expect(router.state.location.search.view).toBe("bible"));
     expect(router.state.location.href).toBe("/projects/project-1/script-studio?view=bible");
 
-    const nav = screen.getByRole("navigation", { name: "Project modules" });
+    const nav = screen.getByRole("navigation", { name: /Project modules|Module dự án/i });
     await user.click(within(nav).getByRole("link", { name: "Shot Board" }));
     await waitFor(() =>
       expect(router.state.location.pathname).toBe("/projects/project-1/shot-board"),

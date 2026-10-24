@@ -43,24 +43,24 @@ describe("ShotDetails", () => {
       expect(details).not.toHaveTextContent(fabricated);
     }
     for (const label of [
-      "Location",
-      "Shot size",
-      "Camera motion",
-      "Composition",
-      "Previous shot",
-      "Next shot",
-      "First frame asset",
-      "Last frame asset",
-      "Selected take",
-      "Reference assets",
+      "Bối cảnh",
+      "Cỡ cảnh",
+      "Chuyển động máy quay",
+      "Bố cục",
+      "Shot trước",
+      "Shot sau",
+      "Asset frame đầu",
+      "Asset frame cuối",
+      "Take đã chọn",
+      "Asset tham chiếu",
     ]) {
       expect(field(details, label)).toHaveTextContent(/^—$/);
     }
     // Dialogue must not fall back to the action text.
     expect(screen.getByTestId("shot-dialogue")).toHaveTextContent(/^—$/);
-    expect(field(details, "Action & subjects")).toHaveTextContent("Hero waits.");
+    expect(field(details, "Hành động & chủ thể")).toHaveTextContent("Hero waits.");
     // Float durations are rounded (0.1 + 0.2).
-    expect(field(details, "Duration")).toHaveTextContent(/^0\.3s$/);
+    expect(field(details, "Thời lượng")).toHaveTextContent(/^0\.3s$/);
   });
 
   it("names linked shots and shows stored asset IDs", () => {
@@ -74,11 +74,11 @@ describe("ShotDetails", () => {
     });
     render(<ShotDetails shot={shot} shots={[previous, shot]} />);
     const details = screen.getByTestId("shot-details");
-    expect(field(details, "Previous shot")).toHaveTextContent("Shot 0 · Prologue");
-    expect(field(details, "Next shot")).toHaveTextContent("shot-gone");
+    expect(field(details, "Shot trước")).toHaveTextContent("Shot 0 · Prologue");
+    expect(field(details, "Shot sau")).toHaveTextContent("shot-gone");
     expect(screen.getByTestId("shot-first-frame")).toHaveTextContent("asset-ff");
-    expect(field(details, "Selected take")).toHaveTextContent("take-7");
-    expect(field(details, "Continuity")).toHaveTextContent("Frame chain");
+    expect(field(details, "Take đã chọn")).toHaveTextContent("take-7");
+    expect(field(details, "Chế độ nhất quán")).toHaveTextContent("Nối khung hình");
   });
 });
 
@@ -97,13 +97,13 @@ describe("ShotPromptLint", () => {
     expect(screen.getByTestId("shot-negative-prompt")).toHaveTextContent(/^—$/);
     expect(
       within(
-        screen.getByRole("list", { name: "Prompt Linter for Shot 1 · Hero enters" }),
+        screen.getByRole("list", { name: "Prompt Linter cho Shot 1 · Hero enters" }),
       ).getByText("Need ref."),
     ).toBeInTheDocument();
     cleanup();
 
     render(<ShotPromptLint shot={bareShot} />);
     expect(screen.getByTestId("shot-prompt-final")).toHaveTextContent(/^—$/);
-    expect(screen.getByText("Prompt Linter: no issues")).toBeInTheDocument();
+    expect(screen.getByText("Prompt Linter: không có vấn đề")).toBeInTheDocument();
   });
 });

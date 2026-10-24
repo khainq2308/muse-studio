@@ -58,8 +58,8 @@ describe("flagErrorFeedback", () => {
   ])("reports an unknown outcome for a regenerate request after a %s", (_name, error) => {
     const feedback = flagErrorFeedback(error, true);
     expect(feedback.outcomeUnknown).toBe(true);
-    expect(feedback.message).toMatch(/^The outcome is unknown/);
-    expect(feedback.message).not.toMatch(/not saved|Try again/);
+    expect(feedback.message).toMatch(/^Kết quả chưa xác định/);
+    expect(feedback.message).not.toMatch(/chưa lưu/i);
   });
 
   it("does not claim a 422 after regenerate left the flag unsaved", () => {
@@ -70,8 +70,8 @@ describe("flagErrorFeedback", () => {
     expect(feedback).toEqual({
       outcomeUnknown: true,
       message:
-        "The regeneration was refused: Shot has blockers. The continuity flag may already be " +
-        "saved; refresh the take list to check it before retrying.",
+        "Yêu cầu sinh lại bị từ chối: Shot has blockers. Cờ báo lỗi có thể đã được " +
+        "lưu; hãy làm mới danh sách take.",
     });
   });
 
@@ -80,13 +80,13 @@ describe("flagErrorFeedback", () => {
       flagErrorFeedback(new ApiError({ status: 0, detail: "t", category: "timeout" }), false),
     ).toEqual({
       outcomeUnknown: false,
-      message: "The continuity flag was not saved: the request timed out. Try again.",
+      message: "Chưa lưu được báo lỗi nhất quán: the request timed out. Try again.",
     });
     expect(
       flagErrorFeedback(new ApiError({ status: 400, detail: "Connection disabled" }), true),
     ).toEqual({
       outcomeUnknown: false,
-      message: "The continuity flag was not saved: Connection disabled",
+      message: "Chưa lưu được báo lỗi nhất quán: Connection disabled",
     });
   });
 });
@@ -140,8 +140,8 @@ describe("take helpers", () => {
   });
 
   it.each([
-    [new ApiError({ status: 401, detail: "no" }), "select", /admin token was rejected/],
-    [new ApiError({ status: 403, detail: "no" }), "flag", /does not have permission/],
+    [new ApiError({ status: 401, detail: "no" }), "select", /token quản trị/i],
+    [new ApiError({ status: 403, detail: "no" }), "flag", /không có quyền/i],
     [
       new ApiError({ status: 404, detail: "Connection không tồn tại." }),
       "flag",
@@ -150,12 +150,12 @@ describe("take helpers", () => {
     [
       new ApiError({ status: 422, detail: "Shot has lint blockers" }),
       "flag",
-      /^The continuity flag was not saved: Shot has lint blockers$/,
+      /^Chưa lưu được báo lỗi nhất quán: Shot has lint blockers$/,
     ],
     [
       new ApiError({ status: 409, detail: "Conflict detail" }),
       "select",
-      /^The take was not selected: Conflict detail$/,
+      /^Chưa chọn được take: Conflict detail$/,
     ],
     [new ApiError({ status: 200, detail: "too big", category: "too_large" }), "preview", /too big/],
   ] as const)("maps %s for %s", (error, action, expected) => {

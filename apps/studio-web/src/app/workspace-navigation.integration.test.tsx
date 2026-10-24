@@ -103,7 +103,7 @@ describe("Workspace navigation", () => {
     const user = userEvent.setup();
     const router = mount("/");
 
-    const recent = await screen.findByRole("list", { name: "Recently updated projects" });
+    const recent = await screen.findByRole("list", { name: "Cập nhật gần đây" });
     const cards = within(recent).getAllByRole("listitem");
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual([
       "Neon Horizon",
@@ -111,11 +111,11 @@ describe("Workspace navigation", () => {
     ]);
 
     const active = cards[0]!;
-    expect(await within(active).findByText("Resolve 1 blocked shot")).toBeVisible();
+    expect(await within(active).findByText("Xử lý 1 shot bị chặn")).toBeVisible();
     expect(within(active).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
-    expect(await within(cards[1]!).findByText("Import a script")).toBeVisible();
+    expect(await within(cards[1]!).findByText("Nhập kịch bản")).toBeVisible();
 
-    await user.click(within(active).getByRole("link", { name: /Open first blocked shot/ }));
+    await user.click(within(active).getByRole("link", { name: /Mở shot bị chặn đầu tiên/ }));
     await waitFor(() =>
       expect(router.state.location.href).toBe(
         "/projects/project-1/shot-board?shot=shot-2&tab=prompt",
@@ -157,13 +157,13 @@ describe("Workspace navigation", () => {
     const user = userEvent.setup();
     mount("/");
 
-    const recent = await screen.findByRole("list", { name: "Recently updated projects" });
+    const recent = await screen.findByRole("list", { name: "Cập nhật gần đây" });
     expect(
       within(recent)
         .getAllByRole("listitem")
         .map((card) => card.getAttribute("aria-label")),
     ).toEqual(["Five", "Four", "Three", "Two"]);
-    expect(screen.getByRole("link", { name: "View all 5 projects" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Xem tất cả 5 dự án" })).toHaveAttribute(
       "href",
       "/projects",
     );
@@ -174,7 +174,7 @@ describe("Workspace navigation", () => {
     expect(await within(failing).findByRole("alert")).toBeVisible();
     for (const name of ["Five", "Four", "Two"]) {
       expect(
-        await within(within(recent).getByRole("listitem", { name })).findByText("Import a script"),
+        await within(within(recent).getByRole("listitem", { name })).findByText("Nhập kịch bản"),
       ).toBeVisible();
     }
 
@@ -183,7 +183,7 @@ describe("Workspace navigation", () => {
     await user.click(
       within(failing).getByRole("button", { name: "Retry loading progress for Three" }),
     );
-    expect(await within(failing).findByText("Import a script")).toBeVisible();
+    expect(await within(failing).findByText("Nhập kịch bản")).toBeVisible();
     expect(shotRequests.slice(before)).toEqual(["p3"]);
   });
 
@@ -191,19 +191,21 @@ describe("Workspace navigation", () => {
     stubApi();
     mount("/system");
 
-    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const nav = await screen.findByRole("navigation", { name: "Không gian làm việc" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
-      "Overview",
-      "Projects",
-      "Connections",
-      "System",
+      "Tổng quan",
+      "Dự án",
+      "Kết nối",
+      "Hệ thống",
     ]);
-    expect(within(nav).getByRole("link", { name: "System" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Hệ thống" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(within(nav).getByRole("link", { name: "Overview" })).not.toHaveAttribute("aria-current");
+    expect(within(nav).getByRole("link", { name: "Tổng quan" })).not.toHaveAttribute(
+      "aria-current",
+    );
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "System & maintenance" })).toBeVisible(),
     );
@@ -226,23 +228,24 @@ describe("Workspace navigation", () => {
     mount("/projects/project-1/settings");
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Project settings" })).toBeVisible(),
+      expect(
+        screen.getByRole("heading", { name: /Project settings|Cài đặt dự án/i }),
+      ).toBeVisible(),
     );
     expect(screen.getByRole("heading", { name: "Backups & assets" })).toBeVisible();
-    const nav = screen.getByRole("navigation", { name: "Project modules" });
-    expect(within(nav).getByRole("link", { name: "Project Settings" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    const nav = screen.getByRole("navigation", { name: /Project modules|Module dự án/i });
+    expect(
+      within(nav).getByRole("link", { name: /Project settings|Cài đặt dự án/i }),
+    ).toHaveAttribute("aria-current", "page");
     // Only the open module is the current page; the header and breadcrumb links to the
     // project list are not.
     const current = document.querySelectorAll('[aria-current="page"]');
     expect([...current].map((element) => element.textContent)).toEqual([
       "Neon Horizon",
-      "Project Settings",
+      "Cài đặt dự án",
     ]);
-    const workspace = screen.getByRole("navigation", { name: "Workspace" });
-    expect(within(workspace).getByRole("link", { name: "Projects" })).not.toHaveAttribute(
+    const workspace = screen.getByRole("navigation", { name: "Không gian làm việc" });
+    expect(within(workspace).getByRole("link", { name: "Dự án" })).not.toHaveAttribute(
       "aria-current",
     );
   });

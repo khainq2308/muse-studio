@@ -101,19 +101,19 @@ describe("ProjectSettingsPage", () => {
     stubApi();
     renderPage();
 
-    expect(await screen.findByRole("region", { name: "Active project profile" })).toHaveTextContent(
-      "Neon Horizon",
-    );
-    expect(screen.queryByRole("button", { name: "New project" })).toBeNull();
+    expect(
+      await screen.findByRole("region", { name: "Hồ sơ dự án đang hoạt động" }),
+    ).toHaveTextContent("Neon Horizon");
+    expect(screen.queryByRole("button", { name: "Dự án mới" })).toBeNull();
   });
 
   it("states that duplication copies only project settings", async () => {
     stubApi();
     renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "Duplicate settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Nhân bản cài đặt" }));
 
     const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("Duplicated project settings as Neon Horizon (Copy)");
+    expect(status).toHaveTextContent("Đã nhân bản cài đặt dự án thành Neon Horizon (Copy)");
     expect(status).toHaveTextContent(
       "Only project settings are copied; Story Bible, shots and assets are not copied.",
     );
@@ -124,9 +124,9 @@ describe("ProjectSettingsPage", () => {
     stubApi({ duplicateStatus: 404 });
     renderPage();
 
-    await userEvent.click(screen.getByRole("button", { name: "Duplicate settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Nhân bản cài đặt" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not duplicate project: Original project not found.",
+      "Không thể duplicate project: Original project not found.",
     );
   });
 });

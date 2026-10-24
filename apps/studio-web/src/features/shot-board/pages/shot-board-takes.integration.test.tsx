@@ -251,12 +251,12 @@ describe("Shot Board take review", () => {
     mount();
 
     await openReview("Shot 2 · Chase");
-    expect(await screen.findByText("No takes yet")).toBeInTheDocument();
+    expect(await screen.findByText("Chưa có take nào")).toBeInTheDocument();
 
     await openReview("Shot 1 · Hero enters");
     const panel = await screen.findByTestId("shot-take-review-shot-1");
     expect(await within(panel).findByRole("alert")).toHaveTextContent(
-      "The configured admin token was rejected while reading takes.",
+      "Token quản trị cấu hình bị từ chối khi đọc takes. Hãy cập nhật token và kết nối lại.",
     );
   });
 
@@ -375,7 +375,7 @@ describe("Shot Board take review", () => {
     await user.click(within(confirm).getByRole("button", { name: "Confirm and regenerate" }));
 
     expect(await within(form).findByRole("alert")).toHaveTextContent(
-      "The regeneration was refused: Shot has Prompt Linter blockers. The continuity flag may already be saved",
+      "Yêu cầu sinh lại bị từ chối: Shot has Prompt Linter blockers. Cờ báo lỗi có thể đã được lưu",
     );
 
     await user.click(within(form).getByRole("button", { name: "Flag and regenerate" }));
@@ -574,9 +574,9 @@ describe("Take review: uncertain outcomes, focus and sessions", () => {
     const alert = await within(form).findByRole("alert");
     expect(alert).toHaveAttribute("data-outcome-unknown", "true");
     expect(alert).toHaveTextContent(
-      "The outcome is unknown: the continuity flag and a regeneration task may already exist.",
+      "Kết quả chưa xác định: cờ báo lỗi và tác vụ sinh lại có thể đã được tạo.",
     );
-    expect(alert).not.toHaveTextContent(/not saved|Try again/);
+    expect(alert).not.toHaveTextContent(/chưa lưu/i);
     expect(within(alert).getByText("Check the Generation Queue")).toBeInTheDocument();
 
     const takeLoads = () =>
@@ -722,7 +722,7 @@ describe("Take review: uncertain outcomes, focus and sessions", () => {
     mount();
 
     await openReview("Shot 1 · Hero enters");
-    await screen.findByText("Loading takes...");
+    await screen.findByText("Đang tải danh sách take...");
     act(() => useSessionStore.getState().setAdminToken("another-token"));
     // The new session reloads the takes under its own cache key; the review is remounted.
     const panel = await screen.findByTestId("shot-take-review-shot-1");

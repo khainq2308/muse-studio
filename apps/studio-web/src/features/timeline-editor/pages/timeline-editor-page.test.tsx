@@ -223,7 +223,7 @@ describe("TimelineEditorPage timeline loading", () => {
     await advance(0);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Admin token required to read project timeline.",
+      /(?:Admin token required to read|Cần có token quản trị để đọc) project timeline/i,
     );
     expect(screen.queryByText(/No timeline assembled/i)).not.toBeInTheDocument();
   });
@@ -233,7 +233,9 @@ describe("TimelineEditorPage timeline loading", () => {
     mount();
     await advance(0);
 
-    expect(screen.getByRole("alert")).toHaveTextContent(/Could not load project timeline/);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /(?:could not load project timeline|không thể tải project timeline)/i,
+    );
     expect(screen.queryByText(/No timeline assembled/i)).not.toBeInTheDocument();
   });
 });
@@ -481,7 +483,7 @@ describe("TimelineEditorPage assemble", () => {
     await advance(0);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Could not assemble the timeline: .*Project has no shots/,
+      /(?:Could not assemble the timeline|Không thể assemble the timeline): .*Project has no shots/i,
     );
   });
 });
@@ -590,7 +592,7 @@ describe("TimelineEditorPage export", () => {
     await advance(0);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Admin token required to launch the timeline export.",
+      /(?:Admin token required to|Cần có token quản trị để) launch the timeline export/i,
     );
   });
 
@@ -621,7 +623,9 @@ describe("TimelineEditorPage export", () => {
 
     await advance(EXPORT_STATUS_POLL_INTERVAL_MS + 100);
     expect(callsTo(fetchMock, "GET", EXPORT_STATUS_PATH)).toHaveLength(2);
-    expect(screen.getByRole("alert")).toHaveTextContent(/Could not load export job status/);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /(?:Could not load|Không thể tải) export job status/i,
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(/may be out of date/);
 
     await advance(EXPORT_STATUS_POLL_INTERVAL_MS * 5);
@@ -632,7 +636,9 @@ describe("TimelineEditorPage export", () => {
   it("shows an alert instead of hiding the panel when the first status fetch fails", async () => {
     const { fetchMock, queryClient } = await launchExport([() => json({ detail: "boom" }, 500)]);
 
-    expect(screen.getByRole("alert")).toHaveTextContent(/Could not load export job status/);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /(?:Could not load|Không thể tải) export job status/i,
+    );
     expect(screen.getByRole("button", { name: "Retry status check" })).toBeEnabled();
 
     await advance(EXPORT_STATUS_POLL_INTERVAL_MS * 5);
@@ -670,7 +676,7 @@ describe("TimelineEditorPage export", () => {
 
     expect(callsTo(fetchMock, "GET", downloadPath)).toHaveLength(1);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Could not download the exported MP4: .*Asset file missing/,
+      /(?:Could not download|Không thể download) the exported MP4: .*Asset file missing/i,
     );
     queryClient.clear();
   });
@@ -907,7 +913,7 @@ describe("TimelineEditorPage clip editing", () => {
 
     const dialog = screen.getByRole("alertdialog");
     expect(dialog).toHaveTextContent(/saved subtitles will be removed unless you cancel/);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel|hủy/i }));
     await advance(0);
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(assembleBodies(fetchMock)).toHaveLength(0);
@@ -943,7 +949,7 @@ describe("TimelineEditorPage clip editing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Shot: shot-2/ }));
     fireEvent.click(screen.getByRole("button", { name: "Remove from sequence" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel|hủy/i }));
     expect(screen.getAllByTestId("timeline-clip")).toHaveLength(3);
 
     fireEvent.click(screen.getByRole("button", { name: "Remove from sequence" }));
@@ -972,7 +978,9 @@ describe("TimelineEditorPage clip editing", () => {
 
     const alert = screen
       .getAllByRole("alert")
-      .find((node) => node.textContent?.includes("Could not save clip edits"));
+      .find((node) =>
+        /could not save clip edits|không thể save clip edits/i.test(node.textContent ?? ""),
+      );
     expect(alert).toHaveTextContent(/custom_clips\[1\]: take_id không thuộc shot_id/);
     fireEvent.click(screen.getByRole("button", { name: "Select clip #2" }));
     expect(screen.getByLabelText("Selected clip")).toHaveTextContent(

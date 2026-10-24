@@ -276,12 +276,12 @@ describe("Script Studio state helpers", () => {
       referenceUploadErrorMessage(
         new ApiError({ status: 413, detail: "File vượt giới hạn dung lượng." }),
       ),
-    ).toBe("Could not upload the reference image: File vượt giới hạn dung lượng.");
+    ).toBe("Không thể tải ảnh tham chiếu lên: File vượt giới hạn dung lượng.");
 
     expect(
       shotExportErrorMessage(new ApiError({ status: 401, detail: "Unauthorized" }), "csv"),
     ).toBe(
-      "Could not export shots (CSV): the admin token was rejected. Update the token and try again.",
+      "Không thể xuất danh sách shot (CSV): token quản trị bị từ chối. Hãy cập nhật token và thử lại.",
     );
   });
 });
